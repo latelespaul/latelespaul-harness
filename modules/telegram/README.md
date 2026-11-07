@@ -47,6 +47,6 @@ If `$PROFILE_DIR/telegram/morning-brief.md` exists, `com.<prefix>.morning-brief`
 - Per Mac, never in git: `~/.claude/channels/telegram/` holds `.env` (token), `access.json` (pairing), `logs/` and `watchdog/state.json`.
 
 ## Limits
-- With the lid closed on battery the Mac sleeps anyway; keep it open, or plugged in.
+- With the lid closed the Mac sleeps, and after a reboot nothing starts until you log in. The `always-on` skill checks and fixes both (`skills/always-on/scripts/check.sh`).
 - Don't start a Telegram session by hand while this is installed: a second poller steals messages. Attach to the running one with `screen -r claude-tg` (Ctrl-A D detaches).
 - Restart by hand: `launchctl kickstart -k gui/$(id -u)/com.<prefix>.telegram`.
