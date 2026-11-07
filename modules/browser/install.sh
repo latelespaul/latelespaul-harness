@@ -4,7 +4,7 @@
 # Each id:port in BROWSER_EXTRA adds another one (~/.chrome-<id>) plus a chrome-<id> command.
 #   install.sh                         install / repair all of them on this Mac
 #   install.sh [--id <id>] --uninstall stop one (default: claude); keeps the profile and its logins
-#   install.sh [--id <id>] --status    is it up? (exit 1 if not)
+#   install.sh [--id <id>] --status    is it up? (exit 1 if not; without --id: all of them)
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -12,16 +12,21 @@ source ${0:A:h:h:h}/lib/common.sh
 mod=$HARNESS_DIR/modules/browser
 uid=$(id -u)
 browsers=(claude:$BROWSER_PORT ${(z)BROWSER_EXTRA})
-id=claude
-[[ $1 == --id ]] && { id=$2; shift 2 }
+id=claude ids=()
+[[ $1 == --id ]] && { id=$2 ids=($2); shift 2 }
 port_of() { local b; for b in $browsers; do [[ ${b%%:*} == $1 ]] && { print ${b#*:}; return 0 }; done; return 1 }
 up() { curl -s --max-time 3 http://127.0.0.1:$1/json/version | grep -q '"Browser"' }
 
 case ${1:-install} in
 --status)
-  port=$(port_of $id) || { print "no browser with id $id"; exit 1 }
-  up $port && { print "chrome-$id is up on 127.0.0.1:$port."; exit 0 }
-  print "chrome-$id is down."; exit 1 ;;
+  (( $#ids )) || ids=(${browsers%%:*})
+  rc=0
+  for id in $ids; do
+    port=$(port_of $id) || { print "no browser with id $id"; rc=1; continue }
+    if up $port; then print "chrome-$id is up on 127.0.0.1:$port."; else print "chrome-$id is down."; rc=1; fi
+  done
+  command -v chrome-devtools-axi >/dev/null || { print "chrome-devtools-axi is not installed (npm i -g chrome-devtools-axi@0.1.44)."; rc=1 }
+  exit $rc ;;
 --uninstall)
   launchd_unload com.$LABEL_PREFIX.chrome-$id
   act rm -f $agents_dir/com.$LABEL_PREFIX.chrome-$id.plist
@@ -48,6 +53,7 @@ for b in $browsers; do
     act mkdir -p ~/.local/bin
     write_file ~/.local/bin/chrome-$CHROME_ID "$(render $mod/chrome-wrapper.tmpl)"
     act chmod +x ~/.local/bin/chrome-$CHROME_ID
+    (( ${path[(Ie)$HOME/.local/bin]} )) || print "Note: ~/.local/bin is not on PATH, so chrome-$CHROME_ID won't be found. Add to ~/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
   fi
   if (( ! plist_changed )) && launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
     print "chrome-$CHROME_ID already running; left it alone."

@@ -24,6 +24,6 @@ Paths: `H` = HARNESS_DIR. Ask before installing anything.
 2. **Extra browsers (optional).** Ask whether they want a second browser for another account (for example a personal Google account). If yes, set it with `H/install.sh --env-only BROWSER_EXTRA="personal:9223"` (keep any existing entries), and create `$PROFILE_DIR/browser/personal-sites.txt` with the domains that belong there, one per line.
    Verify: `grep BROWSER_EXTRA H/harness.env`
 3. **Install.** `H/modules/browser/install.sh` (the main `install.sh` runs it when `browser` is in MODULES). Re-run `H/install.sh` too if you changed BROWSER_EXTRA, so the settings pick up the new command.
-   Verify: `H/modules/browser/install.sh --status` (and `--id <id> --status` for each extra)
+   Verify: `H/modules/browser/install.sh --status` (checks Claude Chrome, every extra browser and the controller; `--id <id> --status` checks one)
 4. **Logins (needs the user).** Tell them: "A Chrome window called Claude Chrome is open. Sign in there to the accounts you want agents to use. Keep banking and similar accounts out of it." Wait until they say done.
    Verify: `chrome-devtools-axi open https://myaccount.google.com/ && chrome-devtools-axi snapshot | head -20` shows them signed in (or ask them to confirm).
