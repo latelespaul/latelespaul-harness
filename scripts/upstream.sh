@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Two-way flow between this harness and the one it is shared with (see CONTRIBUTING.md).
 #   upstream.sh status          what each side has that the other lacks, and open PRs both ways
-#   upstream.sh sync            rebuild the running branch: upstream's default branch + your open PRs
+#   upstream.sh sync [branch..] rebuild the running branch: upstream's default branch + your open PRs
+#                               (+ the named branches, e.g. a PR GitHub does not list yet)
 #   upstream.sh new <name>      start a change: a worktree on a new branch off upstream
 #   upstream.sh pr [--title T] --body-file F
 #                               run the checks, push the current branch, open (or update) its PR
@@ -56,6 +57,7 @@ sync)
   cd $main_wt
   clean . || die "uncommitted changes in $main_wt; commit them on a branch first"
   open=(${(f)"$(my_prs)"})
+  for b in ${@:2}; do (( ${open[(Ie)$b]} )) || open+=$b; done
   tips=(); for b in $open; do tips+=$(tip $b); done
   if git rev-parse -q --verify refs/heads/$run >/dev/null; then
     # Commits made straight on the running branch would be lost by the rebuild: refuse instead.
@@ -125,7 +127,8 @@ pr)
     gh pr create --repo $repo --base ${base#$up/} --head $head --title $title --body-file $body
   fi
   # Run the change here too, until upstream merges it.
-  [[ $(git rev-parse --show-toplevel) == $main_wt ]] || $0 sync
+  # (named explicitly: GitHub can take a few seconds to list a new PR)
+  [[ $(git rev-parse --show-toplevel) == $main_wt ]] || $0 sync $b
   exit 0 ;;
 
 *) sed -n '2,9p' $0; exit 1 ;;
