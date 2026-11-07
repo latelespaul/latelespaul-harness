@@ -18,12 +18,16 @@ import urllib.request
 
 
 
-def profile_dir():
-    """PROFILE_DIR, loaded the same way the zsh scripts load it (lib/env.sh)."""
+def harness_setting(name, default=""):
+    """A harness.env value, loaded the same way the zsh scripts load it (lib/env.sh)."""
     lib = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "lib", "env.sh")
-    r = subprocess.run(["/bin/zsh", "-c", 'source "$1"; print -r -- "$PROFILE_DIR"', "zsh", lib],
+    r = subprocess.run(["/bin/zsh", "-c", 'source "$1"; print -r -- "${(P)2}"', "zsh", lib, name],
                        capture_output=True, text=True)
-    return r.stdout.strip()
+    return r.stdout.strip() or default
+
+
+def profile_dir():
+    return harness_setting("PROFILE_DIR")
 
 
 HERE = os.path.join(profile_dir(), "telegram")
@@ -107,8 +111,11 @@ def main():
     claude = os.path.expanduser("~/.local/bin/claude")
     if not os.path.exists(claude):
         claude = shutil.which("claude") or "/opt/homebrew/bin/claude"
-    # Use the claude.ai subscription login like the Telegram session, not a stray API key.
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    # CLAUDE_P_IGNORE_API_KEY=1 (harness.env): use the claude.ai subscription login, not an API key.
+    env = dict(os.environ)
+    if harness_setting("CLAUDE_P_IGNORE_API_KEY", "0") == "1":
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
     last = ""
     for attempt in (1, 2):
         try:

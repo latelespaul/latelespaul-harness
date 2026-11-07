@@ -5,6 +5,7 @@
 #   install.sh           install missing tools, clone if missing, install the skill
 #   install.sh --start   also start the tmux session if it is not running
 #   install.sh --status  tools present and the session up? (exit 1 if not)
+# With FIRSTMATE_AUTOSTART=1 (default) a LaunchAgent starts the session again at every login.
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -52,6 +53,23 @@ if [[ $FIRSTMATE_TELEGRAM == 1 ]]; then
   act mkdir -p ~/.claude/channels/telegram-firstmate/logs
 fi
 
+# Start at login, so a reboot doesn't leave firstmate down (FIRSTMATE_AUTOSTART=0 turns it off).
+# Skipped under --start: the LaunchAgent itself runs --start.
+if [[ $mode == install ]]; then
+  FIRSTMATE_LABEL=com.$LABEL_PREFIX.firstmate
+  render_keys+=(FIRSTMATE_LABEL)
+  plist=$agents_dir/$FIRSTMATE_LABEL.plist
+  if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then
+    ensure_dir $agents_dir
+    act mkdir -p $HARNESS_DIR/logs
+    write_file $plist "$(render $mod/launchd/firstmate.plist.tmpl)"
+    if (( changed )) || ! launchd_loaded $FIRSTMATE_LABEL; then launchd_load $FIRSTMATE_LABEL $plist; fi
+  elif [[ -f $plist ]]; then
+    launchd_unload $FIRSTMATE_LABEL
+    act rm -f $plist
+  fi
+fi
+
 if [[ $mode == --start ]]; then
   if tmux has-session -t $FIRSTMATE_SESSION 2>/dev/null; then
     print "firstmate already running in tmux session $FIRSTMATE_SESSION."
@@ -60,7 +78,9 @@ if [[ $mode == --start ]]; then
     dry || print "started firstmate in tmux session $FIRSTMATE_SESSION (watch: tmux attach -t $FIRSTMATE_SESSION)."
   fi
 else
-  tmux has-session -t $FIRSTMATE_SESSION 2>/dev/null \
-    || print "Start firstmate with: $0 --start  (it does not survive a reboot; start it again after one)"
+  if ! tmux has-session -t $FIRSTMATE_SESSION 2>/dev/null; then
+    if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate with: $0 --start  (after that it starts by itself at every login)"
+    else print "Start firstmate with: $0 --start  (FIRSTMATE_AUTOSTART=0: start it again after a reboot)"; fi
+  fi
 fi
 true

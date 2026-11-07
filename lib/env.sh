@@ -33,6 +33,8 @@ unset _k
 : ${FIRSTMATE_DIR:=$PROJECTS_DIR/firstmate}
 : ${FIRSTMATE_SESSION:=firstmate}
 : ${FIRSTMATE_TELEGRAM:=0}
+: ${FIRSTMATE_AUTOSTART:=1}
+: ${CLAUDE_P_IGNORE_API_KEY:=0}
 MEMORY_DIRS=${MEMORY_DIRS//\~/$HOME}
 
 # Keys a template may use as __KEY__ (modules add their own).
