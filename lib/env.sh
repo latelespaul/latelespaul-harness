@@ -21,6 +21,9 @@ unset _k
 : ${MEMORY_DIRS:=$HOME}
 : ${SYNC_INTERVAL:=7200}
 : ${FRAMEWORK_PUSH:=0}
+: ${UPSTREAM_REMOTE:=origin}
+: ${FORK_REMOTE:=fork}
+: ${LOCAL_BRANCH:=local}
 : ${BROWSER_PORT:=9222}
 : ${BROWSER_EXTRA:=}
 : ${TELEGRAM_WORKDIR:=$PROJECTS_DIR/claude-telegram}

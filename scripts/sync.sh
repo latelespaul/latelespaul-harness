@@ -5,6 +5,7 @@
 #   sync.sh --pull   pull both, no commit or push (the SessionStart hook)
 # The framework is pull-only unless FRAMEWORK_PUSH=1. When a pull changes it, install.sh re-renders
 # CLAUDE.md, settings.json and the links (modules and launchd are left alone).
+# On the LOCAL_BRANCH it runs scripts/upstream.sh sync instead (upstream + your open PRs).
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 source ${0:A:h:h}/lib/env.sh
 mode=${1:-full}
@@ -43,7 +44,10 @@ else
   rc=1
 fi
 
-if [[ -d $HARNESS_DIR/.git ]] && has_upstream $HARNESS_DIR; then
+if [[ -d $HARNESS_DIR/.git && $(git -C $HARNESS_DIR branch --show-current) == $LOCAL_BRANCH ]]; then
+  # Contributor setup (CONTRIBUTING.md): upstream plus your open PRs. Only on full syncs: it calls GitHub.
+  [[ $mode == full ]] && { $HARNESS_DIR/scripts/upstream.sh sync || rc=1 }
+elif [[ -d $HARNESS_DIR/.git ]] && has_upstream $HARNESS_DIR; then
   before=$(git -C $HARNESS_DIR rev-parse HEAD)
   if [[ $mode == full && $FRAMEWORK_PUSH == 1 ]]; then
     commit_all $HARNESS_DIR && push_pull $HARNESS_DIR || rc=1
