@@ -155,10 +155,17 @@ def is_ours(cmd):
     prog = os.path.basename(words[0])
     if words[0].endswith("/telegram/run.sh"):
         return True
-    # "/bin/zsh -il .../telegram/run.sh" (its shebang); "zsh -c '...run.sh...'" is someone's command.
-    if (prog in ("zsh", "bash", "sh", "screen", "SCREEN", "login") and "-c" not in words
-            and any(w.endswith("/telegram/run.sh") for w in words[1:])):
-        return True
+    # "/bin/zsh -il .../telegram/run.sh" (its shebang) or the screen/login that started it.
+    # "zsh -c '...run.sh...'" (also -lc, -ic) is someone's command, and for a shell run.sh must be
+    # the script it runs, not an argument to another script.
+    if prog in ("zsh", "bash", "sh", "screen", "SCREEN", "login"):
+        for w in words[1:]:
+            if w.endswith("/telegram/run.sh"):
+                return True
+            if w.startswith("-") and not w.startswith("--") and "c" in w:
+                return False
+            if prog in ("zsh", "bash", "sh") and not w.startswith("-"):
+                return False
     if prog in ("claude", "node") and "telegram-settings.json" in cmd:
         return True
     return prog == "bun" and "plugins/cache/claude-plugins-official/telegram" in cmd
