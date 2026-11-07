@@ -54,9 +54,12 @@ plugin_problem() {
   [[ -d $cache/claude-plugins-official/telegram ]] && return 0
   other=(${cache}/*/telegram(N/:h:t))
   if (( $#other )); then
+    # Remove the other copy too: installing it enabled it in settings.json, so every normal session
+    # would start a second poller that steals the bot's messages.
     print -r -- "the plugin is installed from '${other[1]}', whose messages Claude drops (not on the channels allowlist). Fix:"
+    print -r -- "  claude plugin uninstall telegram@${other[1]}"
     print -r -- "  claude plugin marketplace add anthropics/claude-plugins-official"
-    print -r -- "  claude plugin install telegram@claude-plugins-official --replace"
+    print -r -- "  claude plugin install telegram@claude-plugins-official"
   else
     print -r -- "the plugin: claude plugin install telegram@claude-plugins-official (settings.json keeps it off for normal sessions)"
   fi
