@@ -74,3 +74,5 @@ My long-term memory is the `memory/` folder in my profile. It is plain markdown 
 ## Changing the harness
 - A rule for everyone who uses this framework goes in the harness; anything about me goes in the profile (ABOUT.md, memory, my own skills). Never put personal data, paths, hostnames or account names in the harness.
 - After adding a skill, command or subagent, run the harness's `install.sh` so it gets linked.
+- The harness is shared and grows from both sides. Every harness change goes upstream as a PR, following `CONTRIBUTING.md` in the harness: `scripts/upstream.sh new <name>` for a worktree, one change per PR, the PR template filled in, and `scripts/upstream.sh pr` to check and send it. Never commit on `main` or the running branch.
+- When working in the harness, run `scripts/upstream.sh status` first. If the other side has open PRs, offer to review them. If upstream has commits that aren't running here, run `upstream.sh sync`.
