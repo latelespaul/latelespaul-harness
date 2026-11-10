@@ -8,7 +8,8 @@
 --           its pid exiting), and checked again before every authenticated call
 --   driver  a Hammerspoon module whose public <name>.hands.status() says it is armed or busy
 --           (init.lua probes them every 30 s): held while it stays so
---   input   events posted with harness.EVENT_TAG: held until 30 minutes after the last one
+--   input   events posted with harness.EVENT_TAG or a tag registered with harness.addEventTag:
+--           held until 30 minutes after the last one
 -- When the guard has to take a hold because nothing else held awake mode, it sends ONE alert per
 -- owner per arm (or busy period), and at most one every 10 minutes, so one gap is one message.
 -- An authenticated call is refused when no hold can be taken (the screen is locked, or

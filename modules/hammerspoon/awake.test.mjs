@@ -309,3 +309,54 @@ test('init.lua reports the same config fingerprint that install.sh computes', { 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), out.config);
 });
+
+// ---------- init.lua: event tags (harness.addEventTag) ----------
+const OWN_TAG = 0x4548, OTHER_TAG = 0x1234;
+// Takes a hold while nobody has touched the Mac for 10 minutes (so it goes away at once), moves the
+// clock past the 3 s grace, then posts a key press with `tag` to the person watcher.
+const AWAY_KEY = tag => `hs.host.idleTime = function() return 600 end
+  harness.awake(true, {owner="job", minutes=10})
+  local mode = harness.awakeInfo().mode
+  local t0 = os.time(); hs.timer.secondsSinceEpoch = function() return t0 + 10 end
+  local dropped = SMOKE.taps[#SMOKE.taps].fn(SMOKE.event("keyDown", ${tag}))
+  return hs.json.encode({ mode = mode, dropped = dropped, locked = SMOKE.locked })`;
+
+test('the person watcher takes a registered tag for machine input, like EVENT_TAG', { skip: skipLua }, () => {
+  for (const tag of [`${OWN_TAG}`, 'harness.EVENT_TAG']) {
+    const out = load(undefined, `assert(harness.addEventTag(${OWN_TAG})); ${AWAY_KEY(tag)}`);
+    const res = JSON.parse(out.result);
+    assert.equal(res.mode, 'away');
+    assert.equal(res.dropped, false, 'the event reaches the app');
+    assert.equal(res.locked, 0);
+    assert.deepEqual(out.after.owners, ['job'], 'awake mode stays on');
+  }
+});
+
+test('an unregistered or removed tag is a person: in away mode it locks and the key is dropped', { skip: skipLua }, () => {
+  for (const setup of [`harness.addEventTag(${OWN_TAG})`, `harness.addEventTag(${OTHER_TAG}); harness.removeEventTag(${OTHER_TAG})`]) {
+    const out = load(undefined, `${setup}; ${AWAY_KEY(OTHER_TAG)}`);
+    const res = JSON.parse(out.result);
+    assert.equal(res.mode, 'away');
+    assert.equal(res.dropped, true, 'the key does not reach the app');
+    assert.equal(res.locked, 1);
+    assert.deepEqual(names(out.after.owners), []);
+    assert.equal(out.after.last_end.reason, 'person at the Mac');
+  }
+});
+
+test('addEventTag refuses bad tags, and adding a tag again is a no-op', { skip: skipLua }, () => {
+  const out = load(undefined, `local r = {}
+    for k, v in pairs({ str = "18760", frac = 1.5, zero = 0, base = harness.EVENT_TAG, bool = true }) do r[k] = { harness.addEventTag(v) } end
+    r.none = { harness.addEventTag() }
+    r.removeBad = { harness.removeEventTag(0) }
+    r.add = { harness.addEventTag(${OWN_TAG}), harness.addEventTag(${OWN_TAG}), harness.addEventTag(${OWN_TAG}.0) }
+    r.tags = harness.eventTags()
+    return hs.json.encode(r)`);
+  const r = JSON.parse(out.result);
+  for (const x of [r.str, r.frac, r.bool, r.none]) assert.deepEqual(x, [false, 'event tag must be an integer']);
+  assert.deepEqual(r.zero, [false, 'event tag 0 is the untagged default']);
+  assert.deepEqual(r.base, [false, 'event tag is harness.EVENT_TAG, which always counts']);
+  assert.equal(r.removeBad[0], false);
+  assert.deepEqual(r.add, [true, true, true]);
+  assert.deepEqual(r.tags, [OWN_TAG], 'one registration, however often it is added');
+});

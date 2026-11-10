@@ -46,7 +46,27 @@ local function finishTasks()
   for _, done in ipairs(R.done) do done(tonumber(os.getenv("NOTIFY_EXIT") or "0"), "", "") end
   R.done = {}
 end
-hs.pathwatcher = { new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
+-- An event tap keeps its callback, so a test can post an event to it from SMOKE_THEN:
+--   SMOKE.taps[i].fn(SMOKE.event("keyDown", tag))   (taps in the order init.lua made them)
+-- hs.caffeinate.lockScreen() only records the lock in SMOKE.locked.
+local T = { keyDown = 10, leftMouseDown = 1, rightMouseDown = 3, otherMouseDown = 25, mouseMoved = 5, scrollWheel = 22 }
+local P = { eventSourceUserData = 42, mouseEventDeltaX = 4, mouseEventDeltaY = 5 }
+R.taps = {}
+hs.eventtap = { event = { types = T, properties = P }, new = function(_, fn)
+  local tap = { fn = fn, on = false }
+  function tap:start() self.on = true; return self end
+  function tap:stop() self.on = false; return self end
+  function tap:isEnabled() return self.on end
+  R.taps[#R.taps + 1] = tap
+  return tap
+end }
+SMOKE = { taps = R.taps, locked = 0 }
+function SMOKE.event(kind, tag)
+  return { getType = function() return T[kind] end,
+    getProperty = function(_, p) if p == P.eventSourceUserData then return tag or 0 end; return 50 end }
+end
+hs.caffeinate.lockScreen = function() SMOKE.locked = SMOKE.locked + 1 end
+hs.pathwatcher ={ new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
 hs.ipc = { cliInstall = function() end, __default = { delete = function() R.genericClosed = true end },
   localPort = function(name, fn) R.ports[name] = fn; return {} end }
 hs.fs = {
