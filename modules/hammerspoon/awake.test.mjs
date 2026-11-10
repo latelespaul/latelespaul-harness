@@ -99,6 +99,10 @@ test('with the generic hs port closed, awake talks to the harness port through h
 
 // ---------- run keeps its hold while the command runs ----------
 const FAST = { AWAKE_RECHECK_SECS: '0.3' };
+// Shell that waits up to 10 s for the fake caffeinate to log its start. A loaded machine (the whole
+// suite runs files in parallel; CI runners are slower) can start the background caffeinate late, so a
+// fixed sleep could end the run before caffeinate ever ran.
+const untilCaffeinated = s => `i=0; while [ ! -s ${join(s.d, 'caffeinate.txt')} ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done`;
 
 test('run takes its hold again after Hammerspoon lost it, as the same owner and pid', () => {
   const s = sandbox('{"on":true}', FAST);   // status.json: a fresh Hammerspoon that holds nothing
@@ -157,7 +161,7 @@ test('an end from before run started does not count: the hold is taken again', (
 test('while Hammerspoon does not answer, caffeinate keeps the display awake, tied to the run', () => {
   const s = sandbox('{"on":true}', FAST);
   writeFileSync(join(s.d, 'down'), '');
-  const r = s.run('run', 'night', '--', 'sh', '-c', 'echo ran; sleep 1');
+  const r = s.run('run', 'night', '--', 'sh', '-c', `echo ran; ${untilCaffeinated(s)}; sleep 1`);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), 'ran');
   const caff = s.caffeinated();
@@ -172,7 +176,7 @@ test('while Hammerspoon does not answer, caffeinate keeps the display awake, tie
 test('once Hammerspoon answers again, caffeinate stops and the hold is taken', () => {
   const s = sandbox('{"on":true}', FAST);
   writeFileSync(join(s.d, 'down'), '');
-  const r = s.run('run', 'night', '--', 'sh', '-c', `sleep 0.8; rm ${join(s.d, 'down')}; sleep 1.2`);
+  const r = s.run('run', 'night', '--', 'sh', '-c', `${untilCaffeinated(s)}; sleep 0.8; rm ${join(s.d, 'down')}; sleep 1.2`);
   assert.equal(r.status, 0, r.stderr);
   const cpid = Number(s.caffeinated()[0].split(' ')[0]);
   assert.equal(alive(cpid), false);

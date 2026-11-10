@@ -42,6 +42,10 @@ what they fix reaches you on the next sync. Agents follow this file too (AGENTS.
 - **Works for someone else.** It should be safe on a Mac that isn't yours: honour `HARNESS_DRY_RUN`
   and `HARNESS_SKIP_LAUNCHD`, keep re-running idempotent, and don't restart a healthy bot.
 - **Says what was tested.** "Checks run" lists what you actually ran and what you didn't.
+- **Passes CI.** `.github/workflows/test.yml` runs every node test on macOS for each push and PR.
+  Run them yourself first: `node --test $(find modules scripts -name '*.test.mjs')` (the Lua-backed
+  ones need `brew install lua@5.4` and skip without it). Tests use fakes and a throwaway HOME, never
+  this Mac's Hammerspoon, launchd or profile.
 - **Documents itself.** Update the README, SETUP.md or the module's docs in the same PR.
 - **Matches the style.** Same zsh idioms, comment density and wording as the code around it.
 
