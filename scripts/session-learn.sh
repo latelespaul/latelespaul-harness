@@ -12,6 +12,8 @@ mkdir -p $logs
 
 (
   export HARNESS_LEARN=1 PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin
+  # CLAUDE_P_IGNORE_API_KEY=1: use the claude.ai subscription login, not an API key from the shell.
+  [[ $CLAUDE_P_IGNORE_API_KEY == 1 ]] && unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
   # User and assistant text only, last ~60k characters.
   convo=$(jq -r '
     select(.type == "user" or .type == "assistant")

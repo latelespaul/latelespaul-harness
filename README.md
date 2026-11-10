@@ -10,11 +10,13 @@ It comes in two parts:
 >
 > `Clone https://github.com/<owner>/agent-harness into ~/Projects/agent-harness and follow SETUP.md`
 >
-> The agent checks prerequisites, interviews you, creates your private profile repo (after asking), installs, walks you through the modules you chose, and ends with a pass/fail table. It never asks you to paste a secret into the chat.
+> On a fresh Mac, install Claude Code first: `curl -fsSL https://claude.ai/install.sh | bash`, then run `claude`.
+>
+> The agent checks prerequisites (and installs what is missing, after asking), interviews you, creates your private profile repo (after asking), installs, walks you through the modules you chose, and ends with a pass/fail table. It never asks you to paste a secret into the chat.
 
 ## Manual path
 ```sh
-git clone https://github.com/<owner>/agent-harness ~/Projects/agent-harness
+git clone https://github.com/<owner>/agent-harness ~/Projects/agent-harness   # or your fork
 cd ~/Projects/agent-harness
 gh repo create <you>/agent-profile --private        # optional: sync memory across machines
 ./install.sh --dry-run                              # asks for your values, shows what it would do
@@ -68,7 +70,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 | `browser` | "Claude Chrome": a separate Chrome with its own logins that agents drive through `chrome-devtools-axi`; optional extra browsers per account |
 | `hammerspoon` | Links a Hammerspoon config so screen-reading and mouse/keyboard tools run inside one signed app: permissions are granted once |
 | `cron` | `hcron`: one scheduler (a single LaunchAgent) for every job, with windows across midnight, catch-up after sleep, lock-aware GUI jobs and Telegram alerts |
-| `firstmate` | Installs the toolchain [firstmate](https://github.com/kunchenguid/firstmate) needs (pinned npm and release tools, Homebrew for the rest), clones it and makes it the default executor for code work, via its inbox |
+| `firstmate` | Installs the toolchain [firstmate](https://github.com/kunchenguid/firstmate) needs (pinned npm and release tools, Homebrew for the rest), clones it and makes it the default executor for code work, via its inbox. Starts at login (`FIRSTMATE_AUTOSTART`) |
 
 ## Updates
 - The framework is pull-only by default: each session start and each sync pulls it (`--ff-only`), and when it changed, `install.sh` re-renders CLAUDE.md, settings and links on its own. Module changes need `install.sh` by hand.

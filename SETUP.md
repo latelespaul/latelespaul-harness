@@ -13,11 +13,24 @@ You are an AI agent setting up this harness for the user in front of you. Follow
 ## 1. Prerequisites
 Check what is installed:
 ```sh
-for c in brew git gh claude tmux jq python3 node; do printf '%-8s %s\n' $c "$(command -v $c || echo MISSING)"; done; gh auth status 2>&1 | head -3
+xcode-select -p >/dev/null 2>&1 && echo "xcode-clt ok" || echo "xcode-clt MISSING"
+for c in brew git gh claude tmux jq python3 node bun screen; do printf '%-8s %s\n' $c "$(command -v $c || echo MISSING)"; done
+test -d "/Applications/Google Chrome.app" && echo "chrome   ok" || echo "chrome   MISSING"
+gh auth status 2>&1 | head -3
 ```
-- Required: `git`, `jq`, `gh` (logged in), `claude`, `python3`. `tmux` is needed for the firstmate module (its installer adds tmux and the rest of firstmate's toolchain), `node`/`npm` for the optional agent tools.
-- Offer to install what is missing with Homebrew (`brew install git gh jq tmux node`). No Homebrew: point them to https://brew.sh and stop until they have it. Claude Code: https://docs.claude.com/en/docs/claude-code/setup.
-- `gh` not logged in: ask them to run `! gh auth login` (browser flow; they handle it).
+Offer to install everything missing in one go (ask once, list what you will run). Exact commands:
+
+| Missing | Needed for | Install |
+|---|---|---|
+| Xcode command-line tools (git, python3) | everything | `xcode-select --install` (opens a macOS dialog; the user clicks Install) |
+| Homebrew | installing the rest | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`, then the two `eval` lines it prints (needs the user's password, so they run it: `! <command>`) |
+| Claude Code | everything | `curl -fsSL https://claude.ai/install.sh \| bash` |
+| gh, jq, tmux, node | core, firstmate, agent tools | `brew install gh jq tmux node` |
+| bun, screen | telegram module | `brew install oven-sh/bun/bun screen` |
+| Google Chrome | browser module | `brew install --cask google-chrome` |
+
+Only install the module rows for modules the user picks in step 2; it is fine to come back to them after the interview. The firstmate module's installer adds the rest of firstmate's toolchain itself.
+`gh` not logged in: ask them to run `! gh auth login` (browser flow; they handle it).
 
 **Verify:** `command -v git jq gh claude python3 && gh auth status`
 
@@ -78,9 +91,13 @@ Write `P/ABOUT.md` from the interview: name, GitHub, machine, projects folder, h
 The framework ships skills for these CLI tools (pinned versions; see each skill's `UPSTREAM.md`):
 - `lavish-axi`: plans and reviews as annotatable HTML pages.
 - `gnhf`: long unattended coding runs on their own branch.
-- `chrome-devtools-axi`: drives the browser module's Claude Chrome.
+- `chrome-devtools-axi`: drives the browser module's Claude Chrome (needed when `browser` is on).
 
-Ask which they want, then: `npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtools-axi@0.1.44` (only the chosen ones).
+Recommend all of them; ask once, then install the chosen ones:
+```sh
+npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtools-axi@0.1.44
+```
+`gh-axi` and `no-mistakes` (a gate that reviews, tests and opens the PR before code is pushed) are part of firstmate's toolchain: `H/modules/firstmate/tools.sh` installs them pinned and checksummed, and works without the firstmate module too. `no-mistakes init` turns it on per repo (it pushes and opens PRs there), so only run that in a repo with the user's OK.
 
 **Verify:** `for t in lavish-axi gnhf chrome-devtools-axi; do command -v $t; done`
 
