@@ -5,11 +5,14 @@
 #   install.sh                         install / repair all of them on this Mac
 #   install.sh [--id <id>] --uninstall stop one (default: claude); keeps the profile and its logins
 #   install.sh [--id <id>] --status    is it up? (exit 1 if not; without --id: all of them)
+# A profile in desktop mode (chrome-mode.sh) is left stopped: its agent is not loaded or restarted.
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
 source ${0:A:h:h:h}/lib/common.sh
 mod=$HARNESS_DIR/modules/browser
+source $mod/chrome-mode.sh
+chrome_bin=${CHROME_BIN:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
 uid=$(id -u)
 browsers=(claude:$BROWSER_PORT ${(z)BROWSER_EXTRA})
 id=claude ids=()
@@ -23,7 +26,9 @@ case ${1:-install} in
   rc=0
   for id in $ids; do
     port=$(port_of $id) || { print "no browser with id $id"; rc=1; continue }
-    if up $port; then print "chrome-$id is up on 127.0.0.1:$port."; else print "chrome-$id is down."; rc=1; fi
+    if up $port; then print "chrome-$id is up on 127.0.0.1:$port."
+    elif [[ $(chrome_mode $id) == desktop ]]; then print "chrome-$id is in desktop mode: agent left stopped."
+    else print "chrome-$id is down."; rc=1; fi
   done
   command -v chrome-devtools-axi >/dev/null || { print "chrome-devtools-axi is not installed (npm i -g chrome-devtools-axi@0.1.44)."; rc=1 }
   exit $rc ;;
@@ -36,7 +41,7 @@ install) ;;
 *) print "usage: $0 [--id <id>] [--uninstall|--status]"; exit 1 ;;
 esac
 
-[[ -d "/Applications/Google Chrome.app" ]] || { print "Install Google Chrome first: brew install --cask google-chrome"; dry || exit 1 }
+[[ -x $chrome_bin ]] || { print "Install Google Chrome first: brew install --cask google-chrome"; dry || exit 1 }
 command -v chrome-devtools-axi >/dev/null || print "Note: install the controller with: npm i -g chrome-devtools-axi@0.1.44"
 
 ensure_dir $agents_dir
@@ -54,6 +59,14 @@ for b in $browsers; do
     write_file ~/.local/bin/chrome-$CHROME_ID "$(render $mod/chrome-wrapper.tmpl)"
     act chmod +x ~/.local/bin/chrome-$CHROME_ID
     (( ${path[(Ie)$HOME/.local/bin]} )) || print "Note: ~/.local/bin is not on PATH, so chrome-$CHROME_ID won't be found. Add to ~/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+  # Desktop mode: another tool runs this profile as a normal Chrome. Loading the agent would hand
+  # each launch to that Chrome, which opens one more empty window every time.
+  if [[ $(chrome_mode $CHROME_ID) == desktop ]]; then
+    # An agent still loaded from an older plist keeps relaunching; stop it unless it serves its port.
+    if launchd_loaded $CHROME_LABEL && ! up $CHROME_PORT; then launchd_unload $CHROME_LABEL; fi
+    print "chrome-$CHROME_ID: desktop mode: agent left stopped (back to agent mode: $mod/chrome-mode.sh $CHROME_ID agent, then re-run this installer)."
+    continue
   fi
   if (( ! plist_changed )) && launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
     print "chrome-$CHROME_ID already running; left it alone."
