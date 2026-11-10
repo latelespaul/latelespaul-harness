@@ -6,8 +6,8 @@
 #   install.sh --start   also start the tmux session if it is not running
 #   install.sh --autostart  start the session only if missing (same as start.sh; installs nothing)
 #   install.sh --status  tools present, autostart registered and the session up? (exit 1 if not)
-# With FIRSTMATE_AUTOSTART=1 (default) the hcron job firstmate-start runs start.sh every 5 minutes
-# with --catchup, so the session comes back after a login or reboot (hcron has no at-login trigger).
+# With FIRSTMATE_AUTOSTART=1 (default) the hcron job firstmate-start runs start.sh --once every 5
+# minutes with --catchup, so the session starts once after each boot (hcron has no at-login trigger).
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -67,7 +67,7 @@ fi
 if [[ $mode == --start ]]; then
   zsh $mod/start.sh
 elif ! tmux has-session -t "=$FIRSTMATE_SESSION" 2>/dev/null; then
-  if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate now with: $0 --start  (or wait: hcron job firstmate-start starts it within 5 minutes, and after every login)"
+  if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate now with: $0 --start  (or wait: hcron job firstmate-start starts it within 5 minutes, once per boot)"
   else print "Start firstmate with: $0 --start  (FIRSTMATE_AUTOSTART=0: start it again after a reboot)"; fi
 fi
 true

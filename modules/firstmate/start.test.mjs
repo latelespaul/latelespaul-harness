@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,8 @@ function sandbox({ modules = 'firstmate cron', autostart = 1, installed = true }
   const bin = join(d, 'bin'), fake = join(d, 'fake'), home = join(d, 'home');
   for (const p of [bin, fake, home]) mkdirSync(p, { recursive: true });
   writeFileSync(join(bin, 'tmux'), FAKE_TMUX); chmodSync(join(bin, 'tmux'), 0o755);
+  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\ncat "$FAKE/boottime"\n'); chmodSync(join(bin, 'sysctl'), 0o755);
+  writeFileSync(join(fake, 'boottime'), '{ sec = 1000, usec = 0 } Mon Jan  1 00:00:00 2026');
   writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\necho "$*" >> "$FAKE/launchctl.log"\n'); chmodSync(join(bin, 'launchctl'), 0o755);
   const fm = join(d, 'firstmate');
   if (installed) mkdirSync(join(fm, '.git'), { recursive: true });
@@ -41,7 +43,10 @@ function sandbox({ modules = 'firstmate cron', autostart = 1, installed = true }
   const tmuxCalls = () => existsSync(join(fake, 'tmux.log')) ? readFileSync(join(fake, 'tmux.log'), 'utf8').trim().split('\n') : [];
   const jobs = () => existsSync(env.HCRON_JOBS) ? JSON.parse(readFileSync(env.HCRON_JOBS, 'utf8')).jobs : {};
   const setRunning = name => writeFileSync(join(fake, 'running'), name);
-  return { d, fake, home, fm, run, tmuxCalls, jobs, setRunning };
+  const stop = () => rmSync(join(fake, 'running'), { force: true });
+  const reboot = sec => writeFileSync(join(fake, 'boottime'), `{ sec = ${sec}, usec = 0 } Mon Jan  1 00:00:00 2026`);
+  const starts = () => tmuxCalls().filter(c => c.startsWith('new ')).length;
+  return { d, fake, home, fm, run, tmuxCalls, jobs, setRunning, stop, reboot, starts };
 }
 
 test('starts the session with the launch command when it is missing', () => {
@@ -117,7 +122,7 @@ test('--register adds one hcron job, idempotently, and keeps a pause', () => {
   assert.equal(s.run(['--register']).status, 0);
   const first = s.jobs()['firstmate-start'];
   assert.equal(first.cron, '*/5 * * * *');
-  assert.equal(first.cmd, `/bin/zsh ${START}`);
+  assert.equal(first.cmd, `/bin/zsh ${START} --once`);
   assert.equal(first.catchup, true);
   assert.equal(first.project, 'firstmate');
   const jobs = JSON.parse(readFileSync(join(s.d, 'jobs.json'), 'utf8'));
@@ -166,8 +171,53 @@ test('--status reports the autostart job', () => {
   r = s.run(['--status']);
   assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /hcron job firstmate-start/);
   assert.equal(sandbox({ autostart: 0 }).run(['--status']).status, 0);
-  const noCron = sandbox({ modules: 'firstmate' });
-  noCron.run(['--register']);
-  r = noCron.run(['--status']);
-  assert.equal(r.status, 1); assert.match(r.stdout, /cron module is off/);
+});
+
+test('--status without the cron module is a note, not a failure, registered or not', () => {
+  const s = sandbox({ modules: 'firstmate' });
+  let r = s.run(['--status']);
+  assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /effectively off/);
+  s.run(['--register']);
+  r = s.run(['--status']);
+  assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /effectively off/);
+});
+
+test('--once starts the session once per boot; a session closed on purpose stays closed', () => {
+  const s = sandbox();
+  assert.equal(s.run(['--once']).status, 0);
+  assert.equal(s.starts(), 1);
+  s.stop();
+  const r = s.run(['--once']);
+  assert.equal(r.status, 0); assert.match(r.stdout, /already ran this boot/);
+  assert.equal(s.starts(), 1);
+  s.reboot(2000);
+  assert.equal(s.run(['--once']).status, 0);
+  assert.equal(s.starts(), 2);
+});
+
+test('--once that finds the session running marks the boot too', () => {
+  const s = sandbox();
+  s.setRunning('fm-test');
+  assert.equal(s.run(['--once']).status, 0);
+  s.stop();
+  s.run(['--once']);
+  assert.equal(s.starts(), 0);
+});
+
+test('a manual start ignores the marker', () => {
+  const s = sandbox();
+  s.run(['--once']); s.stop();
+  const r = s.run();
+  assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /started firstmate/);
+  assert.equal(s.starts(), 2);
+});
+
+test('--once does not mark the boot when the start fails or is a dry run', () => {
+  const s = sandbox();
+  writeFileSync(join(s.fake, 'new-fails'), '');
+  assert.equal(s.run(['--once']).status, 1);
+  rmSync(join(s.fake, 'new-fails'));
+  s.run(['--once', '--dry-run']);
+  assert.equal(s.run(['--once']).status, 0);
+  assert.equal(s.starts(), 2);
 });
