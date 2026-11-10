@@ -1,0 +1,36 @@
+# Runs every node test (modules/**/*.test.mjs, scripts/*.test.mjs) on a macOS runner.
+# The tests use fake tools and a throwaway HOME, so they never need Hammerspoon, launchctl or a profile.
+# Lua 5.4 (Homebrew lua@5.4) runs the Lua-backed tests; LUA points at it so they never skip here.
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-tests:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Lua 5.4
+        run: |
+          brew install lua@5.4
+          lua="$(brew --prefix lua@5.4)/bin/lua"
+          "$lua" -e 'assert(_VERSION >= "Lua 5.4"); print(_VERSION)'
+          echo "LUA=$lua" >> "$GITHUB_ENV"
+      - name: Run node tests
+        run: node --test $(find modules scripts -name '*.test.mjs' | sort)
