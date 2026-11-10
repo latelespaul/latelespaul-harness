@@ -191,3 +191,31 @@ test('run says "not started" when the job folder cannot be entered', () => {
   assert.equal(r.stdout.trim(), 'x: not started');
   assert.equal(s.state('x').pid, null);
 });
+
+test('an --awake job holds awake mode while it runs and releases it with a lock when it ends', async () => {
+  const s = sandbox();
+  const bin = join(s.d, 'bin'); mkdirSync(bin);
+  const calls = join(s.d, 'hs-calls.txt');
+  // A fake `hs` that records each Lua call and answers like Hammerspoon.
+  writeFileSync(join(bin, 'hs'), `#!/bin/sh\nprintf '%s\\n' "$4" >> ${calls}\necho '{"on":true}'\n`, { mode: 0o755 });
+  s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+  assert.equal(s.run('add', 'aw', '--cron', '@daily', '--awake', '--timeout', '30m', '--cmd', 'true').status, 0);
+  assert.equal(s.jobs().aw.awake, true);
+  assert.match(s.run('list').stdout, /aw .* awake/);
+  s.run('run', 'aw');
+  await until(() => s.state('aw').pid === null && existsSync(calls) && readFileSync(calls, 'utf8').split('\n').length > 2);
+  const [on, off] = readFileSync(calls, 'utf8').trim().split('\n');
+  assert.match(on, /harness\.awake\(true, \{owner="aw", minutes=31\}\)/);
+  assert.match(off, /harness\.awake\(false, \{owner="aw", lock=true/);
+  assert.match(s.run('logs', 'aw').stdout, /awake on: \{"on":true\}/);
+});
+
+test('an --awake job still runs when Hammerspoon does not answer', async () => {
+  const s = sandbox();
+  s.env.HCRON_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';   // no hs on PATH
+  s.run('add', 'aw2', '--cron', '@daily', '--awake', '--cmd', 'exit 0');
+  s.run('run', 'aw2');
+  await until(() => s.state('aw2').pid === null);
+  assert.equal(s.state('aw2').last_exit, 0);
+  assert.match(s.run('logs', 'aw2').stdout, /awake on failed: Hammerspoon not answering/);
+});
