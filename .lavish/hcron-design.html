@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hcron Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f4f1ea; --panel:#fffdf8; --ink:#1d2024; --mute:#5d6470; --line:#d9d2c3;
+  --brass:#b0791d; --brass-soft:#f3e3c2; --go:#2f7d4f; --go-soft:#d8efe0; --warn:#b5531c; --warn-soft:#f8dfcf;
+  --blue:#2b5f9e; --blue-soft:#dce8f6; --grey-soft:#ebe7de; --code:#ece6da;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14161a; --panel:#1c1f25; --ink:#e9e6df; --mute:#9aa1ad; --line:#323743;
+  --brass:#e0a640; --brass-soft:#3a2f1a; --go:#5cc386; --go-soft:#1d3527; --warn:#f08a52; --warn-soft:#3d2519;
+  --blue:#7fb0ec; --blue-soft:#1d2b3e; --grey-soft:#262a31; --code:#23262d; color-scheme: dark;}}
+:root[data-theme="dark"]{
+  --bg:#14161a; --panel:#1c1f25; --ink:#e9e6df; --mute:#9aa1ad; --line:#323743;
+  --brass:#e0a640; --brass-soft:#3a2f1a; --go:#5cc386; --go-soft:#1d3527; --warn:#f08a52; --warn-soft:#3d2519;
+  --blue:#7fb0ec; --blue-soft:#1d2b3e; --grey-soft:#262a31; --code:#23262d; color-scheme: dark;}
+*,*::before,*::after{box-sizing:border-box}
+:where(.grid,.row)>*{min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 "Space Grotesk",ui-sans-serif,system-ui,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{text-wrap:balance;line-height:1.2;margin:0}
+h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.02em}
+h2{font-size:26px;letter-spacing:-.01em}
+h3{font-size:17px}
+p{margin:0;max-width:68ch}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.88em}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+.kicker{font:600 12px/1 "IBM Plex Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--brass)}
+.mute{color:var(--mute)}
+section{display:flex;flex-direction:column;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.tag{display:inline-block;font:600 11px/1 "IBM Plex Mono",monospace;padding:5px 8px;border-radius:99px;background:var(--brass-soft);color:var(--brass);letter-spacing:.04em}
+.fig{width:100%;height:auto;display:block}
+.fig text{font-family:"Space Grotesk",sans-serif;fill:var(--ink)}
+.fig .m{font-family:"IBM Plex Mono",monospace;font-size:11px;fill:var(--mute)}
+.fig .t{font-size:14px;font-weight:600}
+.fig .node{fill:var(--panel);stroke:var(--line);stroke-width:1.5}
+.fig .brass{fill:var(--brass-soft);stroke:var(--brass);stroke-width:1.6}
+.fig .go{fill:var(--go-soft);stroke:var(--go);stroke-width:1.6}
+.fig .blue{fill:var(--blue-soft);stroke:var(--blue);stroke-width:1.6}
+.fig .warn{fill:var(--warn-soft);stroke:var(--warn);stroke-width:1.6}
+.fig .edge{stroke:var(--mute);stroke-width:1.5;fill:none}
+.fig .dash{stroke-dasharray:5 4}
+.fig .hl{filter:drop-shadow(0 0 6px var(--brass))}
+.fig .hl rect{stroke:var(--brass);stroke-width:3}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.btn{font:600 13px "Space Grotesk",sans-serif;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}
+.btn:hover{border-color:var(--brass)}
+.btn.on{background:var(--brass);color:var(--panel);border-color:var(--brass)}
+input[type=text]{font:15px "IBM Plex Mono",monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%}
+input[type=range]{width:100%;accent-color:var(--brass)}
+label{font-size:13px;color:var(--mute)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.stepbar{display:flex;gap:6px;flex-wrap:wrap}
+.pill{font:600 12px "IBM Plex Mono",monospace;padding:6px 10px;border-radius:8px;background:var(--grey-soft);color:var(--mute);border:0;cursor:pointer}
+.pill.on{background:var(--brass);color:var(--panel)}
+.term{background:#121417;color:#dfe3ea;border-radius:12px;padding:16px;font:13px/1.55 "IBM Plex Mono",monospace;overflow-x:auto;white-space:pre}
+.term .p{color:#e0a640}.term .g{color:#6fd39a}.term .d{color:#8b93a1}.term .r{color:#f08a52}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mute)}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+.err{color:var(--warn);font-size:13px}
+.fields{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.fields div{background:var(--grey-soft);border-radius:8px;padding:8px;text-align:center}
+.fields b{display:block;font:600 16px "IBM Plex Mono",monospace;color:var(--brass)}
+.fields span{font-size:11px;color:var(--mute)}
+.hours{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px}
+.hours div{height:26px;border-radius:3px;background:var(--grey-soft);position:relative}
+.hours div.on{background:var(--brass)}
+.hours small{position:absolute;bottom:-18px;left:0;font:10px "IBM Plex Mono",monospace;color:var(--mute)}
+.note{border-left:3px solid var(--brass);padding:4px 0 4px 14px}
+.limits li{margin-bottom:8px}
+ul,ol{margin:0;padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+
+<header style="display:flex;flex-direction:column;gap:14px">
+  <span class="kicker">latelespaul-harness · modules/cron · merged as PR #7</span>
+  <h1>hcron: one clock for every job on your Mac</h1>
+  <p class="mute" style="font-size:17px">One launchd agent wakes once a minute, reads a single list of jobs, and starts whichever ones are due. Each one gets a supervisor that keeps the Mac awake, enforces the time limit and records the outcome. When something goes wrong, you hear about it on Telegram instead of finding out days later.</p>
+  <div class="grid g3" style="margin-top:8px">
+    <div class="card"><div class="kicker">heartbeat</div><div style="font-size:28px;font-weight:700">60 s</div><div class="mute">launchd <code>StartInterval</code> → <code>hcron tick</code></div></div>
+    <div class="card"><div class="kicker">jobs today</div><div style="font-size:28px;font-weight:700">1</div><div class="mute"><code>job-hunt</code> · <code>7 * * * *</code> · catch-up on</div></div>
+    <div class="card"><div class="kicker">code</div><div style="font-size:28px;font-weight:700">310 lines</div><div class="mute">Node, no dependencies · 15 tests</div></div>
+  </div>
+</header>
+
+<!-- 1. BIG PICTURE -->
+<section>
+  <span class="kicker">1 · The big picture</span>
+  <h2>Five parts, each with one job</h2>
+  <p>launchd is the only part that's always running. Everything else starts, does its work and exits. That's why one stuck job can't take the scheduler down with it.</p>
+  <div class="card scroll">
+  <svg class="fig" viewBox="0 0 980 430" role="img" aria-labelledby="bp-t" style="min-width:680px">
+    <title id="bp-t">hcron architecture</title>
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor" style="color:var(--mute)"/></marker></defs>
+    <g id="n-launchd"><title>launchd</title><rect class="node" x="20" y="40" width="190" height="86" rx="12"/><text class="t" x="38" y="70">launchd</text><text class="m" x="38" y="92">com.latelespaul.hcron</text><text class="m" x="38" y="110">every 60 s, survives reboot</text></g>
+    <!-- clock icon -->
+    <g transform="translate(170,60)"><circle r="14" cx="14" cy="14" fill="none" stroke="var(--brass)" stroke-width="2"/><path d="M14 6v8l6 4" stroke="var(--brass)" stroke-width="2" fill="none"/></g>
+
+    <g id="n-tick"><title>hcron tick</title><rect class="brass" x="270" y="40" width="210" height="86" rx="12"/><text class="t" x="288" y="70">hcron tick</text><text class="m" x="288" y="92">decide what is due</text><text class="m" x="288" y="110">then exit (≈50 ms)</text></g>
+    <path class="edge" d="M210 83H268" marker-end="url(#a)"/>
+
+    <g id="n-jobs"><title>jobs.json</title><rect class="node" x="270" y="190" width="210" height="80" rx="12"/><text class="t" x="288" y="218">jobs.json</text><text class="m" x="288" y="238">profile/cron/ · the WHAT</text><text class="m" x="288" y="255">cron, cmd, cwd, window…</text></g>
+    <g id="n-state"><title>state files</title><rect class="node" x="270" y="300" width="210" height="80" rx="12"/><text class="t" x="288" y="328">state/&lt;id&gt;.json</text><text class="m" x="288" y="348">~/.local/state/hcron · the WHEN</text><text class="m" x="288" y="365">last_check, pid, last_exit</text></g>
+    <path class="edge" d="M375 188V128" marker-end="url(#a)"/>
+    <path class="edge" d="M330 298V272" /><path class="edge dash" d="M420 128 C470 200 470 260 482 330" marker-end="url(#a)"/>
+
+    <g id="n-hs"><title>Hammerspoon</title><rect class="blue" x="20" y="200" width="190" height="86" rx="12"/><text class="t" x="38" y="228">Hammerspoon</text><text class="m" x="38" y="248">"is the screen locked?"</text><text class="m" x="38" y="266">only for --needs gui</text></g>
+    <path class="edge dash" d="M270 110 C230 140 200 170 150 198" marker-end="url(#a)"/>
+
+    <g id="n-sup"><title>supervisor</title><rect class="go" x="540" y="40" width="200" height="86" rx="12"/><text class="t" x="558" y="70">hcron _sup &lt;id&gt;</text><text class="m" x="558" y="92">one per running job</text><text class="m" x="558" y="110">detached from the tick</text></g>
+    <path class="edge" d="M480 83H538" marker-end="url(#a)"/>
+
+    <g id="n-job"><title>your job</title><rect class="node" x="800" y="40" width="160" height="86" rx="12"/><text class="t" x="818" y="70">your command</text><text class="m" x="818" y="92">zsh -lc "…"</text><text class="m" x="818" y="110">own process group</text></g>
+    <path class="edge" d="M740 83H798" marker-end="url(#a)"/>
+
+    <g id="n-caf"><title>caffeinate</title><rect class="node" x="800" y="160" width="160" height="66" rx="12"/><text class="t" x="818" y="188">caffeinate -i -w</text><text class="m" x="818" y="208">awake while job lives</text></g>
+    <path class="edge dash" d="M880 128V158" marker-end="url(#a)"/>
+
+    <g id="n-tg"><title>Telegram</title><rect class="warn" x="540" y="250" width="200" height="86" rx="12"/><text class="t" x="558" y="278">Telegram ⏰</text><text class="m" x="558" y="298">tg-notify.py · send-only</text><text class="m" x="558" y="316">fail · timeout · skip</text></g>
+    <path class="edge dash" d="M640 128V248" marker-end="url(#a)"/>
+
+    <g id="n-logs"><title>logs</title><rect class="node" x="800" y="260" width="160" height="66" rx="12"/><text class="t" x="818" y="288">logs/&lt;id&gt;.log</text><text class="m" x="818" y="308">~/Library/Logs/hcron</text></g>
+    <path class="edge dash" d="M740 100 C780 160 790 230 820 258" marker-end="url(#a)"/>
+    <text class="m" x="20" y="420">solid = always happens · dashed = only when needed</text>
+  </svg>
+  </div>
+  <div class="grid g2">
+    <div class="note"><b>Why one agent instead of one plist per job?</b> <span class="mute">Adding a job is then one line (<code>hcron add</code>), not a hand-written XML file plus <code>launchctl bootstrap</code>. All jobs follow the same rules: lock, timeout, alerts. And one switch (<code>hcron pause all</code>) stops everything.</span></div>
+    <div class="note"><b>Why split "what" from "when"?</b> <span class="mute">The job list lives in your profile, so it syncs to GitHub and you can review it. Run state changes every minute, so it stays local and out of git.</span></div>
+  </div>
+</section>
+
+<!-- 2. LIFE OF A TICK -->
+<section>
+  <span class="kicker">2 · Life of one tick</span>
+  <h2>What happens at 20:07:00, step by step</h2>
+  <p>Step through it. The highlighted part in the diagram is the one doing the work.</p>
+  <div class="card" style="display:flex;flex-direction:column;gap:14px">
+    <div class="stepbar" id="tickbar"></div>
+    <div class="grid g2" style="align-items:start">
+      <div id="tickText" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div class="term" id="tickTerm"></div>
+    </div>
+    <div class="row"><button class="btn" id="tickPrev">← back</button><button class="btn on" id="tickNext">next →</button></div>
+  </div>
+</section>
+
+<!-- 3. CRON PLAYGROUND -->
+<section>
+  <span class="kicker">3 · Demo: cron playground</span>
+  <h2>Type a schedule and see exactly when it fires</h2>
+  <p>This runs the same parser as hcron (<code>parseCron</code>, <code>cronMatches</code>), copied into this page. Try <code>*/15 9-17 * * mon-fri</code>, <code>@daily</code> or <code>0 0 1 * mon</code>. That last one shows the classic cron rule: when both day fields are set, <em>either</em> one can match.</p>
+  <div class="card" style="display:flex;flex-direction:column;gap:16px">
+    <div class="row">
+      <input type="text" id="cronIn" value="7 * * * *" aria-label="cron expression" style="flex:1;min-width:220px">
+      <div class="row" id="cronPresets"></div>
+    </div>
+    <div class="fields" id="cronFields"></div>
+    <div id="cronErr" class="err"></div>
+    <div>
+      <div class="kicker" style="margin-bottom:8px">hours of today it fires in</div>
+      <div class="hours" id="cronHours"></div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="kicker" style="margin-bottom:6px">next 8 runs</div>
+      <div id="cronNext" class="mono" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px 16px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. NIGHT SIMULATOR -->
+<section>
+  <span class="kicker">4 · Demo: night simulator</span>
+  <h2>Sleep, the time window, catch-up and screen lock, on one timeline</h2>
+  <p>Each square is a slot where the schedule matched, from 18:00 to 08:00. Move the sliders to put the Mac to sleep or lock the screen. The colours come from the same decision order as <code>tick()</code>: <b>missed?</b> → <b>window?</b> → <b>locked?</b> → <b>start</b>.</p>
+  <div class="card" style="display:flex;flex-direction:column;gap:16px">
+    <div class="grid g3">
+      <div><label>schedule</label><input type="text" id="simCron" value="7 * * * *"></div>
+      <div><label>window</label><input type="text" id="simWin" value="20:00-05:00"></div>
+      <div class="row" style="align-self:end">
+        <button class="btn on" id="simCatch">catchup: on</button>
+        <button class="btn" id="simGui">needs gui: off</button>
+      </div>
+    </div>
+    <div class="grid g2">
+      <div><label>Mac asleep: <span id="slLbl" class="mono"></span></label><input type="range" id="slFrom" min="0" max="840" step="30" value="420"><input type="range" id="slTo" min="0" max="840" step="30" value="570"></div>
+      <div><label>screen locked: <span id="lkLbl" class="mono"></span></label><input type="range" id="lkFrom" min="0" max="840" step="30" value="660"><input type="range" id="lkTo" min="0" max="840" step="30" value="720"></div>
+    </div>
+    <div class="scroll"><svg class="fig" id="simSvg" viewBox="0 0 960 170" style="min-width:640px" role="img" aria-label="night timeline"></svg></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--go)"></i>runs on time</span>
+      <span><i class="sw" style="background:var(--blue)"></i>runs on wake (catch-up)</span>
+      <span><i class="sw" style="background:var(--grey-soft);outline:1px solid var(--line)"></i>outside window</span>
+      <span><i class="sw" style="background:var(--mute)"></i>missed, catch-up off</span>
+      <span><i class="sw" style="background:var(--warn)"></i>skipped: locked (one Telegram ping)</span>
+      <span><i class="sw" style="background:transparent;outline:2px dashed var(--mute)"></i>folded into the catch-up</span>
+    </div>
+    <div id="simSummary" class="mute"></div>
+  </div>
+</section>
+
+<!-- 5. PROCESS TREE -->
+<section>
+  <span class="kicker">5 · The supervisor and the timeout</span>
+  <h2>How a stuck job gets stopped, including everything it started</h2>
+  <p>Before No Mistakes reviewed it, the timeout sent TERM to <code>caffeinate</code>, which doesn't pass signals on, so the real job kept running as an orphan. The merged design gives the job <b>its own process group</b> and signals the whole group.</p>
+  <div class="card scroll">
+  <svg class="fig" viewBox="0 0 980 300" style="min-width:680px" role="img" aria-labelledby="pt-t">
+    <title id="pt-t">process tree</title>
+    <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="var(--mute)"/></marker></defs>
+    <g><rect class="node" x="20" y="30" width="170" height="60" rx="10"/><text class="t" x="36" y="57">hcron tick</text><text class="m" x="36" y="76">exits right away</text></g>
+    <g><rect class="go" x="250" y="30" width="200" height="60" rx="10"/><text class="t" x="266" y="57">hcron _sup job-hunt</text><text class="m" x="266" y="76">detached · holds the timer</text></g>
+    <path class="edge" d="M190 60H248" marker-end="url(#b)"/><text class="m" x="196" y="50">spawn</text>
+    <rect x="510" y="18" width="450" height="190" rx="14" fill="none" stroke="var(--brass)" stroke-dasharray="6 5" stroke-width="1.5"/>
+    <text class="m" x="526" y="40" style="fill:var(--brass)">process group (pgid = job pid)</text>
+    <g><rect class="node" x="530" y="54" width="200" height="56" rx="10"/><text class="t" x="546" y="80">zsh -lc "bin/jobhunt tick"</text><text class="m" x="546" y="98">the job</text></g>
+    <g><rect class="node" x="760" y="54" width="180" height="56" rx="10"/><text class="t" x="776" y="80">node, chrome, …</text><text class="m" x="776" y="98">its children</text></g>
+    <path class="edge" d="M730 82H758" marker-end="url(#b)"/>
+    <path class="edge" d="M450 60 C480 60 500 82 528 82" marker-end="url(#b)"/>
+    <g><rect class="node" x="250" y="150" width="200" height="56" rx="10"/><text class="t" x="266" y="176">caffeinate -i -w &lt;pid&gt;</text><text class="m" x="266" y="194">exits when the job exits</text></g>
+    <path class="edge dash" d="M350 90V148" marker-end="url(#b)"/>
+    <g><rect class="warn" x="530" y="140" width="410" height="56" rx="10"/><text class="t" x="546" y="166">timeout → kill(-pgid, TERM) · 10 s → kill(-pgid, KILL)</text><text class="m" x="546" y="184">the whole group goes, so no orphans</text></g>
+    <text class="m" x="20" y="250">then: state.pid = null · last_exit = 143 (TERM) or 137 (KILL) · alert "job-hunt timed out after 3480s"</text>
+    <text class="m" x="20" y="272">a new tick only starts the job again once state.pid is dead (checked with kill -0), so two copies never overlap</text>
+  </svg>
+  </div>
+</section>
+
+<!-- 6. ALERTS -->
+<section>
+  <span class="kicker">6 · When you get pinged</span>
+  <h2>Never silent, but never every minute either</h2>
+  <div class="grid g2">
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Failures: the 1st, then every 5th in a row</h3>
+      <p class="mute">The <code>consecutive_failures</code> counter rises with each failed run and resets to 0 after a success. With hourly runs, a broken job pings you at hour 1, 5, 10 and so on, not 24 times a day.</p>
+      <div id="failStrip" class="row" style="gap:4px"></div>
+      <div class="row"><button class="btn" id="failAdd">run fails</button><button class="btn" id="failOk">run succeeds</button><button class="btn" id="failReset">reset</button></div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Skips: once per reason</h3>
+      <p class="mute"><code>skip_notified</code> stores the <em>reason</em> of the last ping, not just "already pinged". Locked all night gives one ping. If you unlock in the morning and Hammerspoon turns out to be dead, that's a <em>new</em> reason, so you get a second ping instead of silence.</p>
+      <div class="term" style="white-space:pre-wrap"><span class="d">20:07</span> <span class="r">⏰ hcron: desk-apply skipped: screen is locked (unlock to let it run)</span>
+<span class="d">21:07 … 05:07</span> <span class="d">(same reason, no ping)</span>
+<span class="d">08:07</span> <span class="r">⏰ hcron: desk-apply skipped: Hammerspoon not answering or no Accessibility</span>
+<span class="d">09:07</span> <span class="g">started</span> <span class="d">→ reason cleared</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. FILES -->
+<section>
+  <span class="kicker">7 · On disk</span>
+  <h2>Three places, all plain text</h2>
+  <div class="grid g2">
+    <div class="card"><h3 style="margin-bottom:8px">profile/cron/jobs.json <span class="tag">synced</span></h3>
+<pre class="term">{
+  <span class="p">"version"</span>: 1,
+  <span class="p">"paused"</span>: false,            <span class="d">// hcron pause all</span>
+  <span class="p">"jobs"</span>: {
+    <span class="p">"job-hunt"</span>: {
+      <span class="p">"cron"</span>: "7 * * * *",
+      <span class="p">"cmd"</span>: "bin/jobhunt tick >> …",
+      <span class="p">"cwd"</span>: "/Users/…/job-hunt", <span class="d">// absolute</span>
+      <span class="p">"timeout"</span>: "58m",
+      <span class="p">"catchup"</span>: true,
+      <span class="p">"project"</span>: "job-hunt"
+    }
+  }
+}</pre></div>
+    <div class="card"><h3 style="margin-bottom:8px">~/.local/state/hcron/job-hunt.json <span class="tag">local</span></h3>
+<pre class="term">{
+  <span class="p">"last_check"</span>: "2026-11-10T07:37:00Z", <span class="d">// slots before this are handled</span>
+  <span class="p">"pid"</span>: null,                 <span class="d">// set while running = the lock</span>
+  <span class="p">"started_at"</span>: "…07:37:00Z",
+  <span class="p">"last_reason"</span>: "schedule",   <span class="d">// or catchup / manual</span>
+  <span class="p">"last_exit"</span>: 0,
+  <span class="p">"last_secs"</span>: 412,
+  <span class="p">"consecutive_failures"</span>: 0,
+  <span class="p">"skip_notified"</span>: null
+}</pre>
+    <p class="mute" style="margin-top:10px">Writes go to a <code>.tmp</code> file that's then renamed over the real one, so a crash mid-write never leaves half a file. Logs: <code>~/Library/Logs/hcron/&lt;id&gt;.log</code> (job output plus start/exit lines) and <code>_hcron.log</code> (every alert).</p></div>
+  </div>
+</section>
+
+<!-- 8. CLI -->
+<section>
+  <span class="kicker">8 · Using it</span>
+  <h2>The whole interface</h2>
+<div class="term"><span class="p">$</span> hcron add backup --cron "30 2 * * *" --cmd "scripts/backup.sh" --cwd . --timeout 30m --catchup
+<span class="g">added backup; next: 11/11/2026, 2:30:00 am | 12/11/2026, 2:30:00 am | 13/11/2026, 2:30:00 am</span>
+<span class="p">$</span> hcron status
+jobs: ~/Projects/latelespaul-profile/cron/jobs.json
+  job-hunt     7 * * * *     any time      next 1:07:00 pm   last 0 4m ago
+  backup       30 2 * * *    any time      next 2:30:00 am   last - -
+screen unlocked · gui ok (via hammerspoon)
+<span class="p">$</span> hcron run backup        <span class="d"># now, ignoring the schedule (still locked against a double run)</span>
+<span class="p">$</span> hcron logs job-hunt -n 20
+<span class="p">$</span> hcron next job-hunt -n 5
+<span class="p">$</span> hcron pause all         <span class="d"># kill switch · hcron resume all</span>
+<span class="p">$</span> hcron rm backup</div>
+  <div class="grid g3">
+    <div class="card"><h3>--window 20:00-05:00</h3><p class="mute">Run only inside this range. It can cross midnight.</p></div>
+    <div class="card"><h3>--needs gui | unlocked</h3><p class="mute">Skip while the screen is locked. <code>gui</code> also requires Hammerspoon to be up with Accessibility.</p></div>
+    <div class="card"><h3>--catchup</h3><p class="mute">If the Mac slept through a slot, run it <b>once</b> on wake.</p></div>
+    <div class="card"><h3>--timeout 50m</h3><p class="mute">Default 55m. TERM to the group, then KILL after 10 s.</p></div>
+    <div class="card"><h3>--cwd DIR</h3><p class="mute">Resolved to an absolute path when you add the job, and checked that it exists.</p></div>
+    <div class="card"><h3>--no-notify</h3><p class="mute">Log only. Useful for noisy experiments.</p></div>
+  </div>
+</section>
+
+<!-- 9. CHOICES & LIMITS -->
+<section>
+  <span class="kicker">9 · Trade-offs, honestly</span>
+  <h2>Why it's built this way, and what it doesn't do</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Option</th><th>Good</th><th>Why not the core</th></tr></thead>
+    <tbody>
+      <tr><td><b>hcron</b> (this)</td><td>One file of jobs, shared rules, Telegram, awareness of the screen lock</td><td>-</td></tr>
+      <tr><td>One launchd plist per job</td><td>Native, and it fires even while you're logged out</td><td>XML by hand, no lock, timeout, window or alerts. That's what job-hunt had before.</td></tr>
+      <tr><td>cron</td><td>Familiar syntax</td><td>Needs Full Disk Access, never catches up after sleep, knows nothing about lock state</td></tr>
+      <tr><td>Hammerspoon timers</td><td>Already have the GUI permissions</td><td>Stops whenever the app quits. Better used only for the screen work.</td></tr>
+      <tr><td>Cronicle / n8n</td><td>Web dashboards</td><td>A server to run and maintain, far more than one Mac needs</td></tr>
+    </tbody>
+  </table></div>
+  <div class="card limits">
+    <h3 style="margin-bottom:10px">Known limits</h3>
+    <ul>
+      <li><b>A slot skipped because the screen was locked is dropped, not queued.</b> <code>last_check</code> moves on, so after you unlock, the job waits for its next slot. For hourly jobs that's fine; for a once-a-day GUI job you'd want "run on unlock". That's a possible next feature.</li>
+      <li><b>Catch-up runs once</b>, not once per missed slot. Six hours asleep means one run on wake. That's deliberate: replaying six job-hunt ticks back to back would be pointless.</li>
+      <li><b>It doesn't look back more than 24 hours</b> when catching up (<code>dueSlots</code> maxMin = 1440).</li>
+      <li><b>Timing is to the minute.</b> launchd's 60 s interval can drift by a few seconds. It isn't meant for anything finer.</li>
+      <li><b>It needs you logged in.</b> It's a per-user LaunchAgent, and GUI jobs need an unlocked console session anyway.</li>
+      <li><b>It doesn't wake the Mac by itself.</b> A sleeping Mac doesn't tick. Use <code>--catchup</code>, or <code>pmset</code> wake schedules, which need sudo and which you'd set up yourself.</li>
+    </ul>
+  </div>
+</section>
+
+<footer class="mute" style="font-size:13px">Source: <code>latelespaul-harness/modules/cron/hcron.mjs</code> (main at 75fc64a), <code>hcron.test.mjs</code>, <code>tg-notify.py</code>, <code>modules/hammerspoon/init.lua</code>. The demos on this page reuse hcron's parser and decision order.</footer>
+</main>
+
+<script>
+// ---- hcron's parser, copied verbatim (modules/cron/hcron.mjs) ----
+const RANGES=[[0,59],[0,23],[1,31],[1,12],[0,6]];
+const NAMES={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6};
+const MACROS={'@hourly':'0 * * * *','@daily':'0 0 * * *','@weekly':'0 0 * * 0','@monthly':'0 0 1 * *'};
+function parseCron(expr){const parts=(MACROS[expr.trim()]||expr).trim().split(/\s+/);if(parts.length!==5)throw new Error(`cron needs 5 fields: "${expr}"`);
+ return parts.map((p,i)=>{const[lo,hi]=RANGES[i];const set=new Set();for(const item of p.toLowerCase().split(',')){const[base,stepS]=item.split('/');const step=stepS?Number(stepS):1;let a,b;
+ if(base==='*')[a,b]=[lo,hi];else{const[x,y]=base.split('-').map(v=>(v in NAMES?NAMES[v]:Number(v)));a=x;b=y??(stepS?hi:x);}
+ if(![a,b,step].every(Number.isInteger)||a<lo||b>hi+(i===4?1:0)||a>b||step<1)throw new Error(`bad cron field ${i+1}: "${p}"`);
+ for(let v=a;v<=b;v+=step)set.add(i===4&&v===7?0:v);}return{set,star:p==='*'};});}
+function cronMatches(f,d){const[mi,h,dom,mon,dow]=f;if(!mi.set.has(d.getMinutes())||!h.set.has(d.getHours())||!mon.set.has(d.getMonth()+1))return false;
+ const domOk=dom.set.has(d.getDate()),dowOk=dow.set.has(d.getDay());if(dom.star&&dow.star)return true;if(dom.star)return dowOk;if(dow.star)return domOk;return domOk||dowOk;}
+function inWindow(win,d){if(!win)return true;const m=/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(win);if(!m)throw new Error(`bad window "${win}"`);
+ const s=+m[1]*60+ +m[2],e=+m[3]*60+ +m[4],t=d.getHours()*60+d.getMinutes();return s<=e?t>=s&&t<e:t>=s||t<e;}
+const $=id=>document.getElementById(id);
+const fmt=d=>d.toLocaleString(undefined,{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+
+// ---- 2. tick stepper ----
+const STEPS=[
+ {n:'n-launchd',t:'1 · launchd wakes',d:'Every 60 s launchd starts <code>node hcron.mjs tick</code>, with PATH, PROFILE_DIR and the notify command from the plist. If the Mac was asleep, it fires once on wake.',term:'<span class="d">launchd</span> → node hcron.mjs tick'},
+ {n:'n-jobs',t:'2 · read the list',d:'It loads <code>jobs.json</code>. If <code>paused</code> is true at the top, the tick ends here (the kill switch). Jobs that are paused one by one are skipped.',term:'<span class="p">jobs</span>: { job-hunt: { cron: "7 * * * *", catchup: true } }'},
+ {n:'n-state',t:'3 · what is due?',d:'For each job: <code>dueSlots(cron, last_check, now)</code> walks back minute by minute to the last check, then <code>last_check</code> is set to now. Slots older than a minute count as <b>missed</b> (the Mac slept). They need <code>--catchup</code>, otherwise they’re only logged.',term:'last_check 20:06:00 → now 20:07:00\nslots: [20:07]  missed: no'},
+ {n:'n-tick',t:'4 · gates',d:'Is it inside the <code>--window</code>? For <code>--needs gui|unlocked</code>, it asks Hammerspoon once per tick whether the screen is locked (and falls back to <code>ioreg</code>). A locked screen means skip, with one ping per reason.',term:'window 20:00-05:00 → <span class="g">in</span>\nneeds: none'},
+ {n:'n-hs',t:'4b · (GUI jobs) ask Hammerspoon',d:'<code>hs -c "return harness.status()"</code> returns JSON: screen_locked, accessibility, screen_recording. It’s the only part that touches the GUI session.',term:'{"screen_locked":false,"accessibility":true,…}'},
+ {n:'n-sup',t:'5 · start, with the lock',d:'If <code>state.pid</code> is still alive (<code>kill -0</code>), it skips: never two copies. Otherwise it spawns a <b>detached</b> supervisor, records its pid, and the tick exits. The supervisor lives on without it.',term:'start(job-hunt, "schedule") → <span class="g">started</span> pid 48211'},
+ {n:'n-job',t:'6 · the job runs',d:'The supervisor runs <code>zsh -lc "&lt;cmd&gt;"</code> in its own process group, inside your <code>--cwd</code>, and starts <code>caffeinate -i -w &lt;pid&gt;</code> so the Mac can’t idle-sleep mid-job.',term:'2026-11-10T14:37:00Z start (schedule) bin/jobhunt tick\n<span class="d">… job output goes to logs/job-hunt.log …</span>'},
+ {n:'n-tg',t:'7 · finish and report',d:'On exit: pid is cleared, and last_exit, last_secs and consecutive_failures are written. If it failed (the 1st time, then every 5th), or hit the timeout, a send-only Telegram message goes out. A clean exit sends nothing.',term:'exit 0 after 412s\n<span class="d">(no ping: success)</span>'},
+];
+let si=0;
+function drawTick(){
+ $('tickbar').innerHTML=STEPS.map((s,i)=>`<button class="pill${i===si?' on':''}" data-i="${i}">${i+1}</button>`).join('');
+ $('tickText').innerHTML=`<h3>${STEPS[si].t}</h3><p>${STEPS[si].d}</p>`;
+ $('tickTerm').innerHTML=STEPS[si].term;
+ document.querySelectorAll('[id^="n-"]').forEach(g=>g.classList.toggle('hl',g.id===STEPS[si].n));
+}
+$('tickbar').addEventListener('click',e=>{const i=e.target.dataset.i;if(i!=null){si=+i;drawTick();}});
+$('tickNext').onclick=()=>{si=(si+1)%STEPS.length;drawTick();};
+$('tickPrev').onclick=()=>{si=(si-1+STEPS.length)%STEPS.length;drawTick();};
+drawTick();
+
+// ---- 3. cron playground ----
+const PRESETS=['7 * * * *','*/15 9-17 * * mon-fri','0 20-23,0-4 * * *','30 2 * * *','0 0 1 * mon','@daily'];
+$('cronPresets').innerHTML=PRESETS.map(p=>`<button class="pill" data-p="${p}">${p}</button>`).join('');
+$('cronPresets').addEventListener('click',e=>{if(e.target.dataset.p){$('cronIn').value=e.target.dataset.p;drawCron();}});
+const FN=['minute','hour','day','month','weekday'];
+const WD=['sun','mon','tue','wed','thu','fri','sat'];
+function describe(set,i){const a=[...set].sort((x,y)=>x-y);const full=RANGES[i][1]-RANGES[i][0]+1;if(a.length===full||(i===4&&a.length===7))return 'every';
+ const show=v=>i===4?WD[v]:i===3?['','jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'][v]:String(v).padStart(i<2?2:1,'0');
+ return a.length>6?`${a.length} values`:a.map(show).join(',');}
+function drawCron(){
+ const v=$('cronIn').value;$('cronErr').textContent='';
+ let f;try{f=parseCron(v);}catch(e){$('cronErr').textContent=e.message;$('cronFields').innerHTML='';$('cronNext').innerHTML='';$('cronHours').innerHTML='';return;}
+ $('cronFields').innerHTML=f.map((x,i)=>`<div><b>${describe(x.set,i)}</b><span>${FN[i]}</span></div>`).join('');
+ const now=new Date();now.setSeconds(0,0);const out=[];let t=new Date(now);
+ for(let i=0;i<60*24*40&&out.length<8;i++){t=new Date(t.getTime()+60000);if(cronMatches(f,t))out.push(new Date(t));}
+ $('cronNext').innerHTML=out.length?out.map(d=>`<div>${fmt(d)}</div>`).join(''):'<div class="mute">no run in the next 40 days</div>';
+ const day=new Date(now);day.setHours(0,0,0,0);const hrs=[];
+ for(let h=0;h<24;h++){let on=false;for(let m=0;m<60&&!on;m++){const d=new Date(day);d.setHours(h,m);on=cronMatches(f,d);}hrs.push(on);}
+ $('cronHours').innerHTML=hrs.map((on,h)=>`<div class="${on?'on':''}" title="${h}:00">${h%6===0?`<small>${String(h).padStart(2,'0')}</small>`:''}</div>`).join('');
+}
+$('cronIn').addEventListener('input',drawCron);drawCron();
+
+// ---- 4. night simulator (tick() decision order, simulated per minute) ----
+let catchOn=true,guiOn=false;
+$('simCatch').onclick=()=>{catchOn=!catchOn;$('simCatch').textContent='catchup: '+(catchOn?'on':'off');$('simCatch').classList.toggle('on',catchOn);sim();};
+$('simGui').onclick=()=>{guiOn=!guiOn;$('simGui').textContent='needs gui: '+(guiOn?'on':'off');$('simGui').classList.toggle('on',guiOn);sim();};
+const base=new Date();base.setHours(18,0,0,0);
+const at=min=>new Date(base.getTime()+min*60000);
+const hm=min=>{const d=at(min);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+function range(a,b){const x=+$(a).value,y=+$(b).value;return[Math.min(x,y),Math.max(x,y)];}
+function sim(){
+ const svg=$('simSvg');const W=960,L=20,R=20,span=840;const X=m=>L+(W-L-R)*m/span;
+ let f;try{f=parseCron($('simCron').value);}catch(e){svg.innerHTML=`<text x="20" y="40" style="fill:var(--warn)">${e.message}</text>`;return;}
+ const win=$('simWin').value.trim();try{inWindow(win||undefined,new Date());}catch(e){svg.innerHTML=`<text x="20" y="40" style="fill:var(--warn)">${e.message}</text>`;return;}
+ const [s0,s1]=range('slFrom','slTo'),[k0,k1]=range('lkFrom','lkTo');
+ $('slLbl').textContent=s0===s1?'never':`${hm(s0)} → ${hm(s1)}`;$('lkLbl').textContent=k0===k1?'never':`${hm(k0)} → ${hm(k1)}`;
+ const asleep=m=>s0!==s1&&m>=s0&&m<s1, locked=m=>k0!==k1&&m>=k0&&m<k1;
+ // simulate ticks: one per awake minute
+ let last=null;const marks=[];let pinged=null;let runs=0,cu=0,skipped=0,lost=0;
+ for(let m=0;m<=span;m++){
+  if(asleep(m))continue;
+  const now=at(m);const slots=[];
+  const floor=last==null?m-1:last;
+  for(let t=m;t>floor;t--){if(cronMatches(f,at(t)))slots.unshift(t);}
+  last=m;if(!slots.length)continue;
+  const newest=slots[slots.length-1];const missed=m-newest>1;
+  slots.slice(0,-1).forEach(t=>marks.push({t,k:'folded'}));
+  if(missed&&!catchOn){marks.push({t:newest,k:'lost'});lost++;continue;}
+  if(!inWindow(win||undefined,now)){marks.push({t:newest,k:'outside',at:m});continue;}
+  if(guiOn&&locked(m)){const first=pinged!=='locked';pinged='locked';marks.push({t:newest,k:'locked',ping:first});skipped++;continue;}
+  pinged=null;
+  if(missed){marks.push({t:newest,k:'catch',at:m});cu++;}else{marks.push({t:newest,k:'run'});runs++;}
+ }
+ const col={run:'var(--go)',catch:'var(--blue)',outside:'var(--grey-soft)',lost:'var(--mute)',locked:'var(--warn)'};
+ let h='';
+ // hour grid
+ for(let m=0;m<=span;m+=60){h+=`<line x1="${X(m)}" y1="30" x2="${X(m)}" y2="128" stroke="var(--line)"/><text x="${X(m)-14}" y="150" class="m">${hm(m)}</text>`;}
+ if(win){try{for(let m=0;m<span;m++){if(inWindow(win,at(m))){let e=m;while(e<span&&inWindow(win,at(e)))e++;h+=`<rect x="${X(m)}" y="22" width="${X(e)-X(m)}" height="6" rx="3" fill="var(--brass)"/>`;m=e;}}}catch{}}
+ h+=`<text x="${L}" y="16" class="m">window</text>`;
+ if(s0!==s1)h+=`<rect x="${X(s0)}" y="34" width="${X(s1)-X(s0)}" height="90" fill="var(--blue-soft)" opacity=".75"/><text x="${X(s0)+6}" y="48" class="m">💤 asleep</text>`;
+ if(k0!==k1)h+=`<rect x="${X(k0)}" y="110" width="${X(k1)-X(k0)}" height="14" fill="var(--warn-soft)"/><text x="${X(k0)+4}" y="121" class="m">🔒 locked</text>`;
+ for(const mk of marks){const x=X(mk.t);
+  if(mk.k==='folded'){h+=`<rect x="${x-7}" y="66" width="14" height="14" rx="3" fill="none" stroke="var(--mute)" stroke-dasharray="3 2"/>`;continue;}
+  h+=`<rect x="${x-7}" y="66" width="14" height="14" rx="3" fill="${col[mk.k]}" stroke="var(--line)"><title>${hm(mk.t)} ${mk.k}</title></rect>`;
+  if(mk.k==='catch'){const xa=X(mk.at);h+=`<path d="M${x} 82 Q ${(x+xa)/2} 104 ${xa} 92" stroke="var(--blue)" fill="none" stroke-width="1.5"/><circle cx="${xa}" cy="92" r="3" fill="var(--blue)"/><text x="${xa+4}" y="100" class="m" style="fill:var(--blue)">runs ${hm(mk.at)}</text>`;}
+  if(mk.ping)h+=`<text x="${x-6}" y="60" font-size="12">⏰</text>`;
+ }
+ svg.innerHTML=h;
+ $('simSummary').innerHTML=`<b>${runs}</b> on time · <b>${cu}</b> catch-up · <b>${skipped}</b> skipped while locked · <b>${lost}</b> missed for good${guiOn&&skipped?' · <b>1</b> Telegram ping for the lock':''}.`;
+}
+['simCron','simWin','slFrom','slTo','lkFrom','lkTo'].forEach(id=>$(id).addEventListener('input',sim));sim();
+
+// ---- 6. failure strip ----
+let runsF=[];
+function drawFail(){let c=0;$('failStrip').innerHTML=runsF.length?runsF.map(ok=>{c=ok?0:c+1;const ping=!ok&&(c===1||c%5===0);
+ return `<span title="${ok?'ok':'fail #'+c}" style="display:inline-flex;flex-direction:column;align-items:center;width:26px"><span style="font-size:12px;height:16px">${ping?'⏰':''}</span><span style="width:20px;height:20px;border-radius:4px;background:${ok?'var(--go)':'var(--warn)'}"></span><span class="mono" style="font-size:10px;color:var(--mute)">${ok?'0':c}</span></span>`;}).join(''):'<span class="mute">click "run fails" a few times</span>';}
+$('failAdd').onclick=()=>{runsF.push(false);drawFail();};$('failOk').onclick=()=>{runsF.push(true);drawFail();};$('failReset').onclick=()=>{runsF=[];drawFail();};drawFail();
+</script>
+</body>
+</html>
