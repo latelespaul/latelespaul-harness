@@ -131,6 +131,22 @@ test('run does not take back a hold that ended on purpose after it took it', () 
   assert.equal(s.lines().filter(l => l.includes('awakeInfo')).length, 1, 'and it stopped checking');
 });
 
+test('run does not take back its own hold after `awake off` while another owner still holds', () => {
+  const s = sandbox('{"on":true}', FAST);
+  writeFileSync(join(s.d, 'status.json'), '{"on":true,"owners":["other"],"ended":{"night":{"reason":"night released","at":"2999-01-01T00:00:00Z"}}}');
+  const r = s.run('run', 'night', '--', 'sleep', '1');
+  assert.equal(r.status, 0);
+  assert.equal(s.ons().length, 1, 'no second hold');
+  assert.equal(s.lines().filter(l => l.includes('awakeInfo')).length, 1, 'and it stopped checking');
+});
+
+test('another owner ending does not count as this run ending: the hold is taken again', () => {
+  const s = sandbox('{"on":true}', FAST);
+  writeFileSync(join(s.d, 'status.json'), '{"on":true,"owners":["other"],"ended":{"nightly":{"reason":"nightly released","at":"2999-01-01T00:00:00Z"}}}');
+  assert.equal(s.run('run', 'night', '--', 'sleep', '1').status, 0);
+  assert.ok(s.ons().length >= 2);
+});
+
 test('an end from before run started does not count: the hold is taken again', () => {
   const s = sandbox('{"on":true}', FAST);
   writeFileSync(join(s.d, 'status.json'), '{"on":false,"owners":{},"last_end":{"reason":"deadline","at":"2000-01-01T00:00:00Z"}}');
@@ -267,6 +283,19 @@ test('releasing a hold removes it from the file; the last release empties it', {
   assert.deepEqual(names(out.after.owners), []);
   assert.deepEqual(out.saved.holds, {});
   assert.deepEqual(out.caffeinate, { displayIdle: false, systemIdle: false });
+});
+
+test('releasing one of two holds records that owner\'s end; taking it again clears it', { skip: skipLua }, () => {
+  const t = now() + 600;
+  const out = load({ a: { until: t }, b: { until: t } },
+    'harness.awake(false, {owner="a", reason="a released"}); local i = harness.awakeInfo(); harness.awake(true, {owner="b", minutes=5}); return hs.json.encode(i)');
+  const mid = JSON.parse(out.result);
+  assert.deepEqual(mid.owners, ['b']);
+  assert.equal(mid.ended.a.reason, 'a released');
+  assert.match(mid.ended.a.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+  assert.equal(mid.last_end, undefined, 'awake mode itself did not end');
+  const fresh = load({ a: { until: t } }, 'harness.awake(false, {owner="a"}); harness.awake(true, {owner="a", minutes=5}); return ""');
+  assert.equal(names(fresh.after.ended).includes('a'), false, 'a new hold clears the old end');
 });
 
 test('init.lua reports the same config fingerprint that install.sh computes', { skip: skipLua }, () => {

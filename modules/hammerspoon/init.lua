@@ -82,7 +82,7 @@ end
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
 local BKEY = "harness.awake.brightness"
-local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {} }
+local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {}, ended = {} }
 local AWAY_SECS = 300   -- no human input for this long = the person has left
 -- No secret goes in it (arm secrets stay in memory, so armed owners re-arm after a restart).
 local HOLDS_FILE = hs.configdir .. "/harness-awake.json"
@@ -100,6 +100,7 @@ end
 restoreBrightness()   -- a reload or crash while dimmed must not leave the screen black
 
 local function awakeOn() return next(aw.owners) ~= nil end
+local function stamp() return os.date("!%Y-%m-%dT%H:%M:%SZ") end
 
 -- Write the current holds to HOLDS_FILE: mode 600, replaced atomically.
 local function saveHolds()
@@ -118,11 +119,13 @@ function harness.awakeInfo()
   local owners = {}
   for k in pairs(aw.owners) do table.insert(owners, k) end
   table.sort(owners)
-  return { on = awakeOn(), mode = awakeOn() and aw.mode or nil, owners = owners, ["until"] = aw.untilAt, last_end = aw.lastEnd }
+  return { on = awakeOn(), mode = awakeOn() and aw.mode or nil, owners = owners, ["until"] = aw.untilAt, last_end = aw.lastEnd,
+    ended = aw.ended }
 end
 
 local function stopAll(reason, lock)
   if not awakeOn() and not aw.watch then return end
+  for o in pairs(aw.owners) do aw.ended[o] = { reason = reason, at = stamp() } end
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
@@ -137,7 +140,7 @@ local function stopAll(reason, lock)
   aw.untilAt = nil
   local wasAway = aw.mode == "away"
   aw.mode, aw.dim = nil, nil
-  aw.lastEnd = { reason = reason, at = os.date("!%Y-%m-%dT%H:%M:%SZ") }
+  aw.lastEnd = { reason = reason, at = stamp() }
   print("harness: awake mode off (" .. reason .. ")")
   if lock and wasAway then hs.caffeinate.lockScreen() end   -- never lock on a person who is using it
 end
@@ -202,7 +205,7 @@ function harness.awake(on, opts)
     elseif aw.mode == "away" then
       dimNow()   -- a later holder may want the dim the first one skipped
     end
-    aw.owners[owner] = true
+    aw.owners[owner], aw.ended[owner] = true, nil
     if tonumber(opts.pid) then
       aw.pids[owner] = tonumber(opts.pid)
       aw.pidCheck = aw.pidCheck or hs.timer.doEvery(30, function()
@@ -222,6 +225,7 @@ function harness.awake(on, opts)
     saveHolds()
   else
     aw.owners[owner] = nil
+    aw.ended[owner] = { reason = opts.reason or ("released by " .. owner), at = stamp() }
     aw.pids[owner], aw.untils[owner], aw.dims[owner] = nil, nil, nil
     if aw.timers[owner] then aw.timers[owner]:stop(); aw.timers[owner] = nil end
     if awakeOn() then saveHolds() else stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end

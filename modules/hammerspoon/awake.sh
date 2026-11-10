@@ -69,7 +69,8 @@ fallback() {   # fallback on|off: caffeinate while Hammerspoon does not answer, 
 # on purpose.
 keeper() {
   local started=$1 deadline=$2 held=$3 every=${AWAKE_RECHECK_SECS:-60} spid= st
-  local own="\"owners\" *: *[[][^]]*\"${name//./[.]}\"" ended='"last_end" *: *[{][^}]*"at" *: *"([^"]*)"'
+  local own="\"owners\" *: *[[][^]]*\"${name//./[.]}\"" re
+  local mine="\"ended\" *: *[{].*\"${name//./[.]}\" *: *[{][^}]*\"at\" *: *\"([^\"]*)\"" ended='"last_end" *: *[{][^}]*"at" *: *"([^"]*)"'
   trap 'kill $spid $cpid 2>/dev/null; exit 0' TERM
   while kill -0 $$ 2>/dev/null; do
     sleep $every & spid=$!
@@ -81,7 +82,9 @@ keeper() {
     fallback off
     [[ $st =~ $own ]] && { held=1; continue }
     # Ended after `run` held it (a person, a lock, an `awake off`): leave it ended.
-    (( held )) && [[ $st =~ $ended && ! $match[1] < $started ]] && break
+    if (( held )); then
+      for re in $mine $ended; do [[ $st =~ $re && ! $match[1] < $started ]] && break 2; done
+    fi
     (( held )) && print -u2 "awake: Hammerspoon lost the hold; taking it again"
     on $$ $(( (deadline - EPOCHSECONDS + 59) / 60 )) 2>/dev/null && held=1
   done
