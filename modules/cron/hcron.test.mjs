@@ -151,3 +151,32 @@ test('without PROFILE_DIR the jobs file comes from harness.env', () => {
   const r = spawnSync(process.execPath, [HCRON, 'list'], { env, encoding: 'utf8' });
   assert.match(r.stdout, new RegExp(`jobs: ${d}/my-profile/cron/jobs\\.json`));
 });
+
+test('a skip is reported again when its reason changes', () => {
+  const s = sandbox();
+  const bin = join(s.d, 'bin'); mkdirSync(bin);
+  const answer = join(s.d, 'hs.json');
+  writeFileSync(join(bin, 'hs'), `#!/bin/sh\ncat ${answer}\n`, { mode: 0o755 });
+  const env = { ...s.env, HCRON_PATH: `${bin}:/usr/bin:/bin` };
+  s.run('add', 'ui', '--cron', '* * * * *', '--needs', 'gui', '--cmd', 'true');
+  mkdirSync(join(s.d, 'state'));
+  for (const hs of [{ screen_locked: true, accessibility: true }, { screen_locked: true, accessibility: true }, { screen_locked: false, accessibility: false }]) {
+    writeFileSync(answer, JSON.stringify(hs));
+    let st = {}; try { st = s.state('ui'); } catch {}
+    writeFileSync(join(s.d, 'state', 'ui.json'), JSON.stringify({ ...st, last_check: new Date(Date.now() - 60_000).toISOString() }));
+    spawnSync(process.execPath, [HCRON, 'tick'], { env, encoding: 'utf8' });
+  }
+  const log = s.run('logs').stdout;
+  assert.equal(log.match(/ui skipped: screen is locked/g)?.length, 1);
+  assert.equal(log.match(/ui skipped: Hammerspoon not answering/g)?.length, 1);
+});
+
+test('a job whose folder is not a folder is reported and unlocked, not crashed on', async () => {
+  const s = sandbox();
+  const file = join(s.d, 'afile'); writeFileSync(file, '');
+  writeFileSync(s.env.HCRON_JOBS, JSON.stringify({ version: 1, paused: false, jobs: { f: { cron: '@daily', cmd: 'true', cwd: file } } }));
+  const r = s.run('run', 'f');
+  assert.equal(r.status, 0);
+  assert.match(s.run('logs').stdout, /f not started: .*ENOTDIR/);
+  assert.equal(s.state('f').pid, null);
+});

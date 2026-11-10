@@ -152,10 +152,15 @@ function start(id, job, reason) {
   if (!existsSync(cwd)) { notify(`${id} not started: folder ${cwd} is gone`); return 'missing cwd'; }
   mkdirSync(LOG_DIR, { recursive: true });
   const out = openSync(join(LOG_DIR, `${id}.log`), 'a');
-  const child = spawn(process.execPath, [SELF, '_sup', id, reason], {
-    cwd, detached: true, stdio: ['ignore', out, out],
-    env: { ...process.env, PATH, HCRON_CMD: job.cmd, HCRON_TIMEOUT: String(parseDuration(job.timeout ?? '55m')), ...(job.env || {}) },
-  });
+  const notStarted = e => { notify(`${id} not started: ${e.message}`); saveState(id, { ...loadState(id), pid: null }); return 'not started'; };
+  let child;
+  try {
+    child = spawn(process.execPath, [SELF, '_sup', id, reason], {
+      cwd, detached: true, stdio: ['ignore', out, out],
+      env: { ...process.env, PATH, HCRON_CMD: job.cmd, HCRON_TIMEOUT: String(parseDuration(job.timeout ?? '55m')), ...(job.env || {}) },
+    });
+  } catch (e) { return notStarted(e); }
+  child.on('error', notStarted);
   child.unref();
   saveState(id, { ...st, pid: child.pid, started_at: new Date().toISOString(), last_reason: reason });
   return 'started';
@@ -215,9 +220,9 @@ function tick(now = new Date()) {
       lock ??= screenLocked();
       const why = lock.locked ? 'screen is locked (unlock to let it run)'
         : needs.includes('gui') && !lock.gui ? 'Hammerspoon not answering or no Accessibility' : null;
-      if (why) { if (!st.skip_notified) notify(`${id} skipped: ${why}`); saveState(id, { ...loadState(id), skip_notified: true }); continue; }
+      if (why) { if (st.skip_notified !== why) notify(`${id} skipped: ${why}`); saveState(id, { ...loadState(id), skip_notified: why }); continue; }
     }
-    saveState(id, { ...loadState(id), skip_notified: false });
+    saveState(id, { ...loadState(id), skip_notified: null });
     start(id, job, missed ? `catchup ${newest.toISOString()}` : 'schedule');
   }
 }
