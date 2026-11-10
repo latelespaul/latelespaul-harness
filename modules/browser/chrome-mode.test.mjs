@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -288,20 +288,44 @@ test('chrome-mode.sh refuses bad input and honours dry run', () => {
   assert.equal(existsSync(join(s.state, 'personal.json')), false);
 });
 
-// The failure after #21: its new plist made the installer reload the running work Chrome's agent.
-// bootout returned while that Chrome was still quitting, the immediate bootstrap failed with error 5,
-// and set -e ended the run there: the work Chrome down, its agent not loaded, the next profile skipped.
-test('regression: reloading a changed plist while the old Chrome still quits leaves the agent loaded', () => {
+// The failure after #21: its new plist made the installer reload the running work Chrome's agent,
+// which stopped the work Chrome. Now install never stops a running agent-mode profile, even when its
+// plist changed: the new plist waits for the next login or the restart command it prints.
+test('regression: a running agent from an old plist is left alone, and the restart line is printed', () => {
   const s = sandbox();
   s.mode(['personal', 'desktop']);
   s.oldAgent('claude', 9332);
+  const r = s.install([], { FAKE_EXIT_CALLS: '3' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(s.cycle('claude'), []);   // no bootout, no bootstrap
+  assert.ok(s.loaded('claude'), 'work agent left unloaded');
+  assert.ok(s.up(9332), 'work Chrome left down');
+  const uid = spawnSync('id', ['-u'], { encoding: 'utf8' }).stdout.trim();
+  const line = `launchctl bootout gui/${uid}/com.test.chrome-claude && ${INSTALL}`;
+  assert.ok(r.stdout.includes(`chrome-claude is running; left it alone. Its new settings apply at the next login, or now with: ${line}`), r.stdout);
+  assert.match(readFileSync(join(s.home, 'Library/LaunchAgents/com.test.chrome-claude.plist'), 'utf8'), /chrome-launch\.sh/);   // new plist written
+  assert.match(r.stdout, /chrome-personal: desktop mode: agent left stopped/);
+
+  // The printed command restarts it on the new plist.
+  const x = spawnSync('/bin/zsh', ['-c', line], { env: { PATH: `${s.d}/bin:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: s.home, FAKE: s.fake, HARNESS_ENV: join(s.d, 'harness.env'), CHROME_BIN: join(s.d, 'bin/chrome'), CHROME_MODE_DIR: s.state }, encoding: 'utf8' });
+  assert.equal(x.status, 0, x.stdout + x.stderr);
+  assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);
+  assert.ok(s.loaded('claude') && s.up(9332));
+});
+
+// The race behind #21's failure: bootout returned while the old Chrome still quit, the immediate
+// bootstrap failed with error 5, and set -e ended the run with the agent not loaded.
+test('regression: reloading a loaded agent that is not running, while its old job still exits, leaves it loaded', () => {
+  const s = sandbox();
+  s.mode(['personal', 'desktop']);
+  s.oldAgent('claude', 9332);
+  rmSync(join(s.fake, 'up-9332'));             // loaded, but its port does not answer
   const r = s.install([], { FAKE_EXIT_CALLS: '3' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.ok(s.loaded('claude'), 'work agent left unloaded');
   assert.ok(s.up(9332), 'work Chrome left down');
   assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);   // one stop, then one load that worked
   assert.match(r.stdout, /chrome-claude is running on 127\.0\.0\.1:9332/);
-  assert.match(r.stdout, /chrome-personal: desktop mode: agent left stopped/);
 });
 
 test('two profiles, one desktop and one with no record: the agent profile is loaded and never stopped', () => {
@@ -321,34 +345,36 @@ test('two profiles, one desktop and one with no record: the agent profile is loa
   assert.deepEqual(s.cycle('claude'), ['bootstrap']);
 });
 
-test('repeated install runs are idempotent: after the first, no agent is stopped or loaded again', () => {
+test('repeated install runs never stop a running agent-mode profile', () => {
   const s = sandbox();
   s.mode(['personal', 'desktop']);
   s.oldAgent('claude', 9332);
-  for (let i = 0; i < 3; i++) assert.equal(s.install([], { FAKE_EXIT_CALLS: '2' }).status, 0);
-  assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);
+  const out = [];
+  for (let i = 0; i < 3; i++) { const r = s.install([], { FAKE_EXIT_CALLS: '2' }); assert.equal(r.status, 0); out.push(r.stdout); }
+  assert.deepEqual(s.cycle('claude'), []);
   assert.deepEqual(s.cycle('personal'), []);
+  assert.match(out[0], /chrome-claude is running; left it alone\. Its new settings apply/);
+  assert.match(out[1], /chrome-claude already running; left it alone/);
   assert.ok(s.loaded('claude') && s.up(9332));
   assert.equal(s.loaded('personal'), false);
 });
 
-test('an agent-mode profile is stopped only to reload a changed plist, whatever else the state says', () => {
+test('a running agent-mode profile is never stopped, whatever else the state says', () => {
   // An unreadable or unknown record means agent, and a legacy desktop file does not apply to claude.
   for (const rec of ['not json', '{"mode": "sideways"}', '{"mode": "agent"}', null]) {
     const s = sandbox();
     s.legacy('desktop');
     if (rec !== null) { mkdirSync(s.state, { recursive: true }); writeFileSync(join(s.state, 'claude.json'), rec); }
     s.touch('loaded-com.test.chrome-claude'); s.touch('up-9332');
-    s.install();                                 // first run writes the plist: one reload
-    s.install();                                 // second run: unchanged, left alone
-    assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap'], String(rec));
+    s.install();                                 // first run writes the plist: still left alone
+    s.install();
+    assert.deepEqual(s.cycle('claude'), [], String(rec));
     assert.ok(s.loaded('claude') && s.up(9332), String(rec));
   }
 });
 
 test('a profile whose agent cannot be loaded is reported, and the next profile is still installed', () => {
   const s = sandbox();
-  s.oldAgent('claude', 9332);
   const r = s.install([], { FAKE_BOOTSTRAP_FAIL: 'com.test.chrome-claude' });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /chrome-claude: could not load its agent; re-run this installer/);

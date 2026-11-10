@@ -6,6 +6,8 @@
 #   install.sh [--id <id>] --uninstall stop one (default: claude); keeps the profile and its logins
 #   install.sh [--id <id>] --status    is it up? (exit 1 if not; without --id: all of them)
 # A profile in desktop mode (chrome-mode.sh) is left stopped: its agent is not loaded or restarted.
+# A profile in agent mode (or with no record) is never stopped: a running agent is left alone, even when
+# its plist changed; only an agent that is not loaded or not running is (re)loaded.
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -70,12 +72,16 @@ for b in $browsers; do
     print "chrome-$CHROME_ID: desktop mode: agent left stopped (back to agent mode: $mod/chrome-mode.sh $CHROME_ID agent, then re-run this installer)."
     continue
   fi
-  if (( ! plist_changed )) && launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
-    print "chrome-$CHROME_ID already running; left it alone."
+  # Agent mode (or no record): never stop a running agent, since agents may be using its Chrome.
+  if launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
+    if (( plist_changed )); then
+      print "chrome-$CHROME_ID is running; left it alone. Its new settings apply at the next login, or now with: launchctl bootout gui/$uid/$CHROME_LABEL && $mod/install.sh"
+    else
+      print "chrome-$CHROME_ID already running; left it alone."
+    fi
     continue
   fi
-  # Agent mode (or no record): the agent must end up loaded. A changed plist is reloaded, which stops
-  # its Chrome for a moment; launchd_load waits for the old job to go before loading the new one.
+  # Not loaded, or loaded but not running: (re)load it. launchd_load waits for an old job to go first.
   launchd_load $CHROME_LABEL $plist || { print "chrome-$CHROME_ID: could not load its agent; re-run this installer."; rc=1; continue }
   if [[ $HARNESS_SKIP_LAUNCHD == 1 ]] || dry; then continue; fi
   for i in {1..20}; do up $CHROME_PORT && break; sleep 1; done
