@@ -37,16 +37,23 @@ end
 -- Awake mode: keep the screen from idle-locking during an unattended GUI run (for example a night
 -- job that drives Chrome). macOS drops all input to a locked screen and no tool can get past it,
 -- so instead the screen is kept awake, dimmed to black, and locked the moment a person touches it.
---   harness.awake(true,  {owner="job-hunt", minutes=600, dim=true})  -> JSON
+-- It never does that to someone using the Mac: while a person is active it only blocks the idle lock
+-- ("present"); after AWAY_SECS with no human input it dims and arms the lock ("away").
+--   harness.awake(true,  {owner="job-hunt", minutes=600, dim=true, pid=1234})  -> JSON
 --   harness.awake(false, {owner="job-hunt", lock=true})               -> JSON
--- Several owners may hold it; it ends when the last one leaves, the deadline passes, a person
--- types or moves the mouse (then the screen locks at once), or the screen locks some other way
--- (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
+-- Several owners may hold it; it ends when the last one leaves (or its pid exits), the deadline
+-- passes, a person types or moves the mouse in away mode (then the screen locks at once), or the
+-- screen locks some other way (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
 -- Tools that post their own mouse or key events must tag them, or the watcher takes them for a
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
 local BKEY = "harness.awake.brightness"
-local aw = { owners = {}, timers = {} }
+local aw = { owners = {}, timers = {}, pids = {} }
+local AWAY_SECS = 300   -- no human input for this long = the person has left
+
+-- With opts.pid, an owner is released (and the screen locked) when that process is gone, so a
+-- crashed job never leaves the Mac dimmed and unlocked until the deadline.
+local function pidAlive(pid) return os.execute("/bin/kill -0 " .. math.floor(pid) .. " 2>/dev/null") == true end
 
 local function restoreBrightness()
   local b = hs.settings.get(BKEY)
@@ -60,7 +67,7 @@ function harness.awakeInfo()
   local owners = {}
   for k in pairs(aw.owners) do table.insert(owners, k) end
   table.sort(owners)
-  return { on = awakeOn(), owners = owners, ["until"] = aw.untilAt, last_end = aw.lastEnd }
+  return { on = awakeOn(), mode = awakeOn() and aw.mode or nil, owners = owners, ["until"] = aw.untilAt, last_end = aw.lastEnd }
 end
 
 local function stopAll(reason, lock)
@@ -68,25 +75,45 @@ local function stopAll(reason, lock)
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
+  aw.pids = {}
+  if aw.pidCheck then aw.pidCheck:stop(); aw.pidCheck = nil end
   if aw.activity then aw.activity:stop(); aw.activity = nil end
   if aw.watch then aw.watch:stop(); aw.watch = nil end
   hs.caffeinate.set("displayIdle", false)
   hs.caffeinate.set("systemIdle", false)
   restoreBrightness()
   aw.untilAt = nil
+  local wasAway = aw.mode == "away"
+  aw.mode, aw.dim = nil, nil
   aw.lastEnd = { reason = reason, at = os.date("!%Y-%m-%dT%H:%M:%SZ") }
   print("harness: awake mode off (" .. reason .. ")")
-  if lock then hs.caffeinate.lockScreen() end
+  if lock and wasAway then hs.caffeinate.lockScreen() end   -- never lock on a person who is using it
+end
+
+local function dimNow()
+  if aw.dim and hs.settings.get(BKEY) == nil then
+    local b = hs.brightness.get()
+    if b then hs.settings.set(BKEY, b); hs.brightness.set(0) end
+  end
+end
+
+-- The person left: dim the screen and lock on the next human input.
+local function goAway()
+  aw.mode = "away"
+  aw.armedAt = hs.timer.secondsSinceEpoch() + 3   -- ignore the keystroke that started it
+  dimNow()
+  print("harness: awake mode away (screen dimmed, locks on touch)")
 end
 
 local function humanWatcher()
   local T = hs.eventtap.event.types
   local P = hs.eventtap.event.properties
-  local armedAt = hs.timer.secondsSinceEpoch() + 3   -- ignore the keystroke that started it
   return hs.eventtap.new({ T.keyDown, T.leftMouseDown, T.rightMouseDown, T.otherMouseDown,
                            T.mouseMoved, T.scrollWheel }, function(e)
-    if hs.timer.secondsSinceEpoch() < armedAt then return false end
     if e:getProperty(P.eventSourceUserData) == harness.EVENT_TAG then return false end
+    local now = hs.timer.secondsSinceEpoch()
+    if aw.mode ~= "away" then aw.lastHuman = now; return false end   -- present: let the person work
+    if now < (aw.armedAt or 0) then return false end
     local moved = e:getType() == T.mouseMoved
     if moved then
       local d = math.abs(e:getProperty(P.mouseEventDeltaX)) + math.abs(e:getProperty(P.mouseEventDeltaY))
@@ -106,17 +133,31 @@ function harness.awake(on, opts)
       info.reason = "screen already locked"
       return hs.json.encode(info)
     end
+    aw.dim = aw.dim or opts.dim ~= false
     if not awakeOn() then
       hs.caffeinate.set("displayIdle", true)   -- no display sleep, so no idle lock
       hs.caffeinate.set("systemIdle", true)
-      -- Also reset the idle clock every minute, which keeps the screen saver from starting.
-      aw.activity = hs.timer.doEvery(60, function() hs.caffeinate.declareUserActivity() end)
+      aw.lastHuman = hs.timer.secondsSinceEpoch() - hs.host.idleTime()
+      aw.mode = "present"
+      -- Every 30 s: reset the idle clock (so the screen saver never starts) and check whether the
+      -- person has left.
+      aw.activity = hs.timer.doEvery(30, function()
+        hs.caffeinate.declareUserActivity()
+        if aw.mode == "present" and hs.timer.secondsSinceEpoch() - aw.lastHuman >= AWAY_SECS then goAway() end
+      end)
       aw.watch = humanWatcher(); aw.watch:start()
+      if hs.timer.secondsSinceEpoch() - aw.lastHuman >= AWAY_SECS then goAway() end
+    elseif aw.mode == "away" then
+      dimNow()   -- a later holder may want the dim the first one skipped
     end
     aw.owners[owner] = true
-    if opts.dim ~= false and hs.settings.get(BKEY) == nil then
-      local b = hs.brightness.get()
-      if b then hs.settings.set(BKEY, b); hs.brightness.set(0) end
+    if tonumber(opts.pid) then
+      aw.pids[owner] = tonumber(opts.pid)
+      aw.pidCheck = aw.pidCheck or hs.timer.doEvery(30, function()
+        for o, pid in pairs(aw.pids) do
+          if not pidAlive(pid) then harness.awake(false, { owner = o, lock = true, reason = o .. " process gone" }) end
+        end
+      end)
     end
     local minutes = tonumber(opts.minutes) or 600
     if aw.timers[owner] then aw.timers[owner]:stop() end
@@ -127,6 +168,7 @@ function harness.awake(on, opts)
     if not aw.untilAt or untilAt > aw.untilAt then aw.untilAt = untilAt end
   else
     aw.owners[owner] = nil
+    aw.pids[owner] = nil
     if aw.timers[owner] then aw.timers[owner]:stop(); aw.timers[owner] = nil end
     if not awakeOn() then stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
   end
