@@ -300,17 +300,37 @@ test('regression: a running agent from an old plist is left alone, and the resta
   assert.deepEqual(s.cycle('claude'), []);   // no bootout, no bootstrap
   assert.ok(s.loaded('claude'), 'work agent left unloaded');
   assert.ok(s.up(9332), 'work Chrome left down');
-  const uid = spawnSync('id', ['-u'], { encoding: 'utf8' }).stdout.trim();
-  const line = `launchctl bootout gui/${uid}/com.test.chrome-claude && ${INSTALL}`;
+  const line = `${INSTALL} --id claude --restart`;
   assert.ok(r.stdout.includes(`chrome-claude is running; left it alone. Its new settings apply at the next login, or now with: ${line}`), r.stdout);
   assert.match(readFileSync(join(s.home, 'Library/LaunchAgents/com.test.chrome-claude.plist'), 'utf8'), /chrome-launch\.sh/);   // new plist written
   assert.match(r.stdout, /chrome-personal: desktop mode: agent left stopped/);
 
-  // The printed command restarts it on the new plist.
-  const x = spawnSync('/bin/zsh', ['-c', line], { env: { PATH: `${s.d}/bin:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: s.home, FAKE: s.fake, HARNESS_ENV: join(s.d, 'harness.env'), CHROME_BIN: join(s.d, 'bin/chrome'), CHROME_MODE_DIR: s.state }, encoding: 'utf8' });
+  // The printed command restarts it on the new plist, even while the old job is slow to exit.
+  const x = s.install(['--id', 'claude', '--restart'], { FAKE_EXIT_CALLS: '3' });
   assert.equal(x.status, 0, x.stdout + x.stderr);
   assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);
   assert.ok(s.loaded('claude') && s.up(9332));
+  assert.match(x.stdout, /chrome-claude restarted on 127\.0\.0\.1:9332/);
+});
+
+test('--restart refuses a desktop-mode profile, an unknown id, and a profile not installed yet', () => {
+  const s = sandbox();
+  s.install();
+  s.mode(['personal', 'desktop']);
+  const before = s.launchctl().filter(c => !c.startsWith('print')).length;
+  let r = s.install(['--id', 'personal', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /chrome-personal is in desktop mode: not restarted/);
+  r = s.install(['--id', 'nope', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /no browser with id nope/);
+  assert.equal(s.launchctl().filter(c => !c.startsWith('print')).length, before);
+
+  const t = sandbox();
+  r = t.install(['--id', 'claude', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /chrome-claude is not installed/);
+  assert.deepEqual(t.cycle('claude'), []);
 });
 
 // The race behind #21's failure: bootout returned while the old Chrome still quit, the immediate
