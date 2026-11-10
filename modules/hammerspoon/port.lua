@@ -200,8 +200,10 @@ return function(deps)
     return p ~= nil, policyError
   end
 
-  -- harness.register(name, fn, {auth=true, cap="hands", app="chrome"}): fn(args) runs when a valid
-  -- call arrives; its return value is the result. auth defaults to true and then needs cap: only
+  -- harness.register(name, fn, {auth=true, cap="hands", app="chrome"}): fn(args, caller) runs when a
+  -- valid call arrives; its return value is the result. For auth=true commands caller is
+  -- {owner=, pid=} of the armed owner (pid nil if the arm had none), taken from the verified arm,
+  -- never from the request; auth=false commands get no caller. A command may ignore it. auth defaults to true and then needs cap: only
   -- owners whose policy lists that capability may call it. app (a name, or function(args) -> name)
   -- is the target the command drives; the owner's policy must list it in apps. auth=false is for
   -- read-only or hold-only commands (status, awake), never for anything that posts input.
@@ -370,7 +372,9 @@ return function(deps)
     local s = state[owner]
     local noHold = hook("beforeCall", owner, s.pid, s.untilAt)
     if noHold then return deny(owner, cmd, noHold) end
-    local ok, res = pcall(c.fn, a)
+    -- The caller comes from the verified arm, never from the request; a fresh table each call, so a
+    -- command that changes it changes nothing in the port.
+    local ok, res = pcall(c.fn, a, { owner = owner, pid = s.pid })
     if not ok then audit("error", owner, cmd); return reply(false, "command failed: " .. tostring(res):sub(1, 200)) end
     audit("ok", owner, cmd)
     return reply(true, res)

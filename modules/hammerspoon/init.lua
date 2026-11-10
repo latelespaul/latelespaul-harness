@@ -305,6 +305,7 @@ restoreHolds()
 -- Lua, and checks an HMAC with a per-run secret on every command that posts input. Logic and wire
 -- format: port.lua; client: hsx. Modules register their commands with the capability they need:
 --   harness.register("myapp.click", fn, {cap="hands", app="chrome"})   -- auth=true is the default
+-- fn(args, caller) runs per call; caller is the armed {owner, pid} from the verified arm.
 -- the access policy file (HS_ACCESS_FILE) grants owners capabilities and apps, and the runner arms
 -- with a fresh secret:  hsx arm my-runner --new | node runner.mjs   (inside $(...) add --pid $$: the
 -- arm ends when its pid exits, and a $(...) subshell can exit at once)

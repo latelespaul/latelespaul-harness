@@ -17,7 +17,7 @@ runner ──stdin: secret──► hsx ──CFMessagePort "harness"──► p
             never env)                                           HMAC, seq, capability, app
 ```
 
-1. A module registers each command with the capability it needs: `harness.register("myapp.click", fn, {cap="hands", app="chrome"})`. `auth=true` is the default; `{auth=false}` is only for read-only or hold-only commands. `status`, `awake.status`, `awake.on` and `awake.off` are built in with `auth=false`, so `hsx status` and the `awake` CLI need no secret.
+1. A module registers each command with the capability it needs: `harness.register("myapp.click", fn, {cap="hands", app="chrome"})`. The port calls `fn(args, caller)`: `caller` is `{owner=, pid=}` of the armed owner that signed the call (`pid` is nil when the arm had none), built from the verified arm and never from the request; `auth=false` commands get no caller, and a command that takes only `args` keeps working. `auth=true` is the default; `{auth=false}` is only for read-only or hold-only commands. `status`, `awake.status`, `awake.on` and `awake.off` are built in with `auth=false`, so `hsx status` and the `awake` CLI need no secret.
 2. The access policy file says who may use which capability, on which apps, and when. It lives in your profile: `HS_ACCESS_FILE`, default `<PROFILE_DIR>/hammerspoon/access.json`. The harness ships only `access.example.json`. **Default deny:** an owner without `"enabled": true` cannot arm, and with no file nothing can. Per owner:
    - `capabilities`: what its commands may need, e.g. `["eyes", "hands"]`.
    - `apps`: the targets it may drive. Omitted = none.
