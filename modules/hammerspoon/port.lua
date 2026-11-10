@@ -203,10 +203,11 @@ return function(deps)
   -- harness.register(name, fn, {auth=true, cap="hands", app="chrome"}): fn(args, caller) runs when a
   -- valid call arrives; its return value is the result. For auth=true commands caller is
   -- {owner=, pid=} of the armed owner (pid nil if the arm had none), taken from the verified arm,
-  -- never from the request; auth=false commands get no caller. A command may ignore it. auth defaults to true and then needs cap: only
-  -- owners whose policy lists that capability may call it. app (a name, or function(args) -> name)
-  -- is the target the command drives; the owner's policy must list it in apps. auth=false is for
-  -- read-only or hold-only commands (status, awake), never for anything that posts input.
+  -- never from the request; auth=false commands get no caller. A command may ignore it. auth
+  -- defaults to true and then needs cap: only owners whose policy lists that capability may call it.
+  -- app (a name, or function(args) -> name) is the target the command drives; the owner's policy
+  -- must list it in apps. auth=false is for read-only or hold-only commands (status, awake), never
+  -- for anything that posts input.
   function M.register(name, fn, opts)
     opts = opts or {}
     assert(type(name) == "string" and name:match(NAME) and #name <= 64, "command name: letters, digits, . _ - (64 max)")
