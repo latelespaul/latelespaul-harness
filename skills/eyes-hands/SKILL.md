@@ -18,6 +18,35 @@ Do browser and app work the way a person does: **look, decide one step, act, che
 3. **Hold the screen awake** for anything longer than a minute: `awake run <name> -- <command>`, or the scheduler's `--needs gui`.
 4. **Pick the browser by account** as the user's rules say. Never drive a browser or app the access policy doesn't grant.
 
+## 0b. Choose the channel first (the router)
+
+Three ways exist to get browser work done. Pick in this order, and write the choice and its reason in one line before you start.
+
+```
+task
+ │
+ ├─ 1. Public data with an API, RSS or plain HTTP page, no login?  → HTTP/API
+ │
+ ├─ 2. Anything else in the user's own browser                     → DESKTOP (eyes + hands)   ← default
+ │
+ └─ 3. Only if the task QUALIFIES for debug mode (list below)      → CDP (debug-port browser)
+```
+
+**DESKTOP is the default** for every task that acts as the user or on a site that watches for bots: applying, signing up, logging in, filling or submitting forms, sending messages, editing account settings, anything on LinkedIn, ATS/job portals, Google, banks, shops.
+
+**CDP qualifies only when at least one is true** (and no step submits, sends, pays or signs up):
+
+| Qualifies | Why desktop can't do it well |
+|---|---|
+| Debugging a site: console errors, network calls, performance | the eyes can't see the network or console |
+| Read-only bulk extraction (many pages) from a site with no API, where the user accepts the bot-detection risk | human-paced desktop is far too slow |
+| Content the Accessibility tree and OCR both can't read (canvas apps, closed shadow DOM), read-only | no other way to read it |
+| The user explicitly asks for debug mode for this task | their call |
+
+**Never use CDP for:** submitting an application, signing up, logging in, sending a message or mail, payments, account changes, or any site that showed a CAPTCHA or bot wall before.
+
+**Switching costs:** one browser profile runs in one mode at a time, and a switch quits and reopens that browser. Batch CDP-qualified work, run it when the user is away, switch back to desktop right after, and never switch while a desktop task or a hand-off tab is waiting.
+
 ## 1. The loop
 
 ```
