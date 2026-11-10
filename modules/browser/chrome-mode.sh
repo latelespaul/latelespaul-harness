@@ -15,11 +15,16 @@ chrome_mode_file() { print -r -- ${CHROME_MODE_DIR:-$HOME/.local/state/harness/c
 
 # chrome_mode <id>: print agent or desktop.
 chrome_mode() {
-  local f=$(chrome_mode_file $1)
+  local f=$(chrome_mode_file $1) key=mode
   # Legacy fallback, remove once job-hunt writes the file above: its chrome-mode tool records the
-  # personal browser's mode in ~/.local/state/job-hunt/chrome-mode.json (same "mode" key).
-  [[ ! -e $f && $1 == personal ]] && f=$HOME/.local/state/job-hunt/chrome-mode.json
-  if [[ -r $f && "$(<$f)" =~ '"mode"[[:space:]]*:[[:space:]]*"desktop"' ]]; then print desktop; else print agent; fi
+  # personal browser's mode in ~/.local/state/job-hunt/chrome-mode.json. While it switches, "mode" is
+  # still the old one, so its "intent" key (the mode it switches to) decides when present.
+  if [[ ! -e $f && $1 == personal ]]; then
+    f=$HOME/.local/state/job-hunt/chrome-mode.json
+    [[ -r $f && "$(<$f)" == *'"intent"'* ]] && key=intent
+  fi
+  local re="\"$key\"[[:space:]]*:[[:space:]]*\"desktop\""
+  if [[ -r $f && "$(<$f)" =~ $re ]]; then print desktop; else print agent; fi
 }
 
 [[ $ZSH_EVAL_CONTEXT == toplevel ]] || return 0

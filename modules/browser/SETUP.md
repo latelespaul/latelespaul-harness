@@ -25,7 +25,7 @@ A separate Google Chrome that only agents use. It has its own profile (`~/.chrom
 ```
 
 - State file, one per profile: `~/.local/state/harness/chrome-mode/<id>.json` (`CHROME_MODE_DIR` moves the folder), written whole: `{"mode": "desktop", "updated": "2026-01-31T12:00:00Z", "writer": "<tool>"}`. `mode` is `agent` or `desktop`; `updated` is UTC; `writer` names the tool. No file means agent.
-- Legacy, until the job-hunt tool writes that file: for the `personal` id only, the installer and launcher read `~/.local/state/job-hunt/chrome-mode.json` when the harness file is missing.
+- Legacy, until the job-hunt tool writes that file: for the `personal` id only, the installer and launcher read `~/.local/state/job-hunt/chrome-mode.json` when the harness file is missing. Its `intent` key (the mode a switch goes to) decides when present, else its `mode` key.
 - The Telegram watchdog only watches Claude Chrome. Keep that profile in agent mode: in desktop mode the watchdog restarts its agent every 10 minutes (the launcher exits at once) and sends a message each time.
 
 ## Steps for the agent

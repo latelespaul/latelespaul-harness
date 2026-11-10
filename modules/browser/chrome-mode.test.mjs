@@ -54,9 +54,9 @@ function sandbox() {
   const zsh = (script, args = [], extra = {}) => spawnSync('/bin/zsh', [script, ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
   const lines = f => existsSync(join(fake, f)) ? readFileSync(join(fake, f), 'utf8').trim().split('\n') : [];
   const touch = f => writeFileSync(join(fake, f), '');
-  const legacy = mode => {
+  const legacy = (mode, fields = { intent: mode, switching: false }) => {
     mkdirSync(join(home, '.local/state/job-hunt'), { recursive: true });
-    writeFileSync(join(home, '.local/state/job-hunt/chrome-mode.json'), JSON.stringify({ intent: mode, mode, switching: false }, null, 2));
+    writeFileSync(join(home, '.local/state/job-hunt/chrome-mode.json'), JSON.stringify({ mode, ...fields }, null, 2));
   };
   return {
     d, home, state, fake, zsh, touch, legacy,
@@ -75,11 +75,11 @@ test('agent mode: install writes the guarded plist and loads every browser', () 
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(s.loadsOf('claude').length, 1);
   assert.equal(s.loadsOf('personal').length, 1);
-  const plist = readFileSync(join(s.home, 'Library/LaunchAgents/com.test.chrome-personal.plist'), 'utf8');
-  assert.match(plist, /modules\/browser\/chrome-launch\.sh<\/string>\s*<string>personal<\/string>\s*<string>9333<\/string>/);
-  assert.match(plist, /<key>KeepAlive<\/key><dict><key>SuccessfulExit<\/key><false\/><\/dict>/);
-  const lint = spawnSync('/usr/bin/plutil', ['-lint', join(s.home, 'Library/LaunchAgents/com.test.chrome-personal.plist')], { encoding: 'utf8' });
-  assert.equal(lint.status, 0, lint.stdout);
+  const conv = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(s.home, 'Library/LaunchAgents/com.test.chrome-personal.plist')], { encoding: 'utf8' });
+  assert.equal(conv.status, 0, conv.stderr);
+  const plist = JSON.parse(conv.stdout);
+  assert.deepEqual(plist.ProgramArguments, ['/bin/zsh', LAUNCH, 'personal', '9333']);
+  assert.deepEqual(plist.KeepAlive, { SuccessfulExit: false });
   assert.doesNotMatch(r.stderr, /unfilled placeholder/);
   assert.match(r.stdout, /chrome-personal is running on 127\.0\.0\.1:9333/);
   assert.deepEqual(s.chrome(), []);   // install never starts Chrome itself
@@ -135,6 +135,28 @@ test('legacy job-hunt state file is read only when the harness file is missing, 
   t.legacy('agent');
   t.install();
   assert.equal(t.loadsOf('personal').length, 1);
+});
+
+test('legacy job-hunt state file mid-switch: its intent decides, not the stale mode', () => {
+  const s = sandbox();
+  s.legacy('desktop', { intent: 'cdp', switching: true });
+  s.install();
+  assert.equal(s.loadsOf('personal').length, 1);
+  assert.equal(s.launch('personal', '9333').status, 1);
+  assert.equal(s.chrome().length, 1);
+
+  const t = sandbox();
+  t.legacy('cdp', { intent: 'desktop', switching: true });
+  const r = t.install();
+  assert.deepEqual(t.loadsOf('personal'), []);
+  assert.match(r.stdout, /chrome-personal: desktop mode: agent left stopped/);
+  assert.equal(t.launch('personal', '9333').status, 0);
+  assert.deepEqual(t.chrome(), []);
+
+  // A legacy file without intent falls back to mode.
+  const u = sandbox();
+  u.legacy('desktop', {});
+  assert.equal(u.mode(['personal']).stdout.trim(), 'desktop');
 });
 
 test('--status reports desktop mode without failing', () => {
