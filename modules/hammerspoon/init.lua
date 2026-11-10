@@ -41,9 +41,9 @@ end
 -- ("present"); after AWAY_SECS with no human input it dims and arms the lock ("away").
 --   harness.awake(true,  {owner="job-hunt", minutes=600, dim=true, pid=1234})  -> JSON
 --   harness.awake(false, {owner="job-hunt", lock=true})               -> JSON
--- Several owners may hold it; it ends when the last one leaves, the deadline passes, a person
--- types or moves the mouse (then the screen locks at once), or the screen locks some other way
--- (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
+-- Several owners may hold it; it ends when the last one leaves (or its pid exits), the deadline
+-- passes, a person types or moves the mouse in away mode (then the screen locks at once), or the
+-- screen locks some other way (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
 -- Tools that post their own mouse or key events must tag them, or the watcher takes them for a
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
