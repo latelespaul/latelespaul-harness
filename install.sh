@@ -133,8 +133,13 @@ fi
 # --- framework -----------------------------------------------------------------------------
 [[ -d $HARNESS_DIR/.git ]] && act git -C $HARNESS_DIR config core.hooksPath .githooks
 act mkdir -p $HARNESS_DIR/logs
-act chmod +x $HARNESS_DIR/install.sh $HARNESS_DIR/.githooks/*(.) $HARNESS_DIR/scripts/*(.) \
-  $HARNESS_DIR/modules/*/*.(sh|py)(N.)
+# Only scripts that start with a shebang get +x, so files git tracks as 100644 (tests, templates)
+# keep their mode and git status stays clean. (A loop, not a glob qualifier: set -e exits on its false.)
+exe=($HARNESS_DIR/install.sh $HARNESS_DIR/.githooks/*(.))
+for f in $HARNESS_DIR/{scripts,modules/*}/(^*.test.*).(sh|py|mjs)(N.); do
+  [[ $(head -c2 -- $f) == '#!' ]] && exe+=($f)
+done
+act chmod +x $exe
 
 # --- ~/.claude -----------------------------------------------------------------------------
 ensure_dir $claude_dir
