@@ -28,8 +28,8 @@ function sandbox({ modules = 'firstmate cron', autostart = 1, installed = true }
   const bin = join(d, 'bin'), fake = join(d, 'fake'), home = join(d, 'home');
   for (const p of [bin, fake, home]) mkdirSync(p, { recursive: true });
   writeFileSync(join(bin, 'tmux'), FAKE_TMUX); chmodSync(join(bin, 'tmux'), 0o755);
-  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\ncat "$FAKE/boottime"\n'); chmodSync(join(bin, 'sysctl'), 0o755);
-  writeFileSync(join(fake, 'boottime'), '{ sec = 1000, usec = 0 } Mon Jan  1 00:00:00 2026');
+  writeFileSync(join(bin, 'sysctl'), '#!/bin/sh\nprintf "%s %s\\n" "$(cat "$FAKE/boottime")" "\${TZ:-local}"\n'); chmodSync(join(bin, 'sysctl'), 0o755);
+  writeFileSync(join(fake, 'boottime'), '{ sec = 1000, usec = 0 }');
   writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\necho "$*" >> "$FAKE/launchctl.log"\n'); chmodSync(join(bin, 'launchctl'), 0o755);
   const fm = join(d, 'firstmate');
   if (installed) mkdirSync(join(fm, '.git'), { recursive: true });
@@ -44,7 +44,7 @@ function sandbox({ modules = 'firstmate cron', autostart = 1, installed = true }
   const jobs = () => existsSync(env.HCRON_JOBS) ? JSON.parse(readFileSync(env.HCRON_JOBS, 'utf8')).jobs : {};
   const setRunning = name => writeFileSync(join(fake, 'running'), name);
   const stop = () => rmSync(join(fake, 'running'), { force: true });
-  const reboot = sec => writeFileSync(join(fake, 'boottime'), `{ sec = ${sec}, usec = 0 } Mon Jan  1 00:00:00 2026`);
+  const reboot = sec => writeFileSync(join(fake, 'boottime'), `{ sec = ${sec}, usec = 0 }`);
   const starts = () => tmuxCalls().filter(c => c.startsWith('new ')).length;
   return { d, fake, home, fm, run, tmuxCalls, jobs, setRunning, stop, reboot, starts };
 }
@@ -202,6 +202,14 @@ test('--once that finds the session running marks the boot too', () => {
   s.stop();
   s.run(['--once']);
   assert.equal(s.starts(), 0);
+});
+
+test('the boot marker matches across time zones', () => {
+  const s = sandbox();
+  s.run([], { TZ: 'Asia/Kolkata' }); s.stop();
+  const r = s.run(['--once'], { TZ: 'Europe/London' });
+  assert.equal(r.status, 0); assert.match(r.stdout, /already ran this boot/);
+  assert.equal(s.starts(), 1);
 });
 
 test('a manual start ignores the marker', () => {

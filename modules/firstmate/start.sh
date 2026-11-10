@@ -18,7 +18,8 @@ job=firstmate-start
 # The session name with "=" so tmux matches it exactly, not as a prefix of another session's name.
 target="=$FIRSTMATE_SESSION"
 marker=$HOME/.local/state/harness/firstmate-autostart.boot
-boot=$(sysctl -n kern.boottime 2>/dev/null || true)
+boot=
+[[ $(sysctl -n kern.boottime 2>/dev/null || true) =~ 'sec = ([0-9]+)' ]] && boot=$match[1]
 mark() { dry || [[ -z $boot ]] || { mkdir -p ${marker:h}; print -r -- $boot > $marker } }
 
 # hcron straight from the harness, so it works before ~/.local/bin/hcron is linked.
