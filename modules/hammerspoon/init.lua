@@ -68,6 +68,7 @@ local function stopAll(reason, lock)
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
+  if aw.activity then aw.activity:stop(); aw.activity = nil end
   if aw.watch then aw.watch:stop(); aw.watch = nil end
   hs.caffeinate.set("displayIdle", false)
   hs.caffeinate.set("systemIdle", false)
@@ -86,12 +87,13 @@ local function humanWatcher()
                            T.mouseMoved, T.scrollWheel }, function(e)
     if hs.timer.secondsSinceEpoch() < armedAt then return false end
     if e:getProperty(P.eventSourceUserData) == harness.EVENT_TAG then return false end
-    if e:getType() == T.mouseMoved then
+    local moved = e:getType() == T.mouseMoved
+    if moved then
       local d = math.abs(e:getProperty(P.mouseEventDeltaX)) + math.abs(e:getProperty(P.mouseEventDeltaY))
       if d < 4 then return false end   -- desk bumps and sensor jitter
     end
     hs.timer.doAfter(0, function() stopAll("person at the Mac", true) end)
-    return false
+    return not moved   -- a person's key, click or scroll must not reach the job's app
   end)
 end
 
@@ -99,11 +101,16 @@ function harness.awake(on, opts)
   opts = opts or {}
   local owner = opts.owner or "default"
   if on then
+    if (hs.caffeinate.sessionProperties() or {}).CGSSessionScreenIsLocked == true then
+      local info = harness.awakeInfo()
+      info.reason = "screen already locked"
+      return hs.json.encode(info)
+    end
     if not awakeOn() then
       hs.caffeinate.set("displayIdle", true)   -- no display sleep, so no idle lock
       hs.caffeinate.set("systemIdle", true)
       -- Also reset the idle clock every minute, which keeps the screen saver from starting.
-      aw.timers.activity = hs.timer.doEvery(60, function() hs.caffeinate.declareUserActivity() end)
+      aw.activity = hs.timer.doEvery(60, function() hs.caffeinate.declareUserActivity() end)
       aw.watch = humanWatcher(); aw.watch:start()
     end
     aw.owners[owner] = true
