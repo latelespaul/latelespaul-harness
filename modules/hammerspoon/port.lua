@@ -20,6 +20,9 @@
 -- enabled cannot arm, and an invalid file denies every authenticated call until it is fixed.
 -- A bad MAC or a replay disarms the owner, locks it for lock_minutes (so a spoofer cannot re-arm it
 -- with its own secret) and always sends one alert, even inside the throttle for refusals.
+-- Optional deps hooks for the awake guard (guard.lua): armed(owner, pid, untilAt) after an arm,
+-- disarmed(owner, reason) after a disarm, and beforeCall(owner, pid, untilAt) before every
+-- authenticated command, which refuses the call when it returns a reason.
 local MAX_BYTES = 4 * 1024 * 1024
 local NAME = "^[%w._-]+$"
 local OWNER_KEYS = { enabled = 1, capabilities = 1, apps = 1, window = 1, manual_runs = 1, max_arm_minutes = 1,
@@ -134,6 +137,13 @@ return function(deps)
     local p = policy.owners[owner]
     if p and p.alert == "telegram" then deps.alert(text) end
   end
+  -- A guard hook that fails is logged and skipped: a bug there must not stop every call.
+  local function hook(name, ...)
+    if not deps[name] then return end
+    local ok, res = pcall(deps[name], ...)
+    if not ok then audit("error", (...), name, tostring(res)); return end
+    return res
+  end
   local function reply(ok, v) return json.encode(ok and { ok = true, result = v } or { ok = false, error = v }) end
   local function deny(owner, cmd, reason) audit("deny", owner, cmd, reason); return reply(false, reason) end
   local function denyLoud(owner, cmd, reason)
@@ -164,6 +174,7 @@ return function(deps)
     s.secret, s.pid, s.untilAt = nil, nil, nil
     audit("disarm", owner, "disarm", reason or "released")
     notice(owner, owner .. ": disarmed (" .. (reason or "released") .. ")")
+    hook("disarmed", owner, reason or "released")
     return true
   end
 
@@ -244,6 +255,7 @@ return function(deps)
     s.allowUntil = nil   -- a one-off allowance is used up by the arm it allowed
     audit("arm", owner, "arm")
     notice(owner, owner .. ": armed until " .. stamp(s.untilAt):sub(12, 16) .. " UTC")
+    hook("armed", owner, s.pid, s.untilAt)
     return true, { owner = owner, ["until"] = stamp(s.untilAt) }
   end
 
@@ -354,6 +366,10 @@ return function(deps)
       if not okApp or type(app) ~= "string" then return denyLoud(owner, cmd, "no target app") end
       if not p.apps[app] then return denyLoud(owner, cmd, "app " .. clean(app) .. " not granted") end
     end
+    -- No eyes or hands without an awake hold (guard.lua takes one if it can).
+    local s = state[owner]
+    local noHold = hook("beforeCall", owner, s.pid, s.untilAt)
+    if noHold then return deny(owner, cmd, noHold) end
     local ok, res = pcall(c.fn, a)
     if not ok then audit("error", owner, cmd); return reply(false, "command failed: " .. tostring(res):sub(1, 200)) end
     audit("ok", owner, cmd)

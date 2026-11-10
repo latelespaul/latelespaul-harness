@@ -6,7 +6,7 @@
 //
 //   hcron add <id> --cron "7 * * * *" --cmd "bin/jobhunt tick" [--cwd DIR] [--window 20:00-05:00]
 //             [--needs unlocked,gui] [--awake] [--timeout 50m] [--catchup] [--project NAME]
-//   hcron list | status | run <id> | pause <id|all> | resume <id|all> | rm <id> | logs <id> [-n 40]
+//   hcron list | status | doctor | run <id> | pause <id|all> | resume <id|all> | rm <id> | logs <id> [-n 40]
 //   hcron tick            (launchd calls this; runs every due job, at most one copy of each)
 //   hcron next <id> [-n 5]  next fire times, to check a cron expression
 //
@@ -15,8 +15,11 @@
 // asking Hammerspoon (the one app that holds the GUI permissions); a missed slot (Mac asleep) runs
 // once on wake with --catchup; `--awake` (automatic for `--needs gui`) holds
 // Hammerspoon's awake mode while the job runs (no idle lock; after 5 minutes with no human input the
-// screen dims and locks on the next touch or when the job ends, never while a person uses the Mac); failures, timeouts and skips go to $HCRON_NOTIFY (a command that
-// takes the message as its last argument), never silently.
+// screen dims and locks on the next touch or when the job ends, never while a person uses the Mac;
+// when Hammerspoon cannot hold it, `caffeinate -d -i -u -w <job pid>` keeps the display awake instead and you are told);
+// failures, timeouts and skips go to $HCRON_NOTIFY (a command that takes the message as its last
+// argument), never silently. `hcron doctor` (and `add`) warn about a job that looks like it drives
+// the screen but holds no awake mode.
 
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, renameSync, realpathSync, statSync } from 'node:fs';
@@ -159,14 +162,38 @@ function log(id, line) {
 // A job holds awake mode when it asks for it or needs the GUI.
 export const wantsAwake = job => !!job.awake || (job.needs || []).includes('gui');
 
+// A command that looks like it reads the screen or drives the mouse and keyboard. Only a hint: a
+// wrapper script hides what it runs, so the Hammerspoon awake guard is the real backstop.
+const SCREEN_WORDS = /\b(hsx|hs\s+(-\S+\s+)*-\S*c|hammerspoon|eyes|hands|desktop|gui|screenshots?|screencapture|osascript|cliclick|chrome|browser|playwright|puppeteer)\b/i;
+export const looksScreenDriving = job => SCREEN_WORDS.test(job.cmd || '') && !/(^|\s)awake\s+run\s/.test(job.cmd || '');
+
+// What `hcron doctor` reports for one job: problems (exit 1) and notes.
+export function checkJob(job) {
+  const problems = [], notes = [];
+  if (looksScreenDriving(job) && !wantsAwake(job))
+    problems.push('looks like it drives the screen but holds no awake mode: add --needs gui (or --awake), or wrap it in `awake run`');
+  if (job.awake && !(job.needs || []).includes('gui'))
+    notes.push('--awake without --needs gui: it also runs while the screen is locked, and then gets no awake hold');
+  return { problems, notes };
+}
+
+// Answer: true = held, or the reason it was not. Logs either way.
 function awake(id, on, minutes) {
   const call = on ? `harness.awake(true, {owner=${JSON.stringify(id)}, minutes=${minutes}, pid=${process.pid}})`
     : `harness.awake(false, {owner=${JSON.stringify(id)}, lock=true, reason="job ended"})`;
   const args = on ? { owner: id, minutes, pid: process.pid } : { owner: id, lock: true, reason: 'job ended' };
   try {
     const out = hammerspoon(`return harness.awake and ${call} or "no awake mode"`, on ? 'awake.on' : 'awake.off', args, 5).trim();
-    console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'}: ${out.split('\n').pop()}`);
-  } catch (e) { console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'} failed: Hammerspoon not answering`); }
+    const last = out.split('\n').pop();
+    console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'}: ${last}`);
+    let r = null;
+    try { r = JSON.parse(last); } catch {}
+    if (typeof r?.ok === 'boolean') r = r.ok ? r.result : { reason: r.error };
+    return r?.on === true || (typeof r?.reason === 'string' ? r.reason : 'refused');
+  } catch (e) {
+    console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'} failed: Hammerspoon not answering`);
+    return 'Hammerspoon not answering';
+  }
 }
 
 // ---------- running ----------
@@ -199,7 +226,14 @@ function supervise(id, reason) {
   const cmd = process.env.HCRON_CMD;
   console.log(`${new Date().toISOString()} start (${reason}) ${cmd}`);
   const holdAwake = process.env.HCRON_AWAKE === '1';
-  if (holdAwake) awake(id, true, Math.ceil(Number(process.env.HCRON_TIMEOUT) / 60_000) + 1);
+  // The hold comes before the command starts. Without it the screen can idle-lock under the job, so
+  // `caffeinate -d -i -u -w <job pid>` keeps the display awake instead, like the awake CLI's fallback
+  // (no dim, no lock on touch; not on a screen that is already locked) and you are told, once per reason (done() records it; start() may still be
+  // writing the state file now).
+  const held = holdAwake ? awake(id, true, Math.ceil(Number(process.env.HCRON_TIMEOUT) / 60_000) + 1) : true;
+  const keepDisplay = held !== true && !/locked/.test(held);
+  if (held !== true && loadState(id).awake_notified !== held)
+    notify(`${id} runs without awake mode (${held})${keepDisplay ? '; it runs on the caffeinate fallback (no dim, no lock on touch)' : ''}`);
   const job = spawn('/bin/zsh', ['-lc', cmd], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
   let timedOut = false, killer, finished = false;
   const group = sig => { try { process.kill(-job.pid, sig); } catch {} };
@@ -211,18 +245,19 @@ function supervise(id, reason) {
     const secs = Math.round((Date.now() - t0) / 1000);
     console.log(`${new Date().toISOString()} exit ${rc}${timedOut ? ' (timed out)' : ''} after ${secs}s`);
     if (holdAwake) awake(id, false);
-    done(id, rc, secs, timedOut);
+    done(id, rc, secs, timedOut, holdAwake ? { awake_notified: held === true ? null : held } : {});
   };
   job.on('error', e => { console.log(`cannot start: ${e.message}`); finish(127); });
   job.on('exit', (code, sig) => finish(code ?? 128 + (constants.signals[sig] || 0)));
-  if (job.pid) spawn('caffeinate', ['-i', '-w', String(job.pid)], { stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref();
+  if (job.pid && keepDisplay) console.log(`${new Date().toISOString()} no awake hold: caffeinate -d -i -u -w ${job.pid} keeps the display awake (no dim, no lock on touch)`);
+  if (job.pid) spawn('caffeinate', [...(keepDisplay ? ['-d', '-i', '-u'] : ['-i']), '-w', String(job.pid)], { stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref();
 }
 
-function done(id, rc, secs, timedOut) {
+function done(id, rc, secs, timedOut, extra = {}) {
   const st = loadState(id);
   const job = loadJobs().jobs[id] || {};
   const fails = rc === 0 ? 0 : (st.consecutive_failures || 0) + 1;
-  saveState(id, { ...st, pid: null, last_exit: rc, last_secs: secs, finished_at: new Date().toISOString(), consecutive_failures: fails });
+  saveState(id, { ...st, ...extra, pid: null, last_exit: rc, last_secs: secs, finished_at: new Date().toISOString(), consecutive_failures: fails });
   if (rc !== 0 && job.notify !== false && (fails === 1 || fails % 5 === 0))
     notify(`${id} ${timedOut ? 'timed out' : `failed (exit ${rc})`} after ${secs}s${fails > 1 ? `, ${fails} in a row` : ''}. Logs: hcron logs ${id}`);
 }
@@ -303,6 +338,7 @@ function main(argv) {
       all.jobs[id] = job;
       saveJobs(all);
       console.log(`${existed ? 'updated' : 'added'} ${id}; next: ${nextTimes(o.cron, 3).map(d => d.toLocaleString()).join(' | ')}`);
+      for (const p of checkJob(job).problems) console.error(`warning: ${id} ${p}`);
       return;
     }
     case 'rm': need(o._[0]); delete all.jobs[o._[0]]; saveJobs(all); return console.log(`removed ${o._[0]}`);
@@ -313,6 +349,18 @@ function main(argv) {
     }
     case 'run': { const id = o._[0]; return Promise.resolve(start(id, need(id), 'manual')).then(r => console.log(`${id}: ${r}`)); }
     case 'next': { const j = need(o._[0]); return console.log(nextTimes(j.cron, o.n || 5).map(d => d.toLocaleString()).join('\n')); }
+    case 'doctor': {
+      let bad = 0;
+      for (const [id, j] of Object.entries(all.jobs)) {
+        const { problems, notes } = checkJob(j);
+        bad += problems.length;
+        for (const p of problems) console.log(`PROBLEM ${id}: ${p}`);
+        for (const n of notes) console.log(`note    ${id}: ${n}`);
+        if (!problems.length && !notes.length) console.log(`ok      ${id}`);
+      }
+      if (bad) process.exitCode = 1;
+      return;
+    }
     case 'logs': {
       const p = join(LOG_DIR, `${o._[0] || '_hcron'}.log`);
       if (!existsSync(p)) return console.log('(no log yet)');
@@ -332,7 +380,7 @@ function main(argv) {
       return;
     }
     default:
-      console.error('usage: hcron add|list|status|run|pause|resume|rm|logs|next|tick  (see the header of hcron.mjs)'); process.exit(1);
+      console.error('usage: hcron add|list|status|doctor|run|pause|resume|rm|logs|next|tick  (see the header of hcron.mjs)'); process.exit(1);
   }
 }
 
