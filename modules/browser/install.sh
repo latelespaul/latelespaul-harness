@@ -5,17 +5,24 @@
 #   install.sh                         install / repair all of them on this Mac
 #   install.sh [--id <id>] --uninstall stop one (default: claude); keeps the profile and its logins
 #   install.sh [--id <id>] --status    is it up? (exit 1 if not; without --id: all of them)
+#   install.sh [--id <id>] --restart   reload one agent-mode profile's agent on its current plist (stops its Chrome)
+# A profile in desktop mode (chrome-mode.sh) is left stopped: its agent is not loaded or restarted.
+# A profile in agent mode (or with no record) is never stopped: a running agent is left alone, even when
+# its plist changed; only an agent that is not loaded or not running is (re)loaded.
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
 source ${0:A:h:h:h}/lib/common.sh
 mod=$HARNESS_DIR/modules/browser
+source $mod/chrome-mode.sh
+chrome_bin=${CHROME_BIN:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
 uid=$(id -u)
 browsers=(claude:$BROWSER_PORT ${(z)BROWSER_EXTRA})
 id=claude ids=()
 [[ $1 == --id ]] && { id=$2 ids=($2); shift 2 }
 port_of() { local b; for b in $browsers; do [[ ${b%%:*} == $1 ]] && { print ${b#*:}; return 0 }; done; return 1 }
 up() { curl -s --max-time 3 http://127.0.0.1:$1/json/version | grep -q '"Browser"' }
+wait_up() { local i; for i in {1..20}; do up $1 && return 0; sleep 1; done; return 1 }
 
 case ${1:-install} in
 --status)
@@ -23,7 +30,9 @@ case ${1:-install} in
   rc=0
   for id in $ids; do
     port=$(port_of $id) || { print "no browser with id $id"; rc=1; continue }
-    if up $port; then print "chrome-$id is up on 127.0.0.1:$port."; else print "chrome-$id is down."; rc=1; fi
+    if up $port; then print "chrome-$id is up on 127.0.0.1:$port."
+    elif [[ $(chrome_mode $id) == desktop ]]; then print "chrome-$id is in desktop mode: agent left stopped."
+    else print "chrome-$id is down."; rc=1; fi
   done
   command -v chrome-devtools-axi >/dev/null || { print "chrome-devtools-axi is not installed (npm i -g chrome-devtools-axi@0.1.44)."; rc=1 }
   exit $rc ;;
@@ -32,15 +41,27 @@ case ${1:-install} in
   act rm -f $agents_dir/com.$LABEL_PREFIX.chrome-$id.plist
   print "Stopped. Profile and logins kept in ~/.chrome-$id (delete it to reset)."
   exit 0 ;;
+--restart)
+  port=$(port_of $id) || { print "no browser with id $id"; exit 1 }
+  [[ $(chrome_mode $id) == desktop ]] && { print "chrome-$id is in desktop mode: not restarted (back to agent mode: $mod/chrome-mode.sh $id agent)."; exit 1 }
+  plist=$agents_dir/com.$LABEL_PREFIX.chrome-$id.plist
+  [[ -f $plist ]] || { print "chrome-$id is not installed; run $mod/install.sh first."; exit 1 }
+  launchd_load com.$LABEL_PREFIX.chrome-$id $plist || { print "chrome-$id: could not load its agent; run this again."; exit 1 }
+  if [[ $HARNESS_SKIP_LAUNCHD == 1 ]] || dry; then exit 0; fi
+  wait_up $port && { print "chrome-$id restarted on 127.0.0.1:$port."; exit 0 }
+  print "chrome-$id did not open its debug port yet (its agent stays loaded and retries); see ~/.chrome-$id-logs/chrome.log"
+  exit 1 ;;
 install) ;;
-*) print "usage: $0 [--id <id>] [--uninstall|--status]"; exit 1 ;;
+*) print "usage: $0 [--id <id>] [--uninstall|--status|--restart]"; exit 1 ;;
 esac
 
-[[ -d "/Applications/Google Chrome.app" ]] || { print "Install Google Chrome first: brew install --cask google-chrome"; dry || exit 1 }
+[[ -x $chrome_bin ]] || { print "Install Google Chrome first: brew install --cask google-chrome"; dry || exit 1 }
 command -v chrome-devtools-axi >/dev/null || print "Note: install the controller with: npm i -g chrome-devtools-axi@0.1.44"
 
 ensure_dir $agents_dir
 render_keys+=(CHROME_LABEL CHROME_PROFILE CHROME_PORT CHROME_ID)
+# A profile that fails is reported and the loop goes on, so one profile never stops the next one.
+rc=0
 for b in $browsers; do
   CHROME_ID=${b%%:*} CHROME_PORT=${b#*:}
   CHROME_LABEL=com.$LABEL_PREFIX.chrome-$CHROME_ID CHROME_PROFILE=.chrome-$CHROME_ID
@@ -55,13 +76,27 @@ for b in $browsers; do
     act chmod +x ~/.local/bin/chrome-$CHROME_ID
     (( ${path[(Ie)$HOME/.local/bin]} )) || print "Note: ~/.local/bin is not on PATH, so chrome-$CHROME_ID won't be found. Add to ~/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
   fi
-  if (( ! plist_changed )) && launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
-    print "chrome-$CHROME_ID already running; left it alone."
+  # Desktop mode: another tool runs this profile as a normal Chrome. Loading the agent would hand
+  # each launch to that Chrome, which opens one more empty window every time.
+  if [[ $(chrome_mode $CHROME_ID) == desktop ]]; then
+    # An agent still loaded from an older plist keeps relaunching; stop it unless it serves its port.
+    if launchd_loaded $CHROME_LABEL && ! up $CHROME_PORT; then launchd_unload $CHROME_LABEL; fi
+    print "chrome-$CHROME_ID: desktop mode: agent left stopped (back to agent mode: $mod/chrome-mode.sh $CHROME_ID agent, then re-run this installer)."
     continue
   fi
-  launchd_load $CHROME_LABEL $plist
+  # Agent mode (or no record): never stop a running agent, since agents may be using its Chrome.
+  if launchd_loaded $CHROME_LABEL && up $CHROME_PORT; then
+    if (( plist_changed )); then
+      print "chrome-$CHROME_ID is running; left it alone. Its new settings apply at the next login, or now with: $mod/install.sh --id $CHROME_ID --restart"
+    else
+      print "chrome-$CHROME_ID already running; left it alone."
+    fi
+    continue
+  fi
+  # Not loaded, or loaded but not running: (re)load it. launchd_load waits for an old job to go first.
+  launchd_load $CHROME_LABEL $plist || { print "chrome-$CHROME_ID: could not load its agent; re-run this installer."; rc=1; continue }
   if [[ $HARNESS_SKIP_LAUNCHD == 1 ]] || dry; then continue; fi
-  for i in {1..20}; do up $CHROME_PORT && break; sleep 1; done
-  up $CHROME_PORT && print "chrome-$CHROME_ID is running on 127.0.0.1:$CHROME_PORT. Log in to the accounts agents should use, in that window." \
-    || { print "chrome-$CHROME_ID did not open its debug port; see ~/$CHROME_PROFILE-logs/chrome.log"; exit 1 }
+  wait_up $CHROME_PORT && print "chrome-$CHROME_ID is running on 127.0.0.1:$CHROME_PORT. Log in to the accounts agents should use, in that window." \
+    || { print "chrome-$CHROME_ID did not open its debug port yet (its agent stays loaded and retries); see ~/$CHROME_PROFILE-logs/chrome.log"; rc=1 }
 done
+exit $rc
