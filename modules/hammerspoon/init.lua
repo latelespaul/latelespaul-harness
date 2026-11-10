@@ -133,7 +133,6 @@ function harness.awake(on, opts)
       info.reason = "screen already locked"
       return hs.json.encode(info)
     end
-    local awaySecs = tonumber(opts.away_after) or AWAY_SECS
     aw.dim = aw.dim or opts.dim ~= false
     if not awakeOn() then
       hs.caffeinate.set("displayIdle", true)   -- no display sleep, so no idle lock
@@ -144,10 +143,10 @@ function harness.awake(on, opts)
       -- person has left.
       aw.activity = hs.timer.doEvery(30, function()
         hs.caffeinate.declareUserActivity()
-        if aw.mode == "present" and hs.timer.secondsSinceEpoch() - aw.lastHuman >= awaySecs then goAway() end
+        if aw.mode == "present" and hs.timer.secondsSinceEpoch() - aw.lastHuman >= AWAY_SECS then goAway() end
       end)
       aw.watch = humanWatcher(); aw.watch:start()
-      if hs.timer.secondsSinceEpoch() - aw.lastHuman >= awaySecs then goAway() end
+      if hs.timer.secondsSinceEpoch() - aw.lastHuman >= AWAY_SECS then goAway() end
     elseif aw.mode == "away" then
       dimNow()   -- a later holder may want the dim the first one skipped
     end

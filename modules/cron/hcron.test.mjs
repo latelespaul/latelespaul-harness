@@ -220,22 +220,21 @@ test('an --awake job still runs when Hammerspoon does not answer', async () => {
   assert.match(s.run('logs', 'aw2').stdout, /awake on failed: Hammerspoon not answering/);
 });
 
-test('a --needs gui job holds awake mode by itself, tied to its process; --no-awake opts out', async () => {
+test('a --needs gui job holds awake mode by itself, tied to its process', async () => {
   const s = sandbox();
   const bin = join(s.d, 'bin'); mkdirSync(bin);
   const calls = join(s.d, 'hs-calls.txt');
   writeFileSync(join(bin, 'hs'), `#!/bin/sh\nprintf '%s\\n' "$4" >> ${calls}\necho '{"on":true}'\n`, { mode: 0o755 });
   s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
   s.run('add', 'gui', '--cron', '@daily', '--needs', 'gui', '--cmd', 'true');
-  s.run('add', 'plain', '--cron', '@daily', '--needs', 'gui', '--no-awake', '--cmd', 'true');
+  s.run('add', 'plain', '--cron', '@daily', '--cmd', 'true');
   assert.equal(s.jobs().gui.awake, undefined);
-  assert.equal(s.jobs().plain.awake, false);
   const list = s.run('list').stdout;
   assert.match(list, /gui .* awake/);
   assert.doesNotMatch(list, /plain .* awake/);
   s.run('run', 'plain');
   await until(() => s.state('plain').pid === null);
-  assert.ok(!existsSync(calls), 'an opted-out job must not call Hammerspoon');
+  assert.ok(!existsSync(calls), 'a job without --awake or --needs gui must not call Hammerspoon');
   s.run('run', 'gui');
   await until(() => s.state('gui').pid === null && existsSync(calls) && readFileSync(calls, 'utf8').split('\n').length > 2);
   assert.match(readFileSync(calls, 'utf8').split('\n')[0], /harness\.awake\(true, \{owner="gui", minutes=\d+, pid=\d+\}\)/);

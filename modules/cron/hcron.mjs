@@ -5,7 +5,7 @@
 // harness.env) so any project registers with `hcron add`.
 //
 //   hcron add <id> --cron "7 * * * *" --cmd "bin/jobhunt tick" [--cwd DIR] [--window 20:00-05:00]
-//             [--needs unlocked,gui] [--awake|--no-awake] [--timeout 50m] [--catchup] [--project NAME]
+//             [--needs unlocked,gui] [--awake] [--timeout 50m] [--catchup] [--project NAME]
 //   hcron list | status | run <id> | pause <id|all> | resume <id|all> | rm <id> | logs <id> [-n 40]
 //   hcron tick            (launchd calls this; runs every due job, at most one copy of each)
 //   hcron next <id> [-n 5]  next fire times, to check a cron expression
@@ -13,9 +13,9 @@
 // Rules: a job never runs twice at once (pid lock); it runs under `caffeinate -i` so the Mac stays
 // awake only while it works; `--needs unlocked|gui` skips (and reports) while the screen is locked,
 // asking Hammerspoon (the one app that holds the GUI permissions); a missed slot (Mac asleep) runs
-// once on wake with --catchup; `--awake` (automatic for `--needs gui`; `--no-awake` turns it off)
-// holds Hammerspoon's awake mode while the job runs (no idle
-// lock, screen dimmed, locks when a person touches the Mac and again when the job ends); failures, timeouts and skips go to $HCRON_NOTIFY (a command that
+// once on wake with --catchup; `--awake` (automatic for `--needs gui`) holds
+// Hammerspoon's awake mode while the job runs (no idle lock; after 5 minutes with no human input the
+// screen dims and locks on the next touch or when the job ends, never while a person uses the Mac); failures, timeouts and skips go to $HCRON_NOTIFY (a command that
 // takes the message as its last argument), never silently.
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -148,8 +148,8 @@ function log(id, line) {
 
 // Awake mode (modules/hammerspoon/init.lua): ask Hammerspoon to keep the screen from idle-locking.
 // Best effort: if Hammerspoon does not answer, the job still runs and the log says so.
-// A job holds awake mode when it asks for it, or when it needs the GUI and did not opt out.
-export const wantsAwake = job => job.awake ?? (job.needs || []).includes('gui');
+// A job holds awake mode when it asks for it or needs the GUI.
+export const wantsAwake = job => !!job.awake || (job.needs || []).includes('gui');
 
 function awake(id, on, minutes) {
   const call = on ? `harness.awake(true, {owner=${JSON.stringify(id)}, minutes=${minutes}, pid=${process.pid}})`
@@ -288,7 +288,7 @@ function main(argv) {
       if (cwd && !(existsSync(cwd) && statSync(cwd).isDirectory())) { console.error(`--cwd ${cwd} is not a folder`); process.exit(1); }
       const old = all.jobs[id];
       const job = { cron: o.cron, cmd: o.cmd, ...(cwd && { cwd }), ...(o.window && { window: o.window }),
-        ...(needs.length && { needs }), ...(o.timeout && { timeout: o.timeout }), ...(o.catchup && { catchup: true }), ...(o.awake && { awake: true }), ...(o['no-awake'] && { awake: false }),
+        ...(needs.length && { needs }), ...(o.timeout && { timeout: o.timeout }), ...(o.catchup && { catchup: true }), ...(o.awake && { awake: true }),
         ...(o.project && { project: o.project }), ...(o['no-notify'] && { notify: false }),
         ...(old?.paused && { paused: true }), added: old?.added ?? new Date().toISOString() };
       const existed = !!old;

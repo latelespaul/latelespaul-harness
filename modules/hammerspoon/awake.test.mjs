@@ -22,16 +22,8 @@ test('run holds awake mode around the command, passes its exit code, then releas
   const r = s.run('run', 'apply', '--minutes', '30', '--', 'sh', '-c', 'exit 7');
   assert.equal(r.status, 7);
   const [on, off] = s.lines();
-  assert.match(on, /harness\.awake\(true, \{owner='apply', minutes=30, dim=true, pid=\d+\}\)/);
+  assert.match(on, /harness\.awake\(true, \{owner='apply', minutes=30, pid=\d+\}\)/);
   assert.match(off, /harness\.awake\(false, \{owner='apply', lock=true/);
-});
-
-test('run options: --no-dim and --no-lock', () => {
-  const s = sandbox();
-  assert.equal(s.run('run', 'x', '--no-dim', '--no-lock', '--', 'true').status, 0);
-  const [on, off] = s.lines();
-  assert.match(on, /dim=false/);
-  assert.match(off, /lock=false/);
 });
 
 test('the command still runs when Hammerspoon does not answer', () => {
