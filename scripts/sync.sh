@@ -3,8 +3,9 @@
 # Run by launchd every SYNC_INTERVAL seconds and at login.
 #   sync.sh          full sync
 #   sync.sh --pull   pull both, no commit or push (the SessionStart hook)
-# The framework is pull-only unless FRAMEWORK_PUSH=1. When a pull changes it, install.sh re-renders
-# CLAUDE.md, settings.json and the links (modules and launchd are left alone).
+# The framework is pull-only unless FRAMEWORK_PUSH=1, which commits tracked changes only (never new files).
+# When a pull changes it, install.sh re-renders CLAUDE.md, settings.json and the links (modules and
+# launchd are left alone).
 # On the LOCAL_BRANCH it runs scripts/upstream.sh sync instead (upstream + your open PRs).
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 source ${0:A:h:h}/lib/env.sh
@@ -14,9 +15,10 @@ mode=${1:-full}
 has_upstream() { git -C $1 rev-parse -q --verify '@{u}' >/dev/null 2>&1 }
 has_origin() { git -C $1 remote get-url origin >/dev/null 2>&1 }
 
-# commit_all <repo>: commit every change with a "Sync <host> <time>" message.
+# commit_all <repo> [-u]: commit every change with a "Sync <host> <time>" message.
+# With -u only tracked files are staged, so new local files are never committed.
 commit_all() {
-  git -C $1 add -A
+  git -C $1 add ${2:--A}
   git -C $1 diff --cached --quiet && return 0
   git -C $1 commit -q -m "Sync $(hostname -s) $(date '+%Y-%m-%d %H:%M')" || { echo "commit failed in $1"; return 1 }
 }
@@ -50,7 +52,7 @@ if [[ -d $HARNESS_DIR/.git && $(git -C $HARNESS_DIR branch --show-current) == $L
 elif [[ -d $HARNESS_DIR/.git ]] && has_upstream $HARNESS_DIR; then
   before=$(git -C $HARNESS_DIR rev-parse HEAD)
   if [[ $mode == full && $FRAMEWORK_PUSH == 1 ]]; then
-    commit_all $HARNESS_DIR && push_pull $HARNESS_DIR || rc=1
+    commit_all $HARNESS_DIR -u && push_pull $HARNESS_DIR || rc=1
   else
     git -C $HARNESS_DIR pull --ff-only -q || { echo "framework pull failed (local changes? set FRAMEWORK_PUSH=1 or resolve)"; rc=1 }
   fi
