@@ -20,17 +20,17 @@ Do browser and app work the way a person does: **look, decide one step, act, che
 
 ## 0b. Choose the channel first (the router)
 
-Three ways exist to get browser work done. Pick in this order, and write the choice and its reason in one line before you start.
+Two ways exist to drive a browser. Pick one, and write the choice and its reason in one line before you start.
 
 ```
 task
  │
- ├─ 1. Public data with an API, RSS or plain HTTP page, no login?  → HTTP/API
+ ├─ default                                        → DESKTOP (eyes + hands, normal Chrome)
  │
- ├─ 2. Anything else in the user's own browser                     → DESKTOP (eyes + hands)   ← default
- │
- └─ 3. Only if the task QUALIFIES for debug mode (list below)      → CDP (debug-port browser)
+ └─ only if the task QUALIFIES for CDP (list below) → CDP (Chrome with the debug port)
 ```
+
+CDP is the browser module's `agent` mode (Chrome runs with its debug port); DESKTOP is its `desktop` mode.
 
 **DESKTOP is the default** for every task that acts as the user or on a site that watches for bots: applying, signing up, logging in, filling or submitting forms, sending messages, editing account settings, anything on LinkedIn, ATS/job portals, Google, banks, shops.
 
@@ -41,11 +41,11 @@ task
 | Debugging a site: console errors, network calls, performance | the eyes can't see the network or console |
 | Read-only bulk extraction (many pages) from a site with no API, where the user accepts the bot-detection risk | human-paced desktop is far too slow |
 | Content the Accessibility tree and OCR both can't read (canvas apps, closed shadow DOM), read-only | no other way to read it |
-| The user explicitly asks for debug mode for this task | their call |
+| The user explicitly asks for CDP for this task | their call |
 
-**Never use CDP for:** submitting an application, signing up, logging in, sending a message or mail, payments, account changes, or any site that showed a CAPTCHA or bot wall before.
+**Never use CDP for:** submitting an application, signing up, logging in, sending a message or mail, payments, account changes, or any site that showed a CAPTCHA or bot wall before. This list wins even over an explicit request: tell the user why, and do that step on DESKTOP.
 
-**Switching costs:** one browser profile runs in one mode at a time, and a switch quits and reopens that browser. Batch CDP-qualified work, run it when the user is away, switch back to desktop right after, and never switch while a desktop task or a hand-off tab is waiting.
+**Switching costs:** one browser profile runs in one mode at a time, and a switch quits and reopens that browser. Record every switch with `modules/browser/chrome-mode.sh <id> agent|desktop`, or use the installed Eyes & Hands tool that calls it, so the recorded mode matches the running browser. Batch CDP-qualified work, run it when the user is away, switch back to desktop right after, and never switch while a desktop task or a hand-off tab is waiting.
 
 ## 1. The loop
 
@@ -125,5 +125,5 @@ This workflow improves with each task.
 
 - The eyes see what a screen reader sees: no network calls or console errors. To debug a site, use a DevTools/CDP browser instead.
 - The hands share the user's single cursor. If the user is clearly working at the Mac, ask before taking over.
-- Human pace is slower than CDP. For bulk read-only lookups use CDP or plain HTTP.
+- Human pace is slower than CDP. Bulk read-only lookups may use CDP only when they qualify under section 0b.
 - A locked screen stops everything. So does a lid close.
