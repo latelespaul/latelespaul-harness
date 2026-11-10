@@ -16,7 +16,7 @@
 // once on wake with --catchup; `--awake` (automatic for `--needs gui`) holds
 // Hammerspoon's awake mode while the job runs (no idle lock; after 5 minutes with no human input the
 // screen dims and locks on the next touch or when the job ends, never while a person uses the Mac;
-// when Hammerspoon cannot hold it, `caffeinate -d` keeps the display awake instead and you are told);
+// when Hammerspoon cannot hold it, `caffeinate -d -i -u -w <job pid>` keeps the display awake instead and you are told);
 // failures, timeouts and skips go to $HCRON_NOTIFY (a command that takes the message as its last
 // argument), never silently. `hcron doctor` (and `add`) warn about a job that looks like it drives
 // the screen but holds no awake mode.
