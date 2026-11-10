@@ -83,7 +83,7 @@ Ask which they want, then: `npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtoo
 **Verify:** `for t in lavish-axi gnhf chrome-devtools-axi; do command -v $t; done`
 
 ## 8. Modules
-For each module in MODULES, follow `H/modules/<name>/SETUP.md` step by step (they include the steps that need the human). Order: browser, telegram, firstmate. To add or drop a module later: `H/install.sh MODULES="..."`.
+For each module in MODULES, follow `H/modules/<name>/SETUP.md` step by step (they include the steps that need the human). Order: browser, telegram, hammerspoon, cron, firstmate. To add or drop a module later: `H/install.sh MODULES="..."`.
 
 **Verify:** `H/modules/<name>/install.sh --status` exits 0 for each.
 
