@@ -61,7 +61,8 @@ sync)
   tips=(); for b in $open; do tips+=$(tip $b); done
   if git rev-parse -q --verify refs/heads/$run >/dev/null; then
     # Commits made straight on the running branch would be lost by the rebuild: refuse instead.
-    stray=$(git rev-list --no-merges --oneline $run --not $base ${tips[@]} | head -5)
+    # (PR commits arrive through 'Run X' merges, off the first-parent line, even after a squash merge.)
+    stray=$(git rev-list --first-parent --no-merges --oneline $run --not $base | head -5)
     [[ -z $stray ]] || die "commits on '$run' that are in no open PR (move them to a branch and open a PR):
 $stray"
     # Already has upstream and every PR tip: nothing to do.
@@ -72,8 +73,8 @@ $stray"
   before=$(git rev-parse HEAD^{tree})
   git checkout -q -B $run $base
   for b in $open; do
-    if git merge -q --no-edit -m "Run $b on $run" $(tip $b) >/dev/null 2>&1; then print "running PR branch $b"
-    else git merge --abort; print "skipped $b: it conflicts with upstream now (rebase it: see CONTRIBUTING.md)"; fi
+    if git merge -q --no-ff --no-edit -m "Run $b on $run" $(tip $b) >/dev/null 2>&1; then print "running PR branch $b"
+    else git merge --abort 2>/dev/null || true; print "skipped $b: it conflicts with upstream now (rebase it: see CONTRIBUTING.md)"; fi
   done
   if [[ $(git rev-parse HEAD^{tree}) != $before ]]; then
     print "harness updated; re-rendering"
@@ -128,7 +129,7 @@ pr)
   fi
   # Run the change here too, until upstream merges it.
   # (named explicitly: GitHub can take a few seconds to list a new PR)
-  [[ $(git rev-parse --show-toplevel) == $main_wt ]] || $0 sync $b
+  [[ $top != $main_wt && $(git -C $main_wt branch --show-current) == $run ]] && $0 sync $b
   exit 0 ;;
 
 *) sed -n '2,9p' $0; exit 1 ;;

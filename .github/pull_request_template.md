@@ -7,6 +7,7 @@
 ## Checks run
 <!-- What you actually ran and the result. Say what you did NOT test, and why. -->
 - `scripts/upstream.sh pr` checks: syntax, no personal values, `install.sh --dry-run`
+- no-mistakes gate (if you ran it):
 -
 
 ## Risk and rollback

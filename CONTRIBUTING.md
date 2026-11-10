@@ -28,7 +28,10 @@ what they fix reaches you on the next sync. Agents follow this file too (AGENTS.
 2. Commit with a short imperative subject ("Add X", "Fix Y") and a body that says why.
 3. Write the PR description from `.github/pull_request_template.md` into a file.
 4. `scripts/upstream.sh pr --body-file <file>` runs the checks, pushes, opens the PR (or updates the
-   existing one), then re-syncs `local` so the change runs on your Mac right away.
+   existing one), then re-syncs `local` (if the live checkout runs it) so the change runs right away.
+   If the repo is set up for [no-mistakes](https://github.com/kunchenguid/no-mistakes) (firstmate
+   installs it), you can also run the branch through its gate for review, tests and lint; that adds
+   to `upstream.sh pr`'s checks, it doesn't replace them.
 
 ## What makes a good PR here
 - **One change per PR.** A skill and a script refactor are two PRs. Small PRs get merged, and if one
