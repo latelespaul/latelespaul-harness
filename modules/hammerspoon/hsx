@@ -9,6 +9,7 @@ sent, no compiled helper. Secrets are read from stdin, never from argv or the en
   hsx call <cmd> [ARGS-JSON]                 a command registered with auth=false
   hsx call --owner O <cmd> [ARGS-JSON]       signed call as owner O: first stdin line is its secret
   hsx arm <owner> [--pid P] [--minutes N]    arm with the secret on stdin (pid defaults to the caller)
+                                               inside $(...) pass --pid $$: that subshell can exit at once
   hsx arm <owner> --new [...]                make a fresh secret, arm, print the secret on stdout:
                                                hsx arm my-runner --new | node runner.mjs
   hsx disarm <owner>                         release it (secret on stdin)
