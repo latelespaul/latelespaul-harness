@@ -333,22 +333,25 @@ test('hsx access and port.lua agree on what a valid policy is', { skip: skipLua 
 });
 
 // ---------- init.lua wiring, under a stub `hs` ----------
-function smoke(generic) {
+// late: 'watch' or 'poll' = the access file's folder does not exist at load; the file appears
+// afterwards and is seen through the folder watch or the backstop poll.
+function smoke(generic, { late, notifyExit } = {}) {
   const d = mkdtempSync(join(tmpdir(), 'hs-smoke-'));
   const cfg = join(d, 'config'), prof = join(d, 'profile', 'hammerspoon');
   mkdirSync(join(cfg, 'local'), { recursive: true });
-  mkdirSync(prof, { recursive: true });
+  if (!late) mkdirSync(prof, { recursive: true });
   mkdirSync(join(d, 'Library', 'Logs'), { recursive: true });
   symlinkSync(here('./init.lua'), join(cfg, 'init.lua'));
   writeFileSync(join(cfg, 'local', 'smoke.lua'),
     'harness.register("smoke.click", function(a) return {clicked = a.x} end, {cap = "hands"})\n');
   const access = join(prof, 'access.json');
-  writeFileSync(access, '{"owners":{"runner":{"enabled":true,"capabilities":["hands"]}}}');
+  if (!late) writeFileSync(access, '{"owners":{"runner":{"enabled":true,"capabilities":["hands"]}}}');
   writeFileSync(join(d, 'harness.env'), `HS_ACCESS_FILE="${access}"\n${generic === undefined ? '' : `HS_IPC_GENERIC=${generic}\n`}`);
   const r = spawnSync(LUA, [here('./test/init-smoke.lua'), cfg], { encoding: 'utf8',
-    env: { ...process.env, HOME: d, HARNESS_ENV: join(d, 'harness.env'), ACCESS_FILE: access } });
+    env: { ...process.env, HOME: d, HARNESS_ENV: join(d, 'harness.env'), ACCESS_FILE: access,
+      LATE: late ?? '', NOTIFY_EXIT: String(notifyExit ?? 0) } });
   assert.equal(r.status, 0, r.stderr);
-  return { out: JSON.parse(r.stdout), log: readFileSync(join(d, 'Library', 'Logs', 'hammerspoon-harness.log'), 'utf8'), access };
+  return { out: JSON.parse(r.stdout), log: readFileSync(join(d, 'Library', 'Logs', 'hammerspoon-harness.log'), 'utf8'), access, prof };
 }
 
 test('init.lua opens the harness port, loads the access file and local commands, and reloads on change', { skip: skipLua }, () => {
@@ -367,6 +370,29 @@ test('init.lua opens the harness port, loads the access file and local commands,
   assert.match(log, /arm owner=runner cmd=arm/);
   assert.match(log, /ok owner=runner cmd=smoke\.click/);
   assert.ok(!log.includes('ab'.repeat(32)), 'no secret in the audit log');
+});
+
+for (const late of ['watch', 'poll']) {
+  test(`an access file made after load (folder missing too) is picked up through the ${late}`, { skip: skipLua }, () => {
+    const { out, prof } = smoke(undefined, { late });
+    assert.equal(out.before.result.port.policy, 'no access file');
+    assert.equal(out.dirMade, true, 'the policy folder is created at load');
+    assert.equal(statSync(prof).mode & 0o777, 0o700, 'the created folder is private');
+    assert.equal(out.watched, prof, 'and watched from the start');
+    assert.equal(out.status.result.port.policy, 'ok');
+    assert.equal(out.arm.ok, true, JSON.stringify(out.arm));
+    assert.deepEqual(out.click, { ok: true, result: { clicked: 2 } });
+  });
+}
+
+test('each alert send is logged with its outcome only, never the text', { skip: skipLua }, () => {
+  const ok = smoke();
+  assert.match(ok.log, /^\S+ alert via=telegram result=ok$/m);
+  const failed = smoke(undefined, { notifyExit: 1 });
+  assert.match(failed.log, /^\S+ alert via=telegram result=fail reason=exit-1$/m);
+  for (const { log } of [ok, failed]) {
+    assert.ok(!/alert.*(policy changed|runner\[)/.test(log), 'no alert text in the log');
+  }
 });
 
 test('HS_IPC_GENERIC=0 closes the generic hs -c port and leaves the harness port', { skip: skipLua }, () => {

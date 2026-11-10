@@ -12,7 +12,7 @@ local function stub()
   return setmetatable({}, { __index = function(t, k) local v = stub(); rawset(t, k, v); return v end,
     __call = function() return stub() end })
 end
-local R = { ports = {}, alerts = {}, tasks = {}, caffeinate = {} }
+local R = { ports = {}, alerts = {}, tasks = {}, caffeinate = {}, done = {} }
 local function timer() return { stop = function() end } end
 
 hs = stub()
@@ -28,10 +28,24 @@ hs.settings = { get = function() return nil end, set = function() end, clear = f
 hs.host.idleTime = function() return 0 end
 hs.json, hs.hash = json, { hmacSHA256 = fakes.hmacSHA256 }
 hs.execute = sh
--- doAfter runs short delays (the access reload) at once and never long ones (awake deadlines).
-hs.timer = { doEvery = timer, doAfter = function(secs, fn) if secs < 5 then fn() end; return timer() end, secondsSinceEpoch = os.time }
+-- A doEvery timer keeps its callback (t.fn) so a test can tick it. doAfter runs short delays (the
+-- access reload) at once and never long ones (awake deadlines).
+hs.timer = { doEvery = function(_, fn) local t = timer(); t.fn = fn; return t end,
+  doAfter = function(secs, fn) if secs < 5 then fn() end; return timer() end, secondsSinceEpoch = os.time }
 hs.alert = { show = function(text) R.alerts[#R.alerts + 1] = text end }
-hs.task = { new = function(cmd, _, args) return { start = function() R.tasks[#R.tasks + 1] = { cmd, table.unpack(args) } end } end }
+-- A stub notifier: start() records the run, and its exit (NOTIFY_EXIT, default 0) is delivered
+-- later, like a real hs.task, by finishTasks().
+hs.task = { new = function(cmd, done, args)
+  return { start = function(self)
+    R.tasks[#R.tasks + 1] = { cmd, table.unpack(args) }
+    R.done[#R.done + 1] = done
+    return self
+  end }
+end }
+local function finishTasks()
+  for _, done in ipairs(R.done) do done(tonumber(os.getenv("NOTIFY_EXIT") or "0"), "", "") end
+  R.done = {}
+end
 hs.pathwatcher = { new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
 hs.ipc = { cliInstall = function() end, __default = { delete = function() R.genericClosed = true end },
   localPort = function(name, fn) R.ports[name] = fn; return {} end }
@@ -67,13 +81,27 @@ local function signed(key, owner, cmd, args, seq)
   return call({ cmd = cmd, owner = owner, args = args, seq = seq, mac = fakes.hmacSHA256(key, seq .. "|" .. cmd .. "|" .. args) })
 end
 local key = string.rep("ab", 32)
+local access = os.getenv("ACCESS_FILE")
+local function write(text) local f = io.open(access, "w"); f:write(text); f:close() end
 local out = { genericClosed = R.genericClosed == true, opened = port ~= nil, watched = R.watched }
+if os.getenv("LATE") == "watch" or os.getenv("LATE") == "poll" then
+  -- The access file (and its folder) did not exist at load: it appears afterwards.
+  out.before = call({ cmd = "status" })
+  out.dirMade = hs.fs.attributes(access:match("^(.*)/"), "mode") == "directory"
+  write('{"owners":{"runner":{"enabled":true,"capabilities":["hands"]}}}')
+  if os.getenv("LATE") == "watch" then
+    R.watch({ "/private" .. access })   -- FSEvents may report the real path
+  else
+    harness._accessPoll.fn()   -- one tick of the backstop poll, with no watch event
+  end
+end
 out.status = call({ cmd = "status" })
 out.arm = call({ cmd = "arm", args = json.encode({ owner = "runner", secret = key }) })
 out.click = signed(key, "runner", "smoke.click", '{"x":2}', 1)
 -- Revoke in the file, then let the folder watcher fire: the next call must be refused.
-local f = io.open(os.getenv("ACCESS_FILE"), "w"); f:write('{"owners":{"runner":{"enabled":false}}}'); f:close()
-R.watch({ os.getenv("ACCESS_FILE") })
+write('{"owners":{"runner":{"enabled":false}}}')
+R.watch({ access })
 out.afterRevoke = signed(key, "runner", "smoke.click", '{"x":3}', 2)
+finishTasks()
 out.alerts, out.tasks = R.alerts, R.tasks
 io.write(json.encode(out), "\n")

@@ -277,7 +277,8 @@ restoreHolds()
 -- format: port.lua; client: hsx. Modules register their commands with the capability they need:
 --   harness.register("myapp.click", fn, {cap="hands", app="chrome"})   -- auth=true is the default
 -- the access policy file (HS_ACCESS_FILE) grants owners capabilities and apps, and the runner arms
--- with a fresh secret:  hsx arm my-runner --new | node runner.mjs
+-- with a fresh secret:  hsx arm my-runner --new | node runner.mjs   (inside $(...) add --pid $$: the
+-- arm ends when its pid exits, and a $(...) subshell can exit at once)
 -- Same-user isolation is not a hard wall (another program running as you can still read the
 -- runner's memory); a separate macOS user is. This makes spoofing hard and loud, not impossible.
 local LOG = os.getenv("HOME") .. "/Library/Logs/hammerspoon-harness.log"
@@ -286,18 +287,31 @@ local function auditLog(line)
   local f = io.open(LOG, "a")
   if f then f:write(line, "\n"); f:close() end
 end
+local function stamp() return os.date("!%Y-%m-%dT%H:%M:%SZ") end
+-- Notifier runs still going: hs.task objects are kept here until they exit, so a garbage
+-- collection cannot end one early and its result is always logged.
+local alertTasks = {}
 local function securityAlert(text)
   print("harness: " .. text)
   hs.alert.show("harness: " .. text, 8)
-  -- One Telegram ping through the cron module's send-only notifier (never getUpdates).
+  -- One Telegram ping through the cron module's send-only notifier (never getUpdates). The audit
+  -- log gets one line per send with the outcome only, never the text.
   local notify = harnessDir and harnessDir .. "/modules/cron/tg-notify.py"
   local py
   for _, p in ipairs({ "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3" }) do
     if hs.fs.attributes(p) then py = p; break end
   end
-  if py and notify and hs.fs.attributes(notify) then
-    hs.task.new(py, nil, { notify, "Hammerspoon harness port: " .. text }):start()
+  if not (py and notify and hs.fs.attributes(notify)) then
+    auditLog(stamp() .. " alert via=telegram result=fail reason=" .. (py and "no-notifier" or "no-python3"))
+    return
   end
+  local task
+  task = hs.task.new(py, function(code)
+    alertTasks[task] = nil
+    auditLog(stamp() .. " alert via=telegram result=" .. (code == 0 and "ok" or ("fail reason=exit-" .. tostring(code))))
+  end, { notify, "Hammerspoon harness port: " .. text })
+  if task and task:start() then alertTasks[task] = true
+  else auditLog(stamp() .. " alert via=telegram result=fail reason=not-started") end
 end
 local portOk, portCore = pcall(function() return dofile(moduleDir .. "/port.lua") end)
 if portOk then
@@ -331,21 +345,32 @@ if portOk then
   harness.reloadAccess = loadAccess
   loadAccess()
   if accessFile then
-    -- Backstop for a folder that did not exist yet (no watch on it): check the file every 30 s.
-    harness._accessPoll = hs.timer.doEvery(30, function()
-      if (hs.fs.attributes(accessFile, "modification") or false) ~= seen then loadAccess() end
-    end)
-    -- Watch the folder: an atomic save replaces the file, which a watch on the file itself misses.
-    local dir = accessFile:match("^(.*)/")
-    if dir and hs.fs.attributes(dir, "mode") == "directory" then
+    -- Watch the folder, not the file: an atomic save replaces the file, which a watch on the file
+    -- itself misses. A watch cannot start on a folder that does not exist, so create it (mode 700)
+    -- first; otherwise an access file made after load (for example by the first `hsx access
+    -- allow`) would never be seen.
+    local dir, base = accessFile:match("^(.*)/([^/]+)$")
+    local function watchAccess()
+      if harness._accessWatch or not dir then return end
+      if hs.fs.attributes(dir, "mode") ~= "directory" then
+        os.execute("/bin/mkdir -p -m 700 '" .. dir:gsub("'", "'\\''") .. "' 2>/dev/null")
+      end
+      if hs.fs.attributes(dir, "mode") ~= "directory" then return end
       harness._accessWatch = hs.pathwatcher.new(dir, function(paths)
         for _, p in ipairs(paths) do
-          if p == accessFile or (hs.fs.pathToAbsolute(p) or p) == (hs.fs.pathToAbsolute(accessFile) or accessFile) then
-            hs.timer.doAfter(0.3, loadAccess); return
-          end
+          -- Match by name: FSEvents may report the real path (/private/..., resolved symlinks),
+          -- and a deleted file has no real path to compare against.
+          if p:match("([^/]+)$") == base then hs.timer.doAfter(0.3, loadAccess); return end
         end
       end):start()
     end
+    watchAccess()
+    -- Backstop for anything the watch misses (a folder it could not create, or one deleted and
+    -- made again): check the file every 5 s, and retry a watch that could not start.
+    harness._accessPoll = hs.timer.doEvery(5, function()
+      if (hs.fs.attributes(accessFile, "modification") or false) ~= seen then loadAccess() end
+      watchAccess()
+    end)
   end
   -- Read and hold only, so no secret: status and awake mode.
   local function str(v) return type(v) == "string" and v or nil end
