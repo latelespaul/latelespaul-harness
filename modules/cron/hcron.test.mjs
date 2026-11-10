@@ -239,3 +239,19 @@ test('a --needs gui job holds awake mode by itself, tied to its process', async 
   await until(() => s.state('gui').pid === null && existsSync(calls) && readFileSync(calls, 'utf8').split('\n').length > 2);
   assert.match(readFileSync(calls, 'utf8').split('\n')[0], /harness\.awake\(true, \{owner="gui", minutes=\d+, pid=\d+\}\)/);
 });
+
+test('with the generic hs port closed (HS_IPC_GENERIC=0), awake mode goes through the harness port', async () => {
+  const s = sandbox();
+  const bin = join(s.d, 'bin'); mkdirSync(bin);
+  const calls = join(s.d, 'hsx-calls.txt');
+  writeFileSync(join(bin, 'hs'), '#!/bin/sh\nexit 69\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'hsx'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${calls}\necho '{"on":true}'\n`, { mode: 0o755 });
+  s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+  s.run('add', 'px', '--cron', '@daily', '--awake', '--timeout', '30m', '--cmd', 'true');
+  s.run('run', 'px');
+  await until(() => s.state('px').pid === null && existsSync(calls) && readFileSync(calls, 'utf8').split('\n').length > 2);
+  const [on, off] = readFileSync(calls, 'utf8').trim().split('\n');
+  assert.match(on, /^--timeout 5 call awake\.on \{"owner":"px","minutes":31,"pid":\d+\}$/);
+  assert.match(off, /^--timeout 5 call awake\.off \{"owner":"px","lock":true,"reason":"job ended"\}$/);
+  assert.match(s.run('logs', 'px').stdout, /awake on: \{"on":true\}/);
+});

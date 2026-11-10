@@ -2,11 +2,32 @@
 -- Hammerspoon is the ONE signed app that holds Accessibility and Screen Recording, so agent tools
 -- that need to read the screen or drive the mouse and keyboard run inside it, and macOS asks for
 -- those permissions only once. Tools call in through the `hs` CLI:  hs -c 'return harness.status()'
--- Per-machine or per-project code goes in ~/.hammerspoon/local/*.lua (loaded last, not in this repo).
+-- or through the narrow, authenticated "harness" port (`hsx`, see below); anything that posts input
+-- must use the port. Per-machine or per-project code goes in ~/.hammerspoon/local/*.lua (loaded
+-- last, not in this repo).
+
+-- This file is a symlink into the harness; its real folder holds port.lua, and two levels up is
+-- the harness with harness.env.
+local moduleDir = (hs.fs.pathToAbsolute(hs.configdir .. "/init.lua") or ""):match("^(.*)/") or hs.configdir
+local harnessDir = moduleDir:match("^(.*)/modules/hammerspoon$")
+-- harness.env values (with the harness defaults), read the way every harness script reads them.
+local env = {}
+if harnessDir then
+  local out = hs.execute(string.format([[/bin/zsh -c 'source "$1/lib/env.sh"; print -r -- "$HS_IPC_GENERIC"; print -r -- "$HS_ACCESS_FILE"' hs %q]], harnessDir))
+  env.HS_IPC_GENERIC, env.HS_ACCESS_FILE = (out or ""):match("^([^\n]*)\n([^\n]*)")
+end
 
 require("hs.ipc")                      -- enables the `hs` command-line tool
 -- puts `hs` in Homebrew's bin (/opt/homebrew on Apple Silicon, /usr/local on Intel); no-op if there
 hs.ipc.cliInstall(hs.fs.attributes("/opt/homebrew/bin") and "/opt/homebrew" or "/usr/local")
+-- HS_IPC_GENERIC=0 in harness.env closes the generic port behind `hs -c`, which runs ANY Lua with
+-- Hammerspoon's grants. Then only the harness port answers; awake, hcron and install.sh --status
+-- fall back to it by themselves.
+if env.HS_IPC_GENERIC == "0" and hs.ipc.__default then
+  hs.ipc.__default:delete()
+  rawset(hs.ipc, "__default", nil)
+  print("harness: generic hs.ipc port closed (HS_IPC_GENERIC=0); use hsx")
+end
 hs.autoLaunch(true)                    -- start at login
 hs.menuIcon(true)
 hs.console.clearConsole()
@@ -24,6 +45,7 @@ function harness.status()
     on_console = s.kCGSSessionOnConsoleKey ~= false,
     frontmost = (hs.application.frontmostApplication() or {}).name and hs.application.frontmostApplication():name() or nil,
     awake = harness.awakeInfo and harness.awakeInfo() or nil,
+    port = harness._port and harness.portInfo() or nil,
   })
 end
 
@@ -180,6 +202,103 @@ aw.lockWatch = hs.caffeinate.watcher.new(function(ev)
   if ev == hs.caffeinate.watcher.screensDidLock then stopAll("screen locked", false) end
 end)
 aw.lockWatch:start()
+
+-- The harness port: a named CFMessagePort ("harness") that runs only registered commands, never
+-- Lua, and checks an HMAC with a per-run secret on every command that posts input. Logic and wire
+-- format: port.lua; client: hsx. Modules register their commands with the capability they need:
+--   harness.register("myapp.click", fn, {cap="hands", app="chrome"})   -- auth=true is the default
+-- the access policy file (HS_ACCESS_FILE) grants owners capabilities and apps, and the runner arms
+-- with a fresh secret:  hsx arm my-runner --new | node runner.mjs
+-- Same-user isolation is not a hard wall (another program running as you can still read the
+-- runner's memory); a separate macOS user is. This makes spoofing hard and loud, not impossible.
+local LOG = os.getenv("HOME") .. "/Library/Logs/hammerspoon-harness.log"
+local function auditLog(line)
+  if (hs.fs.attributes(LOG, "size") or 0) > 5 * 1024 * 1024 then os.rename(LOG, LOG .. ".1") end
+  local f = io.open(LOG, "a")
+  if f then f:write(line, "\n"); f:close() end
+end
+local function securityAlert(text)
+  print("harness: " .. text)
+  hs.alert.show("harness: " .. text, 8)
+  -- One Telegram ping through the cron module's send-only notifier (never getUpdates).
+  local notify = harnessDir and harnessDir .. "/modules/cron/tg-notify.py"
+  local py
+  for _, p in ipairs({ "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3" }) do
+    if hs.fs.attributes(p) then py = p; break end
+  end
+  if py and notify and hs.fs.attributes(notify) then
+    hs.task.new(py, nil, { notify, "Hammerspoon harness port: " .. text }):start()
+  end
+end
+local portOk, portCore = pcall(function() return dofile(moduleDir .. "/port.lua") end)
+if portOk then
+  local core = portCore({
+    hmac = hs.hash.hmacSHA256,
+    json = hs.json,
+    now = hs.timer.secondsSinceEpoch,
+    minuteOfDay = function() local t = os.date("*t"); return t.hour * 60 + t.min end,
+    pidAlive = pidAlive,
+    log = auditLog,
+    alert = securityAlert,
+  })
+  harness.register, harness.arm, harness.disarm = core.register, core.arm, core.disarm
+  harness.allowArm, harness.resetOwner, harness.portInfo = core.allowArm, core.reset, core.policyInfo
+  -- The access policy (HS_ACCESS_FILE): who may arm, with which capabilities and target apps.
+  -- Missing = nothing may arm; invalid = every authenticated call denied, with an alert. Edits
+  -- (by hand or `hsx access`) apply within a second, and a change is announced.
+  local accessFile = env.HS_ACCESS_FILE ~= "" and env.HS_ACCESS_FILE or nil
+  local seen
+  local function loadAccess()
+    local f = accessFile and io.open(accessFile)
+    local text = f and f:read("a")
+    if f then f:close() end
+    seen = accessFile and hs.fs.attributes(accessFile, "modification") or false
+    core.setPolicy(text)
+  end
+  harness.reloadAccess = loadAccess
+  loadAccess()
+  if accessFile then
+    -- Backstop for a folder that did not exist yet (no watch on it): check the file every 30 s.
+    harness._accessPoll = hs.timer.doEvery(30, function()
+      if (hs.fs.attributes(accessFile, "modification") or false) ~= seen then loadAccess() end
+    end)
+    -- Watch the folder: an atomic save replaces the file, which a watch on the file itself misses.
+    local dir = accessFile:match("^(.*)/")
+    if dir and hs.fs.attributes(dir, "mode") == "directory" then
+      harness._accessWatch = hs.pathwatcher.new(dir, function(paths)
+        for _, p in ipairs(paths) do
+          if p == accessFile or (hs.fs.pathToAbsolute(p) or p) == (hs.fs.pathToAbsolute(accessFile) or accessFile) then
+            hs.timer.doAfter(0.3, loadAccess); return
+          end
+        end
+      end):start()
+    end
+  end
+  -- Read and hold only, so no secret: status and awake mode.
+  local function str(v) return type(v) == "string" and v or nil end
+  harness.register("status", function() return hs.json.decode(harness.status()) end, { auth = false })
+  harness.register("awake.status", function() return harness.awakeInfo() end, { auth = false })
+  harness.register("awake.on", function(a)
+    a = a or {}
+    return hs.json.decode(harness.awake(true, { owner = str(a.owner), minutes = tonumber(a.minutes), pid = tonumber(a.pid), dim = a.dim ~= false }))
+  end, { auth = false })
+  harness.register("awake.off", function(a)
+    a = a or {}
+    return hs.json.decode(harness.awake(false, { owner = str(a.owner), lock = a.lock == true, reason = str(a.reason) }))
+  end, { auth = false })
+  local made, port = pcall(hs.ipc.localPort, "harness", function(_, _, data)
+    local ok, out = pcall(core.handle, data)
+    return ok and out or '{"ok":false,"error":"internal error"}'
+  end)
+  if made and port then
+    harness._port = port
+  else
+    securityAlert("could not open the harness port (is another program holding the name?)")
+  end
+  harness._portSweep = hs.timer.doEvery(15, core.sweep)   -- runner gone or time up -> disarm
+else
+  print("harness: port.lua failed to load: " .. tostring(portCore))
+end
 
 -- Load local extensions (e.g. job-hunt's eyes/hands) from ~/.hammerspoon/local/.
 local localDir = hs.configdir .. "/local"

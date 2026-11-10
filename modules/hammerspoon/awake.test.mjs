@@ -69,3 +69,17 @@ test('run stays quiet when awake mode is granted', () => {
   const s = sandbox();
   assert.equal(s.run('run', 'x', '--', 'true').stderr, '');
 });
+
+test('with the generic hs port closed, awake talks to the harness port through hsx', () => {
+  const s = sandbox(null);   // `hs` fails, as it does with HS_IPC_GENERIC=0
+  const calls = join(s.d, 'hsx-calls.txt');
+  writeFileSync(join(s.d, 'hsx'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${calls}\necho '{"on":true,"owners":["x"]}'\n`, { mode: 0o755 });
+  const r = s.run('run', 'x', '--minutes', '9', '--', 'true');
+  assert.equal(r.status, 0);
+  assert.equal(r.stderr, '');
+  const [on, off] = readFileSync(calls, 'utf8').trim().split('\n');
+  assert.match(on, /^--timeout 5 call awake\.on \{"owner":"x","minutes":9,"pid":\d+\}$/);
+  assert.match(off, /^--timeout 5 call awake\.off \{"owner":"x","lock":true,"reason":"x finished"\}$/);
+  assert.equal(s.run('status').status, 0);
+  assert.match(readFileSync(calls, 'utf8'), /call awake\.status\n$/);
+});

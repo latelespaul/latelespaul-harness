@@ -1,0 +1,19 @@
+{
+  "_comment": "Who may use Hammerspoon's eyes and hands through the harness port. Copy to the file HS_ACCESS_FILE names (default <PROFILE_DIR>/hammerspoon/access.json) or edit it with `hsx access allow|deny`. Default deny: an owner that is not listed and enabled cannot arm. Keys starting with _ are comments.",
+  "owners": {
+    "example-runner": {
+      "enabled": true,
+      "capabilities": ["eyes", "hands"],
+      "apps": ["chrome"],
+      "window": "20:00-05:00",
+      "manual_runs": true,
+      "max_arm_minutes": 600,
+      "lock_minutes": 360,
+      "alert": "telegram"
+    },
+    "read-only-helper": {
+      "enabled": false,
+      "capabilities": ["eyes"]
+    }
+  }
+}
