@@ -231,6 +231,38 @@ test('register refuses unsafe registrations', { skip: skipLua }, () => {
   assert.match(out[2], /^ERROR .*already registered/);
 });
 
+// A command that records each caller it gets, then tries to change it.
+const WHO = '!port.register("eyes.who", function(a, c) CALLERS = CALLERS or {}; CALLERS[#CALLERS + 1] = { owner = c.owner, pid = c.pid }; '
+  + 'c.owner, c.pid = "evil", 1; return "seen" end, {cap="eyes"}); return true';
+
+test('a command gets the armed owner and pid as its second argument', { skip: skipLua }, () => {
+  const k = secret();
+  const out = drive([WHO, arm('runner', k, { pid: 4242 }), signed(k, 'runner', 'eyes.who', '{}', 1), '!return CALLERS']);
+  assert.deepEqual(out[2], { ok: true, result: 'seen' });
+  assert.deepEqual(out[3], [{ owner: 'runner', pid: 4242 }]);
+  const noPid = drive([WHO, arm('looker', k), signed(k, 'looker', 'eyes.who', '', 1), '!return CALLERS']);
+  assert.deepEqual(noPid[3], [{ owner: 'looker' }], 'pid is nil when the arm had none');
+});
+
+test('a request cannot spoof the caller, and a command cannot change it for the next call', { skip: skipLua }, () => {
+  const k = secret();
+  const args = JSON.stringify({ owner: 'off', pid: 1, caller: { owner: 'off', pid: 1 } });
+  const env = JSON.parse(signed(k, 'runner', 'eyes.who', args, 1));
+  const spoof = JSON.stringify({ ...env, pid: 99, caller: { owner: 'off', pid: 99 } });
+  const out = drive([WHO, arm('runner', k, { pid: 4242 }), spoof, signed(k, 'runner', 'eyes.who', '{}', 2),
+    '!return CALLERS', '!return port.policyInfo().owners.runner.armed']);
+  assert.equal(out[2].ok, true);
+  assert.equal(out[3].ok, true);
+  assert.deepEqual(out[4], [{ owner: 'runner', pid: 4242 }, { owner: 'runner', pid: 4242 }]);
+  assert.equal(out[5], true, 'the owner stays armed');
+});
+
+test('a command that takes only args still works', { skip: skipLua }, () => {
+  const k = secret();
+  const [, c] = drive([arm('runner', k, { pid: 4242 }), signed(k, 'runner', 'hands.click', '{"x":3}', 1)]);
+  assert.deepEqual(c, { ok: true, result: { clicked: 3 } });
+});
+
 // ---------- hsx end to end, over a real CFMessagePort ----------
 async function fakePort() {
   const name = `harness-test-${process.pid}-${randomBytes(4).toString('hex')}`;
