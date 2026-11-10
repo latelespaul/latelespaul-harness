@@ -177,6 +177,17 @@ test('a job whose folder is not a folder is reported and unlocked, not crashed o
   writeFileSync(s.env.HCRON_JOBS, JSON.stringify({ version: 1, paused: false, jobs: { f: { cron: '@daily', cmd: 'true', cwd: file } } }));
   const r = s.run('run', 'f');
   assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), 'f: not started');
   assert.match(s.run('logs').stdout, /f not started: .*ENOTDIR/);
   assert.equal(s.state('f').pid, null);
+});
+
+test('run says "not started" when the job folder cannot be entered', () => {
+  const s = sandbox();
+  const dir = join(s.d, 'locked'); mkdirSync(dir, { mode: 0o000 });
+  writeFileSync(s.env.HCRON_JOBS, JSON.stringify({ version: 1, paused: false, jobs: { x: { cron: '@daily', cmd: 'true', cwd: dir } } }));
+  const r = s.run('run', 'x');
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), 'x: not started');
+  assert.equal(s.state('x').pid, null);
 });

@@ -163,7 +163,7 @@ function start(id, job, reason) {
   child.on('error', notStarted);
   child.unref();
   saveState(id, { ...st, pid: child.pid, started_at: new Date().toISOString(), last_reason: reason });
-  return 'started';
+  return new Promise(r => { child.once('spawn', () => r('started')); child.once('error', () => r('not started')); });
 }
 
 // The supervisor (`hcron _sup`, started detached by start()): runs the job in its own process group so
@@ -282,7 +282,7 @@ function main(argv) {
       if (o._[0] === 'all') all.paused = v; else need(o._[0]).paused = v;
       saveJobs(all); return console.log(`${o._[0]} ${v ? 'paused' : 'resumed'}`);
     }
-    case 'run': { const id = o._[0]; return console.log(`${id}: ${start(id, need(id), 'manual')}`); }
+    case 'run': { const id = o._[0]; return Promise.resolve(start(id, need(id), 'manual')).then(r => console.log(`${id}: ${r}`)); }
     case 'next': { const j = need(o._[0]); return console.log(nextTimes(j.cron, o.n || 5).map(d => d.toLocaleString()).join('\n')); }
     case 'logs': {
       const p = join(LOG_DIR, `${o._[0] || '_hcron'}.log`);
