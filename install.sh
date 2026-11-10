@@ -136,7 +136,7 @@ act mkdir -p $HARNESS_DIR/logs
 # Only scripts that start with a shebang get +x, so files git tracks as 100644 (tests, templates)
 # keep their mode and git status stays clean. (A loop, not a glob qualifier: set -e exits on its false.)
 exe=($HARNESS_DIR/install.sh $HARNESS_DIR/.githooks/*(.))
-for f in $HARNESS_DIR/{scripts,modules/*}/(^*.test.*).(sh|py|mjs)(N.); do
+for f in $HARNESS_DIR/{scripts,modules/*}/*.(sh|py|mjs)(N.); do
   [[ $(head -c2 -- $f) == '#!' ]] && exe+=($f)
 done
 act chmod +x $exe
