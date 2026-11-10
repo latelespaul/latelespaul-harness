@@ -37,7 +37,7 @@ end
 -- Awake mode: keep the screen from idle-locking during an unattended GUI run (for example a night
 -- job that drives Chrome). macOS drops all input to a locked screen and no tool can get past it,
 -- so instead the screen is kept awake, dimmed to black, and locked the moment a person touches it.
---   harness.awake(true,  {owner="job-hunt", minutes=600, dim=true})  -> JSON
+--   harness.awake(true,  {owner="job-hunt", minutes=600, dim=true, pid=1234})  -> JSON
 --   harness.awake(false, {owner="job-hunt", lock=true})               -> JSON
 -- Several owners may hold it; it ends when the last one leaves, the deadline passes, a person
 -- types or moves the mouse (then the screen locks at once), or the screen locks some other way
@@ -46,7 +46,11 @@ end
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
 local BKEY = "harness.awake.brightness"
-local aw = { owners = {}, timers = {} }
+local aw = { owners = {}, timers = {}, pids = {} }
+
+-- With opts.pid, an owner is released (and the screen locked) when that process is gone, so a
+-- crashed job never leaves the Mac dimmed and unlocked until the deadline.
+local function pidAlive(pid) return os.execute("/bin/kill -0 " .. math.floor(pid) .. " 2>/dev/null") == true end
 
 local function restoreBrightness()
   local b = hs.settings.get(BKEY)
@@ -68,6 +72,8 @@ local function stopAll(reason, lock)
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
+  aw.pids = {}
+  if aw.pidCheck then aw.pidCheck:stop(); aw.pidCheck = nil end
   if aw.activity then aw.activity:stop(); aw.activity = nil end
   if aw.watch then aw.watch:stop(); aw.watch = nil end
   hs.caffeinate.set("displayIdle", false)
@@ -118,6 +124,14 @@ function harness.awake(on, opts)
       local b = hs.brightness.get()
       if b then hs.settings.set(BKEY, b); hs.brightness.set(0) end
     end
+    if tonumber(opts.pid) then
+      aw.pids[owner] = tonumber(opts.pid)
+      aw.pidCheck = aw.pidCheck or hs.timer.doEvery(30, function()
+        for o, pid in pairs(aw.pids) do
+          if not pidAlive(pid) then harness.awake(false, { owner = o, lock = true, reason = o .. " process gone" }) end
+        end
+      end)
+    end
     local minutes = tonumber(opts.minutes) or 600
     if aw.timers[owner] then aw.timers[owner]:stop() end
     aw.timers[owner] = hs.timer.doAfter(minutes * 60, function()
@@ -127,6 +141,7 @@ function harness.awake(on, opts)
     if not aw.untilAt or untilAt > aw.untilAt then aw.untilAt = untilAt end
   else
     aw.owners[owner] = nil
+    aw.pids[owner] = nil
     if aw.timers[owner] then aw.timers[owner]:stop(); aw.timers[owner] = nil end
     if not awakeOn() then stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
   end

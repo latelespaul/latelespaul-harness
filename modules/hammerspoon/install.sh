@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Hammerspoon module: one signed app that holds Accessibility + Screen Recording for agent GUI tools.
-#   install.sh            link ~/.hammerspoon/init.lua to this module and (re)start Hammerspoon
+#   install.sh            link ~/.hammerspoon/init.lua and ~/.local/bin/awake to this module, (re)start Hammerspoon
 #   install.sh --status   is it running, is the `hs` CLI reachable, are the permissions on? (exit 1 if not)
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -25,6 +25,8 @@ esac
 ensure_dir $HOME/.hammerspoon
 ensure_dir $HOME/.hammerspoon/local
 link $mod/init.lua $HOME/.hammerspoon/init.lua
+ensure_dir $HOME/.local/bin
+link $mod/awake.sh $HOME/.local/bin/awake   # awake run <name> -- <cmd>: no idle lock while a GUI task runs
 if pgrep -xq Hammerspoon; then act osascript -e 'tell application "Hammerspoon" to quit'; sleep 2; fi
 act open -a Hammerspoon
 print "Hammerspoon started with the harness config. Check: $0 --status"
