@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // hcron: one scheduler for every harness, firstmate and personal job on this Mac.
 // A single launchd agent runs `hcron tick` every minute; jobs live in one JSON file
-// ($HCRON_JOBS, default <profile>/cron/jobs.json) so any project registers with `hcron add`.
+// ($HCRON_JOBS, default <profile>/cron/jobs.json, profile from $PROFILE_DIR or the harness's
+// harness.env) so any project registers with `hcron add`.
 //
 //   hcron add <id> --cron "7 * * * *" --cmd "bin/jobhunt tick" [--cwd DIR] [--window 20:00-05:00]
 //             [--needs unlocked,gui] [--timeout 50m] [--catchup] [--project NAME]
@@ -16,12 +17,23 @@
 // takes the message as its last argument), never silently.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, readdirSync, renameSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, renameSync, realpathSync, statSync } from 'node:fs';
+import { homedir, constants } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const HOME = homedir();
-const JOBS = process.env.HCRON_JOBS || join(process.env.PROFILE_DIR || join(HOME, 'Projects/latelespaul-profile'), 'cron/jobs.json');
+const SELF = realpathSync(fileURLToPath(import.meta.url));
+const HARNESS = resolve(dirname(SELF), '../..');
+// A value from harness.env (with the harness defaults), the same way every harness script reads it.
+function harnessEnv(key) {
+  const v = execFileSync('/bin/zsh', ['-c', 'source "$1/lib/env.sh"; print -r -- "${(P)2}"', 'hcron', HARNESS, key],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  if (!v) throw new Error(`hcron: ${key} is not set in ${HARNESS}/harness.env`);
+  return v;
+}
+const JOBS = process.env.HCRON_JOBS || join(process.env.PROFILE_DIR || harnessEnv('PROFILE_DIR'), 'cron/jobs.json');
+const NOTIFY = process.env.HCRON_NOTIFY ?? `python3 "${join(HARNESS, 'modules/cron/tg-notify.py')}"`;
 const STATE_DIR = process.env.HCRON_STATE || join(HOME, '.local/state/hcron');
 const LOG_DIR = process.env.HCRON_LOGS || join(HOME, 'Library/Logs/hcron');
 const PATH = process.env.HCRON_PATH || `${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
@@ -120,11 +132,11 @@ function screenLocked() {
 }
 
 function notify(msg) {
-  const cmd = process.env.HCRON_NOTIFY;
+  const cmd = NOTIFY;
   const line = `hcron: ${msg}`;
   log('_hcron', line);
   if (!cmd) return;
-  try { spawn('/bin/zsh', ['-c', `${cmd} "$1"`, 'hcron', line], { detached: true, stdio: 'ignore', env: { ...process.env, PATH } }).unref(); } catch {}
+  try { spawn('/bin/zsh', ['-c', `${cmd} "$1"`, 'hcron', line], { detached: true, stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref(); } catch {}
 }
 
 function log(id, line) {
@@ -136,38 +148,48 @@ function log(id, line) {
 function start(id, job, reason) {
   const st = loadState(id);
   if (st.pid && alive(st.pid)) { log(id, `skip (${reason}): still running as pid ${st.pid}`); return 'running'; }
+  const cwd = job.cwd ? resolve(job.cwd.replace(/^~/, HOME)) : HOME;
+  if (!existsSync(cwd)) { notify(`${id} not started: folder ${cwd} is gone`); return 'missing cwd'; }
   mkdirSync(LOG_DIR, { recursive: true });
   const out = openSync(join(LOG_DIR, `${id}.log`), 'a');
-  const timeoutS = Math.ceil(parseDuration(job.timeout ?? '55m') / 1000);
-  // A tiny supervisor: keeps the Mac awake while the job runs, enforces the timeout, records the exit.
-  const sup = `
-    start=$(date +%s)
-    print -r -- "$(date -u +%FT%TZ) start (${reason}) $HCRON_CMD"
-    caffeinate -i /bin/zsh -lc "$HCRON_CMD" &
-    child=$!
-    ( sleep ${timeoutS}; kill -TERM $child 2>/dev/null; sleep 10; kill -KILL $child 2>/dev/null ) & watchdog=$!
-    wait $child; rc=$?
-    kill $watchdog 2>/dev/null
-    print -r -- "$(date -u +%FT%TZ) exit $rc after $(( $(date +%s) - start ))s"
-    node "$HCRON_SELF" _done "$HCRON_ID" $rc $(( $(date +%s) - start ))
-  `;
-  const child = spawn('/bin/zsh', ['-c', sup], {
-    cwd: job.cwd ? resolve(job.cwd.replace(/^~/, HOME)) : HOME,
-    detached: true, stdio: ['ignore', out, out],
-    env: { ...process.env, PATH, HCRON_CMD: job.cmd, HCRON_ID: id, HCRON_SELF: new URL(import.meta.url).pathname, ...(job.env || {}) },
+  const child = spawn(process.execPath, [SELF, '_sup', id, reason], {
+    cwd, detached: true, stdio: ['ignore', out, out],
+    env: { ...process.env, PATH, HCRON_CMD: job.cmd, HCRON_TIMEOUT: String(parseDuration(job.timeout ?? '55m')), ...(job.env || {}) },
   });
   child.unref();
   saveState(id, { ...st, pid: child.pid, started_at: new Date().toISOString(), last_reason: reason });
   return 'started';
 }
 
-function done(id, rc, secs) {
+// The supervisor (`hcron _sup`, started detached by start()): runs the job in its own process group so
+// a timeout stops the job and everything it started, keeps the Mac awake while it runs, records the exit.
+function supervise(id, reason) {
+  const t0 = Date.now();
+  const cmd = process.env.HCRON_CMD;
+  console.log(`${new Date().toISOString()} start (${reason}) ${cmd}`);
+  const job = spawn('/bin/zsh', ['-lc', cmd], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+  let timedOut = false, killer, finished = false;
+  const group = sig => { try { process.kill(-job.pid, sig); } catch {} };
+  const watchdog = setTimeout(() => { timedOut = true; group('SIGTERM'); killer = setTimeout(() => group('SIGKILL'), 10_000); }, Number(process.env.HCRON_TIMEOUT));
+  const finish = rc => {
+    if (finished) return; finished = true;
+    clearTimeout(watchdog); clearTimeout(killer);
+    if (timedOut) group('SIGKILL');
+    const secs = Math.round((Date.now() - t0) / 1000);
+    console.log(`${new Date().toISOString()} exit ${rc}${timedOut ? ' (timed out)' : ''} after ${secs}s`);
+    done(id, rc, secs, timedOut);
+  };
+  job.on('error', e => { console.log(`cannot start: ${e.message}`); finish(127); });
+  job.on('exit', (code, sig) => finish(code ?? 128 + (constants.signals[sig] || 0)));
+  if (job.pid) spawn('caffeinate', ['-i', '-w', String(job.pid)], { stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref();
+}
+
+function done(id, rc, secs, timedOut) {
   const st = loadState(id);
   const job = loadJobs().jobs[id] || {};
-  const timedOut = Number(rc) === 143 || Number(rc) === 137;
-  const fails = Number(rc) === 0 ? 0 : (st.consecutive_failures || 0) + 1;
-  saveState(id, { ...st, pid: null, last_exit: Number(rc), last_secs: Number(secs), finished_at: new Date().toISOString(), consecutive_failures: fails });
-  if (Number(rc) !== 0 && job.notify !== false && (fails === 1 || fails % 5 === 0))
+  const fails = rc === 0 ? 0 : (st.consecutive_failures || 0) + 1;
+  saveState(id, { ...st, pid: null, last_exit: rc, last_secs: secs, finished_at: new Date().toISOString(), consecutive_failures: fails });
+  if (rc !== 0 && job.notify !== false && (fails === 1 || fails % 5 === 0))
     notify(`${id} ${timedOut ? 'timed out' : `failed (exit ${rc})`} after ${secs}s${fails > 1 ? `, ${fails} in a row` : ''}. Logs: hcron logs ${id}`);
 }
 
@@ -191,8 +213,9 @@ function tick(now = new Date()) {
     const needs = job.needs || [];
     if (needs.includes('unlocked') || needs.includes('gui')) {
       lock ??= screenLocked();
-      if (lock.locked) { if (!st.skip_notified) notify(`${id} skipped: screen is locked (unlock to let it run)`); saveState(id, { ...loadState(id), skip_notified: true }); continue; }
-      if (needs.includes('gui') && !lock.gui) { notify(`${id} skipped: Hammerspoon not answering or no Accessibility`); continue; }
+      const why = lock.locked ? 'screen is locked (unlock to let it run)'
+        : needs.includes('gui') && !lock.gui ? 'Hammerspoon not answering or no Accessibility' : null;
+      if (why) { if (!st.skip_notified) notify(`${id} skipped: ${why}`); saveState(id, { ...loadState(id), skip_notified: true }); continue; }
     }
     saveState(id, { ...loadState(id), skip_notified: false });
     start(id, job, missed ? `catchup ${newest.toISOString()}` : 'schedule');
@@ -226,17 +249,24 @@ function main(argv) {
   const need = id => { if (!all.jobs[id]) { console.error(`no job "${id}" (hcron list)`); process.exit(1); } return all.jobs[id]; };
   switch (cmd) {
     case 'tick': return tick();
-    case '_done': return done(o._[0], o._[1], o._[2]);
+    case '_sup': return supervise(o._[0], o._[1]);
     case 'add': {
       const id = o._[0];
       if (!id || !/^[a-z0-9][a-z0-9._-]*$/.test(id)) { console.error('usage: hcron add <id> --cron "..." --cmd "..." (id: lowercase, digits, . _ -)'); process.exit(1); }
       if (!o.cron || !o.cmd) { console.error('--cron and --cmd are required'); process.exit(1); }
       parseCron(o.cron); if (o.window) inWindow(o.window, new Date()); if (o.timeout) parseDuration(o.timeout);
-      const job = { cron: o.cron, cmd: o.cmd, ...(o.cwd && { cwd: o.cwd }), ...(o.window && { window: o.window }),
-        ...(o.needs && { needs: String(o.needs).split(',') }), ...(o.timeout && { timeout: o.timeout }), ...(o.catchup && { catchup: true }),
-        ...(o.project && { project: o.project }), ...(o['no-notify'] && { notify: false }), added: new Date().toISOString() };
-      const existed = !!all.jobs[id];
-      all.jobs[id] = { ...(all.jobs[id] || {}), ...job };
+      const needs = o.needs ? String(o.needs).split(',') : [];
+      const badNeed = needs.find(n => n !== 'gui' && n !== 'unlocked');
+      if (badNeed !== undefined) { console.error(`bad --needs "${badNeed}" (want gui, unlocked or both: gui,unlocked)`); process.exit(1); }
+      const cwd = o.cwd && resolve(String(o.cwd).replace(/^~/, HOME));
+      if (cwd && !(existsSync(cwd) && statSync(cwd).isDirectory())) { console.error(`--cwd ${cwd} is not a folder`); process.exit(1); }
+      const old = all.jobs[id];
+      const job = { cron: o.cron, cmd: o.cmd, ...(cwd && { cwd }), ...(o.window && { window: o.window }),
+        ...(needs.length && { needs }), ...(o.timeout && { timeout: o.timeout }), ...(o.catchup && { catchup: true }),
+        ...(o.project && { project: o.project }), ...(o['no-notify'] && { notify: false }),
+        ...(old?.paused && { paused: true }), added: old?.added ?? new Date().toISOString() };
+      const existed = !!old;
+      all.jobs[id] = job;
       saveJobs(all);
       console.log(`${existed ? 'updated' : 'added'} ${id}; next: ${nextTimes(o.cron, 3).map(d => d.toLocaleString()).join(' | ')}`);
       return;

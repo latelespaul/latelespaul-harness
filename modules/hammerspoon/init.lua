@@ -5,7 +5,8 @@
 -- Per-machine or per-project code goes in ~/.hammerspoon/local/*.lua (loaded last, not in this repo).
 
 require("hs.ipc")                      -- enables the `hs` command-line tool
-hs.ipc.cliInstall("/opt/homebrew")     -- puts `hs` in /opt/homebrew/bin (no-op if already there)
+-- puts `hs` in Homebrew's bin (/opt/homebrew on Apple Silicon, /usr/local on Intel); no-op if there
+hs.ipc.cliInstall(hs.fs.attributes("/opt/homebrew/bin") and "/opt/homebrew" or "/usr/local")
 hs.autoLaunch(true)                    -- start at login
 hs.menuIcon(true)
 hs.console.clearConsole()
