@@ -212,7 +212,9 @@ test('an --awake job holds awake mode while it runs and releases it with a lock 
 
 test('an --awake job still runs when Hammerspoon does not answer', async () => {
   const s = sandbox();
-  s.env.HCRON_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';   // no hs on PATH
+  const bin = join(s.d, 'bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'caffeinate'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });   // never the real one
+  s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;   // no hs on PATH
   s.run('add', 'aw2', '--cron', '@daily', '--awake', '--cmd', 'exit 0');
   s.run('run', 'aw2');
   await until(() => s.state('aw2').pid === null);
@@ -254,4 +256,64 @@ test('with the generic hs port closed (HS_IPC_GENERIC=0), awake mode goes throug
   assert.match(on, /^--timeout 5 call awake\.on \{"owner":"px","minutes":31,"pid":\d+\}$/);
   assert.match(off, /^--timeout 5 call awake\.off \{"owner":"px","lock":true,"reason":"job ended"\}$/);
   assert.match(s.run('logs', 'px').stdout, /awake on: \{"on":true\}/);
+});
+
+// ---------- regression: no screen-driving job runs without an awake hold ----------
+test('a --needs gui (or --awake) job holds awake mode before its command starts and until it ends', async () => {
+  for (const flag of [['--needs', 'gui'], ['--awake']]) {
+    const s = sandbox();
+    const bin = join(s.d, 'bin'); mkdirSync(bin);
+    const calls = join(s.d, 'calls.txt');
+    writeFileSync(join(bin, 'hs'), `#!/bin/sh\nprintf 'hs %s\\n' "$4" >> ${calls}\necho '{"on":true}'\n`, { mode: 0o755 });
+    s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+    s.run('add', 'drive', '--cron', '@daily', ...flag, '--cmd', `echo command >> ${calls}`);
+    s.run('run', 'drive');
+    await until(() => s.state('drive').pid === null && existsSync(calls) && readFileSync(calls, 'utf8').trim().split('\n').length >= 3);
+    const order = readFileSync(calls, 'utf8').trim().split('\n').map(l => (/awake\(true/.test(l) ? 'on' : /awake\(false/.test(l) ? 'off' : l));
+    assert.deepEqual(order, ['on', 'command', 'off'], `${flag.join(' ')}: hold, then command, then release`);
+  }
+});
+
+test('an awake job that gets no hold is reported once per reason and kept awake with caffeinate -d', async () => {
+  const s = sandbox();
+  const bin = join(s.d, 'bin'); mkdirSync(bin);
+  const answer = join(s.d, 'answer.json'), caff = join(s.d, 'caffeinate.txt');
+  writeFileSync(join(bin, 'hs'), `#!/bin/sh\n[ -s ${answer} ] || exit 1\ncat ${answer}\n`, { mode: 0o755 });
+  writeFileSync(join(bin, 'caffeinate'), `#!/bin/sh\necho "$*" >> ${caff}\n`, { mode: 0o755 });
+  s.env.HCRON_PATH = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+  s.env.HCRON_NOTIFY = 'true';
+  s.run('add', 'drive', '--cron', '@daily', '--needs', 'gui', '--cmd', 'true');
+  const runOnce = async n => { s.run('run', 'drive'); await until(() => s.state('drive').pid === null && existsSync(caff) && readFileSync(caff, 'utf8').trim().split('\n').length >= n); };
+  writeFileSync(answer, '');                     // Hammerspoon not answering
+  await runOnce(1); await runOnce(2);
+  writeFileSync(answer, '{"on":false,"reason":"screen already locked"}');
+  await runOnce(3);
+  writeFileSync(answer, '{"on":true}');
+  await runOnce(4);
+  const told = s.run('logs').stdout.match(/drive runs without awake mode \([^)]*\)[^\n]*/g);
+  assert.deepEqual(told, ['drive runs without awake mode (Hammerspoon not answering); caffeinate keeps the display awake instead',
+    'drive runs without awake mode (screen already locked)']);
+  assert.deepEqual(readFileSync(caff, 'utf8').trim().split('\n').map(l => l.replace(/\d+$/, 'PID')),
+    ['-d -i -w PID', '-d -i -w PID', '-i -w PID', '-i -w PID'], 'the display is kept awake only while it can help');
+  assert.equal(s.state('drive').awake_notified, null, 'a granted hold resets the reason');
+});
+
+test('doctor flags a job that looks like it drives the screen but holds no awake mode; add warns', () => {
+  const s = sandbox();
+  const added = s.run('add', 'shots', '--cron', '@daily', '--cmd', 'node tools/desktop/apply.mjs');
+  assert.equal(added.status, 0);
+  assert.match(added.stderr, /warning: shots looks like it drives the screen but holds no awake mode/);
+  s.run('add', 'gui', '--cron', '@daily', '--needs', 'gui', '--cmd', 'hsx call x');
+  s.run('add', 'wrapped', '--cron', '@daily', '--cmd', 'awake run w -- node hands.mjs');
+  s.run('add', 'night', '--cron', '@daily', '--awake', '--cmd', 'sleep 1');
+  s.run('add', 'plain', '--cron', '@daily', '--cmd', 'scripts/backup.sh');
+  const r = s.run('doctor');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^PROBLEM shots: looks like it drives the screen/m);
+  assert.match(r.stdout, /^ok +gui$/m);
+  assert.match(r.stdout, /^ok +wrapped$/m);
+  assert.match(r.stdout, /^note +night: --awake without --needs gui/m);
+  assert.match(r.stdout, /^ok +plain$/m);
+  s.run('rm', 'shots');
+  assert.equal(s.run('doctor').status, 0);
 });

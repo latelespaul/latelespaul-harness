@@ -36,10 +36,10 @@ harness = {}
 
 local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 -- What this Hammerspoon loaded from the harness: the module folder, the harness.env values read
--- above, and every harness file it loads (init.lua, port.lua). install.sh --config-hash computes
+-- above, and every harness file it loads (init.lua, port.lua, guard.lua). install.sh --config-hash computes
 -- the same fingerprint and restarts Hammerspoon only when the two differ.
 harness.configHash = (hs.execute(string.format(
-  [[/bin/sh -c '{ printf "%%s\n" "$1" "HS_IPC_GENERIC=$2" "HS_ACCESS_FILE=$3"; cd "$1" && /bin/cat init.lua port.lua; } | /usr/bin/shasum -a 256' hs %s %s %s]],
+  [[/bin/sh -c '{ printf "%%s\n" "$1" "HS_IPC_GENERIC=$2" "HS_ACCESS_FILE=$3"; cd "$1" && /bin/cat init.lua port.lua guard.lua; } | /usr/bin/shasum -a 256' hs %s %s %s]],
   shq(moduleDir), shq(env.HS_IPC_GENERIC or ""), shq(env.HS_ACCESS_FILE or ""))) or ""):match("^(%x+)")
 
 -- One JSON line describing what this Mac can do right now. Tools check it before a GUI step.
@@ -54,6 +54,7 @@ function harness.status()
     frontmost = (hs.application.frontmostApplication() or {}).name and hs.application.frontmostApplication():name() or nil,
     awake = harness.awakeInfo and harness.awakeInfo() or nil,
     port = harness._port and harness.portInfo() or nil,
+    guard = harness._guard and harness._guard.info() or nil,
     config = harness.configHash,
   })
 end
@@ -308,6 +309,10 @@ if portOk then
     pidAlive = pidAlive,
     log = auditLog,
     alert = securityAlert,
+    -- The awake guard (set up below): every armed owner holds awake mode.
+    armed = function(...) if harness._guard then harness._guard.armed(...) end end,
+    disarmed = function(...) if harness._guard then harness._guard.disarmed(...) end end,
+    beforeCall = function(...) if harness._guard then return harness._guard.beforeCall(...) end end,
   })
   harness.register, harness.arm, harness.disarm = core.register, core.arm, core.disarm
   harness.allowArm, harness.resetOwner, harness.portInfo = core.allowArm, core.reset, core.policyInfo
@@ -366,6 +371,54 @@ if portOk then
   harness._portSweep = hs.timer.doEvery(15, core.sweep)   -- runner gone or time up -> disarm
 else
   print("harness: port.lua failed to load: " .. tostring(portCore))
+end
+
+-- The awake guard (guard.lua): nothing uses eyes or hands without an awake hold. It covers owners
+-- armed on the port (hooks above), modules whose public <name>.hands.status() says armed or busy
+-- (probed every 30 s, read only), and any input posted with EVENT_TAG. When nothing held awake
+-- mode it takes a hold itself and sends one alert; see SETUP.md, "Awake guard".
+local guardOk, guardCore = pcall(function() return dofile(moduleDir .. "/guard.lua") end)
+if guardOk then
+  local guard = guardCore({
+    awake = function(on, opts) return hs.json.decode(harness.awake(on, opts)) end,
+    awakeInfo = harness.awakeInfo,
+    now = hs.timer.secondsSinceEpoch,
+    log = auditLog,
+    alert = securityAlert,
+  })
+  harness._guard = guard
+  -- Modules that drive the screen: any global table with hands.status() whose answer (a table or
+  -- JSON text) has armed=true or a busy job. rawget, so hs's lazy loader is never set off.
+  local function drivers()
+    local out = {}
+    for name, mod in pairs(_G) do
+      local hands = type(name) == "string" and name:match("^[%w_-]+$") and type(mod) == "table" and rawget(mod, "hands")
+      local status = type(hands) == "table" and rawget(hands, "status")
+      if type(status) == "function" then
+        local ok, st = pcall(status)
+        if ok and type(st) == "string" then ok, st = pcall(hs.json.decode, st) end
+        if ok and type(st) == "table" then out[name] = st.armed == true or (st.busy ~= nil and st.busy ~= false) end
+      end
+    end
+    return out
+  end
+  harness.guardTick = function() guard.tick(drivers()) end
+  -- Tagged input (keys, clicks, scrolls a tool posted): a listen-only tap, at most one check per 30 s.
+  local T, P, lastTag = hs.eventtap.event.types, hs.eventtap.event.properties, nil
+  harness._guardTap = hs.eventtap.new({ T.keyDown, T.leftMouseDown, T.rightMouseDown, T.otherMouseDown, T.scrollWheel }, function(e)
+    if e:getProperty(P.eventSourceUserData) == harness.EVENT_TAG then
+      local t = hs.timer.secondsSinceEpoch()
+      if not lastTag or t - lastTag >= 30 then lastTag = t; hs.timer.doAfter(0, guard.input) end
+    end
+    return false
+  end)
+  harness._guardTap:start()
+  harness._guardTimer = hs.timer.doEvery(30, function()
+    if not harness._guardTap:isEnabled() then harness._guardTap:start() end   -- macOS turns off a slow tap
+    harness.guardTick()
+  end)
+else
+  securityAlert("guard.lua failed to load (" .. tostring(guardCore) .. "); eyes and hands run without the awake guard")
 end
 
 -- Load local extensions (e.g. job-hunt's eyes/hands) from ~/.hammerspoon/local/.
