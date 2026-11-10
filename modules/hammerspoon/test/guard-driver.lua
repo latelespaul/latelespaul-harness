@@ -2,26 +2,32 @@
 -- wired the way init.lua wires them, over a fake awake mode. Reads one Lua chunk per stdin line
 -- and prints its return value as JSON (or "ERROR ..."). The chunk sees:
 --   port, guard, T (clock), LOCKED (awake refuses while true), HOLDS (owner -> opts), AWAKE (calls),
---   ALERTS, LOG, KEY (an armed secret), call(cmd, args) (a signed call as runner)
+--   ENDED (owner -> end record), endAll(reason), ALERTS, LOG, KEY (an armed secret),
+--   call(cmd, args) (a signed call as runner)
 local here = arg[0]:match("^(.*)/") or "."
 local fakes = dofile(here .. "/fakes.lua")
 local json = fakes.json
 
-T, LOCKED, HOLDS, AWAKE, ALERTS, LOG = 1800000000, false, {}, {}, {}, {}
+T, LOCKED, HOLDS, AWAKE, ALERTS, LOG, ENDED = 1800000000, false, {}, {}, {}, {}, {}
 local function info()
   local owners = {}
   for o in pairs(HOLDS) do owners[#owners + 1] = o end
   table.sort(owners)
-  return { on = #owners > 0, owners = owners }
+  return { on = #owners > 0, owners = owners, ended = ENDED }
+end
+-- Like awake mode's stopAll (a person at the Mac, a lock): every hold ends, with a record.
+function endAll(reason)
+  for o in pairs(HOLDS) do ENDED[o] = { reason = reason } end
+  HOLDS = {}
 end
 -- Like harness.awake: refuses on a locked screen, otherwise holds or releases the owner.
 local function awake(on, opts)
   AWAKE[#AWAKE + 1] = { on = on, owner = opts.owner, pid = opts.pid, minutes = opts.minutes, lock = opts.lock }
   if on then
     if LOCKED then local i = info(); i.reason = "screen already locked"; return i end
-    HOLDS[opts.owner] = { pid = opts.pid, minutes = opts.minutes }
+    HOLDS[opts.owner], ENDED[opts.owner] = { pid = opts.pid, minutes = opts.minutes }, nil
   else
-    HOLDS[opts.owner] = nil
+    HOLDS[opts.owner], ENDED[opts.owner] = nil, { reason = opts.reason }
   end
   return info()
 end

@@ -186,7 +186,10 @@ function awake(id, on, minutes) {
     const out = hammerspoon(`return harness.awake and ${call} or "no awake mode"`, on ? 'awake.on' : 'awake.off', args, 5).trim();
     const last = out.split('\n').pop();
     console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'}: ${last}`);
-    return /"on"\s*:\s*true/.test(last) || (/"reason"\s*:\s*"([^"]*)"/.exec(last)?.[1] ?? 'refused');
+    let r = null;
+    try { r = JSON.parse(last); } catch {}
+    if (typeof r?.ok === 'boolean') r = r.ok ? r.result : { reason: r.error };
+    return r?.on === true || (typeof r?.reason === 'string' ? r.reason : 'refused');
   } catch (e) {
     console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'} failed: Hammerspoon not answering`);
     return 'Hammerspoon not answering';
@@ -224,13 +227,13 @@ function supervise(id, reason) {
   console.log(`${new Date().toISOString()} start (${reason}) ${cmd}`);
   const holdAwake = process.env.HCRON_AWAKE === '1';
   // The hold comes before the command starts. Without it the screen can idle-lock under the job, so
-  // caffeinate keeps the display awake instead (no dim, no lock on touch; not on a screen that is
-  // already locked) and you are told, once per reason (done() records it; start() may still be
+  // `caffeinate -d -i -u -w <job pid>` keeps the display awake instead, like the awake CLI's fallback
+  // (no dim, no lock on touch; not on a screen that is already locked) and you are told, once per reason (done() records it; start() may still be
   // writing the state file now).
   const held = holdAwake ? awake(id, true, Math.ceil(Number(process.env.HCRON_TIMEOUT) / 60_000) + 1) : true;
   const keepDisplay = held !== true && !/locked/.test(held);
   if (held !== true && loadState(id).awake_notified !== held)
-    notify(`${id} runs without awake mode (${held})${keepDisplay ? '; caffeinate keeps the display awake instead' : ''}`);
+    notify(`${id} runs without awake mode (${held})${keepDisplay ? '; it runs on the caffeinate fallback (no dim, no lock on touch)' : ''}`);
   const job = spawn('/bin/zsh', ['-lc', cmd], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
   let timedOut = false, killer, finished = false;
   const group = sig => { try { process.kill(-job.pid, sig); } catch {} };
@@ -246,7 +249,8 @@ function supervise(id, reason) {
   };
   job.on('error', e => { console.log(`cannot start: ${e.message}`); finish(127); });
   job.on('exit', (code, sig) => finish(code ?? 128 + (constants.signals[sig] || 0)));
-  if (job.pid) spawn('caffeinate', [...(keepDisplay ? ['-d'] : []), '-i', '-w', String(job.pid)], { stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref();
+  if (job.pid && keepDisplay) console.log(`${new Date().toISOString()} no awake hold: caffeinate -d -i -u -w ${job.pid} keeps the display awake (no dim, no lock on touch)`);
+  if (job.pid) spawn('caffeinate', [...(keepDisplay ? ['-d', '-i', '-u'] : ['-i']), '-w', String(job.pid)], { stdio: 'ignore', env: { ...process.env, PATH } }).on('error', () => {}).unref();
 }
 
 function done(id, rc, secs, timedOut, extra = {}) {

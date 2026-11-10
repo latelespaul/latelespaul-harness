@@ -69,6 +69,25 @@ test('a hold lost while the screen is unlocked is taken again, by the next call 
   assert.equal(alerts, 1);
 });
 
+test('a hold that a person at the Mac or a lock ended stays ended until the owner arms again', { skip }, () => {
+  for (const reason of ['person at the Mac', 'screen locked']) {
+    const [, , refused, afterTick, again, awakes, alerts, rearmed, ok, log] = drive([ARM, 'return #AWAKE',
+      `endAll("${reason}"); return call("hands.click")`, 'guard.tick({}); return owners()',
+      'return call("hands.click")', 'return #AWAKE', 'return #ALERTS',
+      'T = T + 700; call("disarm"); port.arm("runner", KEY, {pid = 4242, minutes = 60}); return owners()',
+      'return call("hands.click")', 'return table.concat(LOG, "\\n")']);
+    const error = `awake hold ended (${reason}); re-arm to take a new one`;
+    assert.deepEqual(refused, { ok: false, error });
+    assert.deepEqual(list(afterTick), [], 'the 30 s check does not take it again');
+    assert.deepEqual(again, { ok: false, error });
+    assert.equal(awakes, 1, 'no new hold is asked for after the end');
+    assert.equal(alerts, 1, 'only the first "took a hold" alert');
+    assert.deepEqual(rearmed, ['guard.runner'], 'a fresh arm takes a new hold');
+    assert.equal(ok.ok, true);
+    assert.match(log, /guard stopped owner=guard\.runner reason=/);
+  }
+});
+
 test('a disarm (signed, or the arm expiring) releases the guard hold with a lock', { skip }, () => {
   const [, signed, , expired, last] = drive([ARM, 'call("disarm"); return owners()',
     'T = T + 700; ' + ARM.slice(7), 'T = T + 3601; port.sweep(); return owners()', 'return AWAKE[#AWAKE]']);

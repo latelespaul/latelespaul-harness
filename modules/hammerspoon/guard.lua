@@ -11,8 +11,10 @@
 --   input   events posted with harness.EVENT_TAG: held until 30 minutes after the last one
 -- When the guard has to take a hold because nothing else held awake mode, it sends ONE alert per
 -- owner per arm (or busy period), and at most one every 10 minutes, so one gap is one message.
--- An authenticated call is refused only when no hold can be taken (the screen is locked, or
--- Hammerspoon refused); every other call goes on as before.
+-- An authenticated call is refused when no hold can be taken (the screen is locked, or
+-- Hammerspoon refused), or when awake mode records that the guard's port hold ended after the
+-- guard took it (a person at the Mac, a lock, `awake off`): that hold stays ended, with no new
+-- alert, until the owner arms again. A hold that only vanished (no such record) is taken again.
 --
 -- deps: awake(on, opts) -> info table, awakeInfo() -> info table (init.lua's awake mode),
 --       now() -> seconds, log(line), alert(text)
@@ -23,7 +25,7 @@ local PING_GAP = 600           -- at most one "took a hold" alert per 10 minutes
 return function(deps)
   local now = deps.now
   local G = {}
-  local eps = {}                -- hold name -> { name, source, pid, untilAt, renewAt, lastInput, held, reported, failed, lastErr }
+  local eps = {}                -- hold name -> { name, source, pid, untilAt, renewAt, lastInput, held, reported, failed, lastErr, stopped }
   local lastPing
 
   local function stamp() return os.date("!%Y-%m-%dT%H:%M:%SZ", math.floor(now())) end
@@ -46,9 +48,17 @@ return function(deps)
     if not ep then ep = { name = name, source = source }; eps[hold] = ep end
     if o.pid ~= nil then ep.pid = o.pid end
     if o.untilAt ~= nil then ep.untilAt = o.untilAt end
+    if ep.stopped then return false, ep.stopped end
     local info = deps.awakeInfo() or {}
     local had = holds(info, hold)
     if had and not (ep.renewAt and now() >= ep.renewAt) then ep.held = true; return true end
+    local ended = source == "port" and ep.held and not had and ((info.ended or {})[hold])
+    if ended then
+      local why = type(ended.reason) == "string" and ended.reason or "ended"
+      ep.stopped = "awake hold ended (" .. why .. "); re-arm to take a new one"
+      log("stopped", hold, " reason=" .. clean(why))
+      return false, ep.stopped
+    end
     local minutes = o.minutes or (ep.untilAt and math.max(1, math.ceil((ep.untilAt - now()) / 60))) or 600
     local res = deps.awake(true, { owner = hold, pid = ep.pid, minutes = minutes, dim = true }) or {}
     if holds(res, hold) then
@@ -69,8 +79,7 @@ return function(deps)
     end
     local why = type(res.reason) == "string" and res.reason or "awake mode refused"
     if ep.lastErr ~= why then log("refused", hold, " reason=" .. clean(why)); ep.lastErr = why end
-    -- A hold that ended after the guard had one (a person at the Mac, a lock) is a stop on
-    -- purpose: only a driver that never got a hold this time is an alert.
+    -- Only a driver that never got a hold this time is an alert.
     if not ep.held and not ep.failed then
       ep.failed = true
       deps.alert(string.format("awake guard: %s is using eyes/hands with no awake hold, and none could be taken (%s)",
@@ -122,7 +131,7 @@ return function(deps)
     end
     for hold, why in pairs(gone) do release(hold, why) end
     for _, ep in pairs(eps) do
-      if ep.source == "port" then cover(ep.name, "port")    -- a hold lost on the way is taken again
+      if ep.source == "port" then cover(ep.name, "port")    -- a hold lost on the way (not ended) is taken again
       elseif ep.source == "input" then cover("input", "input", { minutes = INPUT_MINUTES }) end
     end
   end

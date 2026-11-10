@@ -274,7 +274,7 @@ test('a --needs gui (or --awake) job holds awake mode before its command starts 
   }
 });
 
-test('an awake job that gets no hold is reported once per reason and kept awake with caffeinate -d', async () => {
+test('an awake job that gets no hold is reported once per reason and kept awake with caffeinate -d -i -u', async () => {
   const s = sandbox();
   const bin = join(s.d, 'bin'); mkdirSync(bin);
   const answer = join(s.d, 'answer.json'), caff = join(s.d, 'caffeinate.txt');
@@ -286,16 +286,17 @@ test('an awake job that gets no hold is reported once per reason and kept awake 
   const runOnce = async n => { s.run('run', 'drive'); await until(() => s.state('drive').pid === null && existsSync(caff) && readFileSync(caff, 'utf8').trim().split('\n').length >= n); };
   writeFileSync(answer, '');                     // Hammerspoon not answering
   await runOnce(1); await runOnce(2);
-  writeFileSync(answer, '{"on":false,"reason":"screen already locked"}');
+  writeFileSync(answer, '{"ended":{"drive":{"reason":"job ended"}},"on":false,"reason":"screen already locked"}');
   await runOnce(3);
   writeFileSync(answer, '{"on":true}');
   await runOnce(4);
   const told = s.run('logs').stdout.match(/drive runs without awake mode \([^)]*\)[^\n]*/g);
-  assert.deepEqual(told, ['drive runs without awake mode (Hammerspoon not answering); caffeinate keeps the display awake instead',
+  assert.deepEqual(told, ['drive runs without awake mode (Hammerspoon not answering); it runs on the caffeinate fallback (no dim, no lock on touch)',
     'drive runs without awake mode (screen already locked)']);
   assert.deepEqual(readFileSync(caff, 'utf8').trim().split('\n').map(l => l.replace(/\d+$/, 'PID')),
-    ['-d -i -w PID', '-d -i -w PID', '-i -w PID', '-i -w PID'], 'the display is kept awake only while it can help');
+    ['-d -i -u -w PID', '-d -i -u -w PID', '-i -w PID', '-i -w PID'], 'the display is kept awake only while it can help');
   assert.equal(s.state('drive').awake_notified, null, 'a granted hold resets the reason');
+  assert.match(s.run('logs', 'drive').stdout, /no awake hold: caffeinate -d -i -u -w \d+ keeps the display awake/);
 });
 
 test('doctor flags a job that looks like it drives the screen but holds no awake mode; add warns', () => {

@@ -65,7 +65,7 @@ input posted with EVENT_TAG ──► guard.input  held until 30 minutes after t
 ```
 
 1. If no other hold was on when the guard took one, it sends **one** Telegram alert (`awake guard: <name> used eyes/hands without an awake hold; harness took one`): one per owner per arm or busy period, and at most one every 10 minutes. If another hold already covered it (an `awake run`, an hcron `--needs gui` job), it holds quietly.
-2. A signed call is **refused** only when no hold can be taken (the screen is already locked, or Hammerspoon refused): the reply is `no awake hold (<why>)`, with one alert if the owner never had a hold that time. A hold that a person at the Mac (or a lock) ended stays ended: later calls are refused without another alert.
+2. A signed call is **refused** only when no hold can be taken (the screen is already locked, or Hammerspoon refused): the reply is `no awake hold (<why>)`, with one alert if the owner never had a hold that time. A guard hold that awake mode records as ended after the guard took it (a person at the Mac, a lock, `awake off guard.<owner>`) stays ended for that arm: neither the 30 s check nor a call takes it again, and later calls are refused with `awake hold ended (<why>); re-arm to take a new one`, without another alert. A new arm takes a fresh hold. A hold that only vanished, with no such record, is taken again.
 3. A guard hold ends with `lock=true`, like `awake run` (it locks only in away mode, never on someone at the Mac).
 4. The module probe only reads: any global table with `hands.status()` that answers (a table or JSON text) `armed: true` or a `busy` job counts as a screen driver. Nothing is required of a module; a module with no such status is still covered by the tagged-input tap once it posts tagged events.
 
