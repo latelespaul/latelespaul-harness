@@ -13,7 +13,7 @@ Do browser and app work the way a person does: **look, decide one step, act, che
 
 ## 0. Before you start
 
-1. **Find the tools on this machine.** Read `$PROFILE_DIR/knowledge/eyes-hands.md` (the user's private notes) if it exists: it names the installed eyes/hands commands, the allowed apps and the lessons from earlier runs. If the Eyes & Hands product is installed, prefer its CLI or MCP tools.
+1. **Find the tools on this machine.** Read `knowledge/eyes-hands.md` in the profile folder (the user's private notes; `PROFILE_DIR` in harness.env, the path is under Paths in `~/.claude/CLAUDE.md`) if it exists: it names the installed eyes/hands commands, the allowed apps and the lessons from earlier runs. If the Eyes & Hands product is installed, prefer its CLI or MCP tools.
 2. **Check the screen can take input:** not locked, permissions on (`harness.status()` / the tool's `status`). A locked screen drops all input: stop and report, don't retry.
 3. **Hold the screen awake** for anything longer than a minute: `awake run <name> -- <command>`, or the scheduler's `--needs gui`.
 4. **Pick the browser by account** as the user's rules say. Never drive a browser or app the access policy doesn't grant.
@@ -88,7 +88,7 @@ Before any hand-off, make sure everything else is done and checked (for example,
 
 This workflow improves with each task.
 - When the user flags a problem or a preference (a wrong click, a too-long wait, a site quirk), write it down **the same day**:
-  - **Machine- or user-specific** (paths, sites, timings, accounts) → `$PROFILE_DIR/knowledge/eyes-hands.md` under "Lessons".
+  - **Machine- or user-specific** (paths, sites, timings, accounts) → `knowledge/eyes-hands.md` in the profile folder, under "Lessons".
   - **Useful for everyone** → improve this skill through a harness PR (`scripts/upstream.sh new <name>`, no-mistakes).
 - Read the lessons before the next task, and apply them.
 
