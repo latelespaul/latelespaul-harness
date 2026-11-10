@@ -2,10 +2,11 @@
 # Browser module: what the LaunchAgent com.<prefix>.chrome-<id> runs (launchd/chrome.plist.tmpl).
 # Starts Chrome on ~/.chrome-<id> with its debug port, unless the profile is in desktop mode
 # (chrome-mode.sh) or already open in another Chrome. A launch on an open profile is handed to that
-# Chrome, which only opens one more empty window, and launchd would repeat it after every exit.
+# Chrome, which only opens one more empty window, so it is never made while another Chrome has it.
 #   chrome-launch.sh <id> <port>
-# Exit 0 = Chrome left stopped (the plist's KeepAlive restarts only after a non-zero exit).
-# Exit 1 = Chrome quit or crashed; launchd starts it again after ThrottleInterval.
+# Exit 0 = desktop mode: Chrome left stopped (the plist's KeepAlive restarts only after a non-zero exit).
+# Exit 1 = agent mode, and Chrome quit or crashed, or another Chrome still has the profile open (for
+#          example the agent's previous Chrome while it quits); launchd tries again after ThrottleInterval.
 source ${0:A:h}/chrome-mode.sh
 id=$1 port=$2
 profile=$HOME/.chrome-$id
@@ -18,8 +19,8 @@ if [[ $(chrome_mode $id) == desktop ]]; then note "desktop mode: agent left stop
 lock=$(readlink $profile/SingletonLock 2>/dev/null)
 pid=${lock##*-}
 if [[ $pid == <-> ]] && [[ $(ps -p $pid -o args= 2>/dev/null) == *$profile* ]]; then
-  note "profile already open in another Chrome (pid $pid): agent left stopped"
-  exit 0
+  note "profile already open in another Chrome (pid $pid): not started, trying again later"
+  exit 1
 fi
 
 $chrome --user-data-dir=$profile --remote-debugging-port=$port --remote-debugging-address=127.0.0.1 \

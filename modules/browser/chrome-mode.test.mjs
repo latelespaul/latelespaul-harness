@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,14 +13,26 @@ const MOD = dirname(fileURLToPath(import.meta.url));
 const INSTALL = join(MOD, 'install.sh'), LAUNCH = join(MOD, 'chrome-launch.sh'), MODE = join(MOD, 'chrome-mode.sh');
 
 // Fake launchctl: a label is loaded while $FAKE/loaded-<label> exists; bootstrap also opens the debug
-// port named in the plist (fake curl answers on ports with $FAKE/up-<port>).
+// port named in the plist (fake curl answers on ports with $FAKE/up-<port>), and bootout closes it.
+// Like launchd, bootout returns while the old job is still exiting: for the next $FAKE_EXIT_CALLS
+// launchctl calls (default 0) the label stays loaded and bootstrap fails with launchd's error 5.
+// $FAKE_BOOTSTRAP_FAIL=<label> makes every bootstrap of that label fail.
 const FAKE_LAUNCHCTL = `#!/bin/sh
 echo "$*" >> "$FAKE/launchctl.log"
+for f in "$FAKE"/exiting-*; do
+  [ -f "$f" ] || continue
+  n=$(cat "$f"); if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$f"; else rm -f "$f" "$FAKE/loaded-\${f##*/exiting-}"; fi
+done
 case "$1" in
   print) [ -f "$FAKE/loaded-\${2##*/}" ] ;;
-  bootout) rm -f "$FAKE/loaded-\${2##*/}"; exit 0 ;;
+  bootout)
+    label=\${2##*/}; [ -f "$FAKE/loaded-$label" ] || exit 3
+    port=$(grep -Eo '<string>[0-9]+</string>' "$HOME/Library/LaunchAgents/$label.plist" 2>/dev/null | tr -dc 0-9); rm -f "$FAKE/up-$port"
+    if [ "\${FAKE_EXIT_CALLS:-0}" -gt 0 ]; then echo "$FAKE_EXIT_CALLS" > "$FAKE/exiting-$label"; else rm -f "$FAKE/loaded-$label"; fi ;;
   bootstrap)
-    label=$(basename "$3" .plist); touch "$FAKE/loaded-$label"
+    label=$(basename "$3" .plist)
+    if [ -f "$FAKE/loaded-$label" ] || [ "$FAKE_BOOTSTRAP_FAIL" = "$label" ]; then echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    touch "$FAKE/loaded-$label"
     port=$(grep -Eo '<string>[0-9]+</string>' "$3" | tr -dc 0-9); touch "$FAKE/up-$port" ;;
 esac
 `;
@@ -52,6 +64,15 @@ function sandbox() {
     CHROME_BIN: join(bin, 'chrome'), CHROME_MODE_DIR: state,
   };
   const zsh = (script, args = [], extra = {}) => spawnSync('/bin/zsh', [script, ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
+  const agents = join(home, 'Library/LaunchAgents');
+  // An agent loaded from the plist before the launcher existed (Chrome run directly), serving its port.
+  const oldAgent = (id, port) => {
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(join(agents, `com.test.chrome-${id}.plist`), `<plist><dict><key>Label</key><string>com.test.chrome-${id}</string>` +
+      `<key>ProgramArguments</key><array><string>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</string>` +
+      `<string>--remote-debugging-port=${port}</string></array><key>KeepAlive</key><true/></dict></plist>\n`);
+    writeFileSync(join(fake, `loaded-com.test.chrome-${id}`), ''); writeFileSync(join(fake, `up-${port}`), '');
+  };
   const lines = f => existsSync(join(fake, f)) ? readFileSync(join(fake, f), 'utf8').trim().split('\n') : [];
   const touch = f => writeFileSync(join(fake, f), '');
   const legacy = (mode, fields = { intent: mode, switching: false }) => {
@@ -59,8 +80,12 @@ function sandbox() {
     writeFileSync(join(home, '.local/state/job-hunt/chrome-mode.json'), JSON.stringify({ mode, ...fields }, null, 2));
   };
   return {
-    d, home, state, fake, zsh, touch, legacy,
-    install: (args = []) => zsh(INSTALL, args),
+    d, home, state, fake, zsh, touch, legacy, oldAgent,
+    install: (args = [], extra) => zsh(INSTALL, args, extra),
+    loaded: id => existsSync(join(fake, `loaded-com.test.chrome-${id}`)),
+    up: port => existsSync(join(fake, `up-${port}`)),
+    // launchctl calls that stop the agent (bootout) or load it (bootstrap), oldest first.
+    cycle: id => lines('launchctl.log').filter(c => /^(bootout|bootstrap)/.test(c) && c.includes(`com.test.chrome-${id}`)).map(c => c.split(' ')[0]),
     launch: (id, port, extra) => zsh(LAUNCH, [id, port], extra),
     mode: (args, extra) => zsh(MODE, args, extra),
     launchctl: () => lines('launchctl.log'),
@@ -208,8 +233,10 @@ test('launcher: a profile already open in another Chrome is left alone; a stale 
   try {
     symlinkSync(`somehost-${other.pid}`, join(s.home, '.chrome-personal/SingletonLock'));
     const r = s.launch('personal', '9333');
-    assert.equal(r.status, 0);
-    assert.match(r.stdout, /already open in another Chrome/);
+    // Agent mode: Chrome is not started on the open profile, but the exit is non-zero so launchd
+    // tries again in 30 s and the agent comes back once that Chrome quits (exit 0 would leave it stopped).
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /already open in another Chrome \(pid \d+\): not started, trying again later/);
     assert.deepEqual(s.chrome(), []);
   } finally { other.kill(); }
 
@@ -259,4 +286,118 @@ test('chrome-mode.sh refuses bad input and honours dry run', () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /^would write /);
   assert.equal(existsSync(join(s.state, 'personal.json')), false);
+});
+
+// The failure after #21: its new plist made the installer reload the running work Chrome's agent,
+// which stopped the work Chrome. Now install never stops a running agent-mode profile, even when its
+// plist changed: the new plist waits for the next login or the restart command it prints.
+test('regression: a running agent from an old plist is left alone, and the restart line is printed', () => {
+  const s = sandbox();
+  s.mode(['personal', 'desktop']);
+  s.oldAgent('claude', 9332);
+  const r = s.install([], { FAKE_EXIT_CALLS: '3' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(s.cycle('claude'), []);   // no bootout, no bootstrap
+  assert.ok(s.loaded('claude'), 'work agent left unloaded');
+  assert.ok(s.up(9332), 'work Chrome left down');
+  const line = `${INSTALL} --id claude --restart`;
+  assert.ok(r.stdout.includes(`chrome-claude is running; left it alone. Its new settings apply at the next login, or now with: ${line}`), r.stdout);
+  assert.match(readFileSync(join(s.home, 'Library/LaunchAgents/com.test.chrome-claude.plist'), 'utf8'), /chrome-launch\.sh/);   // new plist written
+  assert.match(r.stdout, /chrome-personal: desktop mode: agent left stopped/);
+
+  // The printed command restarts it on the new plist, even while the old job is slow to exit.
+  const x = s.install(['--id', 'claude', '--restart'], { FAKE_EXIT_CALLS: '3' });
+  assert.equal(x.status, 0, x.stdout + x.stderr);
+  assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);
+  assert.ok(s.loaded('claude') && s.up(9332));
+  assert.match(x.stdout, /chrome-claude restarted on 127\.0\.0\.1:9332/);
+});
+
+test('--restart refuses a desktop-mode profile, an unknown id, and a profile not installed yet', () => {
+  const s = sandbox();
+  s.install();
+  s.mode(['personal', 'desktop']);
+  const before = s.launchctl().filter(c => !c.startsWith('print')).length;
+  let r = s.install(['--id', 'personal', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /chrome-personal is in desktop mode: not restarted/);
+  r = s.install(['--id', 'nope', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /no browser with id nope/);
+  assert.equal(s.launchctl().filter(c => !c.startsWith('print')).length, before);
+
+  const t = sandbox();
+  r = t.install(['--id', 'claude', '--restart']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /chrome-claude is not installed/);
+  assert.deepEqual(t.cycle('claude'), []);
+});
+
+// The race behind #21's failure: bootout returned while the old Chrome still quit, the immediate
+// bootstrap failed with error 5, and set -e ended the run with the agent not loaded.
+test('regression: reloading a loaded agent that is not running, while its old job still exits, leaves it loaded', () => {
+  const s = sandbox();
+  s.mode(['personal', 'desktop']);
+  s.oldAgent('claude', 9332);
+  rmSync(join(s.fake, 'up-9332'));             // loaded, but its port does not answer
+  const r = s.install([], { FAKE_EXIT_CALLS: '3' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(s.loaded('claude'), 'work agent left unloaded');
+  assert.ok(s.up(9332), 'work Chrome left down');
+  assert.deepEqual(s.cycle('claude'), ['bootout', 'bootstrap']);   // one stop, then one load that worked
+  assert.match(r.stdout, /chrome-claude is running on 127\.0\.0\.1:9332/);
+});
+
+test('two profiles, one desktop and one with no record: the agent profile is loaded and never stopped', () => {
+  const s = sandbox();
+  s.mode(['personal', 'desktop']);
+  s.legacy('desktop');                           // the job-hunt file describes personal only
+  s.touch('loaded-com.test.chrome-personal');    // personal's old agent still relaunching
+  let r = s.install();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(s.loaded('claude') && s.up(9332));
+  assert.deepEqual(s.cycle('claude'), ['bootstrap']);   // fresh: nothing to stop, one load
+  assert.deepEqual(s.cycle('personal'), ['bootout']);
+  // Running and unchanged: the next runs never touch it.
+  r = s.install();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /chrome-claude already running; left it alone/);
+  assert.deepEqual(s.cycle('claude'), ['bootstrap']);
+});
+
+test('repeated install runs never stop a running agent-mode profile', () => {
+  const s = sandbox();
+  s.mode(['personal', 'desktop']);
+  s.oldAgent('claude', 9332);
+  const out = [];
+  for (let i = 0; i < 3; i++) { const r = s.install([], { FAKE_EXIT_CALLS: '2' }); assert.equal(r.status, 0); out.push(r.stdout); }
+  assert.deepEqual(s.cycle('claude'), []);
+  assert.deepEqual(s.cycle('personal'), []);
+  assert.match(out[0], /chrome-claude is running; left it alone\. Its new settings apply/);
+  assert.match(out[1], /chrome-claude already running; left it alone/);
+  assert.ok(s.loaded('claude') && s.up(9332));
+  assert.equal(s.loaded('personal'), false);
+});
+
+test('a running agent-mode profile is never stopped, whatever else the state says', () => {
+  // An unreadable or unknown record means agent, and a legacy desktop file does not apply to claude.
+  for (const rec of ['not json', '{"mode": "sideways"}', '{"mode": "agent"}', null]) {
+    const s = sandbox();
+    s.legacy('desktop');
+    if (rec !== null) { mkdirSync(s.state, { recursive: true }); writeFileSync(join(s.state, 'claude.json'), rec); }
+    s.touch('loaded-com.test.chrome-claude'); s.touch('up-9332');
+    s.install();                                 // first run writes the plist: still left alone
+    s.install();
+    assert.deepEqual(s.cycle('claude'), [], String(rec));
+    assert.ok(s.loaded('claude') && s.up(9332), String(rec));
+  }
+});
+
+test('a profile whose agent cannot be loaded is reported, and the next profile is still installed', () => {
+  const s = sandbox();
+  const r = s.install([], { FAKE_BOOTSTRAP_FAIL: 'com.test.chrome-claude' });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /chrome-claude: could not load its agent; re-run this installer/);
+  assert.equal(s.loadsOf('personal').length, 1);
+  assert.ok(s.loaded('personal'));
 });

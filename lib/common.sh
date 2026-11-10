@@ -82,11 +82,21 @@ link_memory() {
   link $mem $dst
 }
 
-# launchd_load <label> <plist>: (re)load a LaunchAgent.
+# launchd_load <label> <plist>: (re)load a LaunchAgent. Returns 1 if it is still not loaded.
+# bootout returns while the old job's process may still be exiting, and launchd refuses a bootstrap
+# of the same label until it is gone ("Bootstrap failed: 5: Input/output error"), which left the
+# agent unloaded. So wait until launchd has let the old job go, and retry the bootstrap a few times.
 launchd_load() {
   if [[ $HARNESS_SKIP_LAUNCHD == 1 ]]; then print -r -- "skipped loading $1 (HARNESS_SKIP_LAUNCHD=1)"; return 0; fi
-  act launchctl bootout gui/$(id -u)/$1 2>/dev/null || true
-  act launchctl bootstrap gui/$(id -u) $2
+  local target=gui/$(id -u) i
+  if launchd_loaded $1; then act launchctl bootout $target/$1 2>/dev/null || true; fi
+  if dry; then act launchctl bootstrap $target $2; return 0; fi
+  for i in {1..60}; do launchd_loaded $1 || break; sleep 0.5; done
+  for i in {1..3}; do
+    launchctl bootstrap $target $2 2>/dev/null && return 0
+    sleep 1
+  done
+  launchctl bootstrap $target $2   # last try, showing launchctl's own error
 }
 
 # launchd_unload <label>: stop a LaunchAgent if it is loaded.
