@@ -34,6 +34,14 @@ hs.console.clearConsole()
 
 harness = {}
 
+local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+-- What this Hammerspoon loaded from the harness: the module folder, the harness.env values read
+-- above, and every harness file it loads (init.lua, port.lua). install.sh --config-hash computes
+-- the same fingerprint and restarts Hammerspoon only when the two differ.
+harness.configHash = (hs.execute(string.format(
+  [[/bin/sh -c '{ printf "%%s\n" "$1" "HS_IPC_GENERIC=$2" "HS_ACCESS_FILE=$3"; cd "$1" && /bin/cat init.lua port.lua; } | /usr/bin/shasum -a 256' hs %s %s %s]],
+  shq(moduleDir), shq(env.HS_IPC_GENERIC or ""), shq(env.HS_ACCESS_FILE or ""))) or ""):match("^(%x+)")
+
 -- One JSON line describing what this Mac can do right now. Tools check it before a GUI step.
 function harness.status()
   local s = hs.caffeinate.sessionProperties() or {}
@@ -46,6 +54,7 @@ function harness.status()
     frontmost = (hs.application.frontmostApplication() or {}).name and hs.application.frontmostApplication():name() or nil,
     awake = harness.awakeInfo and harness.awakeInfo() or nil,
     port = harness._port and harness.portInfo() or nil,
+    config = harness.configHash,
   })
 end
 
@@ -66,12 +75,19 @@ end
 -- Several owners may hold it; it ends when the last one leaves (or its pid exits), the deadline
 -- passes, a person types or moves the mouse in away mode (then the screen locks at once), or the
 -- screen locks some other way (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
+-- Holds survive a Hammerspoon restart or reload: each one (owner, pid, deadline, dim) is saved in
+-- HOLDS_FILE, and the next load takes back every hold from this boot whose pid still runs and
+-- whose deadline has not passed (see restoreHolds below).
 -- Tools that post their own mouse or key events must tag them, or the watcher takes them for a
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
 local BKEY = "harness.awake.brightness"
-local aw = { owners = {}, timers = {}, pids = {} }
+local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {} }
 local AWAY_SECS = 300   -- no human input for this long = the person has left
+-- No secret goes in it (arm secrets stay in memory, so armed owners re-arm after a restart).
+local HOLDS_FILE = hs.configdir .. "/harness-awake.json"
+-- Pids from an earlier boot mean nothing (the jobs died and the numbers are reused).
+local BOOT = (hs.execute("/usr/sbin/sysctl -n kern.boottime") or ""):match("sec = (%d+)")
 
 -- With opts.pid, an owner is released (and the screen locked) when that process is gone, so a
 -- crashed job never leaves the Mac dimmed and unlocked until the deadline.
@@ -85,6 +101,19 @@ restoreBrightness()   -- a reload or crash while dimmed must not leave the scree
 
 local function awakeOn() return next(aw.owners) ~= nil end
 
+-- Write the current holds to HOLDS_FILE: mode 600, replaced atomically.
+local function saveHolds()
+  local holds = {}
+  for o in pairs(aw.owners) do holds[o] = { pid = aw.pids[o], ["until"] = aw.untils[o], dim = aw.dims[o] } end
+  local tmp = HOLDS_FILE .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then print("harness: cannot save awake holds to " .. HOLDS_FILE); return end
+  os.execute("/bin/chmod 600 " .. shq(tmp))   -- before any content goes in
+  f:write(hs.json.encode({ boot = BOOT, holds = holds }))
+  f:close()
+  os.rename(tmp, HOLDS_FILE)
+end
+
 function harness.awakeInfo()
   local owners = {}
   for k in pairs(aw.owners) do table.insert(owners, k) end
@@ -97,7 +126,8 @@ local function stopAll(reason, lock)
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
-  aw.pids = {}
+  aw.pids, aw.untils, aw.dims = {}, {}, {}
+  saveHolds()
   if aw.pidCheck then aw.pidCheck:stop(); aw.pidCheck = nil end
   if aw.activity then aw.activity:stop(); aw.activity = nil end
   if aw.watch then aw.watch:stop(); aw.watch = nil end
@@ -181,18 +211,20 @@ function harness.awake(on, opts)
         end
       end)
     end
-    local minutes = tonumber(opts.minutes) or 600
+    -- opts["until"] (epoch seconds) is the deadline a restored hold already had.
+    local untilAt = tonumber(opts["until"]) or os.time() + (tonumber(opts.minutes) or 600) * 60
     if aw.timers[owner] then aw.timers[owner]:stop() end
-    aw.timers[owner] = hs.timer.doAfter(minutes * 60, function()
+    aw.timers[owner] = hs.timer.doAfter(math.max(untilAt - os.time(), 1), function()
       harness.awake(false, { owner = owner, lock = true, reason = "deadline" })
     end)
-    local untilAt = os.time() + minutes * 60
+    aw.untils[owner], aw.dims[owner] = untilAt, opts.dim ~= false
     if not aw.untilAt or untilAt > aw.untilAt then aw.untilAt = untilAt end
+    saveHolds()
   else
     aw.owners[owner] = nil
-    aw.pids[owner] = nil
+    aw.pids[owner], aw.untils[owner], aw.dims[owner] = nil, nil, nil
     if aw.timers[owner] then aw.timers[owner]:stop(); aw.timers[owner] = nil end
-    if not awakeOn() then stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
+    if awakeOn() then saveHolds() else stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
   end
   return hs.json.encode(harness.awakeInfo())
 end
@@ -202,6 +234,38 @@ aw.lockWatch = hs.caffeinate.watcher.new(function(ev)
   if ev == hs.caffeinate.watcher.screensDidLock then stopAll("screen locked", false) end
 end)
 aw.lockWatch:start()
+
+-- Take back the holds saved before a restart or reload. A missing file means none; an unreadable
+-- one is ignored (and replaced on the next save). Holds from an earlier boot, with a deadline
+-- that passed, or whose pid has exited are dropped, and so is everything when the screen is
+-- locked (awake mode refuses a locked screen).
+local function restoreHolds()
+  local f = io.open(HOLDS_FILE)
+  if not f then return end
+  local text = f:read("a")
+  f:close()
+  local ok, doc = pcall(hs.json.decode, text)
+  if not ok or type(doc) ~= "table" or type(doc.holds) ~= "table" then
+    print("harness: ignoring unreadable " .. HOLDS_FILE)
+    return
+  end
+  local now = os.time()
+  for owner, h in pairs(doc.holds) do
+    local untilAt = type(h) == "table" and tonumber(h["until"]) or nil
+    local pid = type(h) == "table" and tonumber(h.pid) or nil
+    local why = (type(owner) ~= "string" or not owner:match("^[%w._-]+$") or not untilAt) and "unreadable"
+      or doc.boot ~= BOOT and "earlier boot" or untilAt <= now and "deadline passed"
+      or (pid and not pidAlive(pid)) and "process gone" or nil
+    if why then
+      print("harness: awake hold " .. tostring(owner) .. " not restored (" .. why .. ")")
+    else
+      harness.awake(true, { owner = owner, pid = pid, dim = h.dim ~= false, ["until"] = untilAt })
+      print("harness: awake hold " .. owner .. (aw.owners[owner] and " restored" or " not restored (screen locked)"))
+    end
+  end
+  saveHolds()   -- drop what was not restored
+end
+restoreHolds()
 
 -- The harness port: a named CFMessagePort ("harness") that runs only registered commands, never
 -- Lua, and checks an HMAC with a per-run secret on every command that posts input. Logic and wire

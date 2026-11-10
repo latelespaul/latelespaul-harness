@@ -1,5 +1,7 @@
 -- Loads the real init.lua under plain Lua with a stub `hs` (used by port.test.mjs), then drives the
 -- harness port it opened.  lua init-smoke.lua <configdir>   (configdir/init.lua links to init.lua)
+--   lua init-smoke.lua <configdir> awake   instead reports awake mode right after the load (holds
+--   restored from configdir/harness-awake.json), runs the Lua in $SMOKE_THEN if set, and reports again.
 -- Prints one JSON object with what happened. Never touches Hammerspoon or the screen.
 local here = arg[0]:match("^(.*)/") or "."
 local fakes = dofile(here .. "/fakes.lua")
@@ -10,7 +12,7 @@ local function stub()
   return setmetatable({}, { __index = function(t, k) local v = stub(); rawset(t, k, v); return v end,
     __call = function() return stub() end })
 end
-local R = { ports = {}, alerts = {}, tasks = {} }
+local R = { ports = {}, alerts = {}, tasks = {}, caffeinate = {} }
 local function timer() return { stop = function() end } end
 
 hs = stub()
@@ -19,13 +21,15 @@ hs.processInfo = { version = "test" }
 hs.accessibilityState = function() return true end
 hs.screenRecordingState = function() return true end
 hs.caffeinate.sessionProperties = function() return {} end
+hs.caffeinate.set = function(what, on) R.caffeinate[what] = on end
 hs.caffeinate.watcher = { new = function() return { start = function() end } end, screensDidLock = 1 }
 hs.application.frontmostApplication = function() return nil end
 hs.settings = { get = function() return nil end, set = function() end, clear = function() end }
 hs.host.idleTime = function() return 0 end
 hs.json, hs.hash = json, { hmacSHA256 = fakes.hmacSHA256 }
 hs.execute = sh
-hs.timer = { doEvery = timer, doAfter = function(_, fn) fn(); return timer() end, secondsSinceEpoch = os.time }
+-- doAfter runs short delays (the access reload) at once and never long ones (awake deadlines).
+hs.timer = { doEvery = timer, doAfter = function(secs, fn) if secs < 5 then fn() end; return timer() end, secondsSinceEpoch = os.time }
 hs.alert = { show = function(text) R.alerts[#R.alerts + 1] = text end }
 hs.task = { new = function(cmd, _, args) return { start = function() R.tasks[#R.tasks + 1] = { cmd, table.unpack(args) } end } end }
 hs.pathwatcher = { new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
@@ -48,6 +52,14 @@ package.loaded["hs.ipc"] = hs.ipc
 require = function(name) return package.loaded[name] or stub() end
 
 dofile(hs.configdir .. "/init.lua")
+
+if arg[2] == "awake" then
+  local out = { loaded = harness.awakeInfo(), caffeinate = R.caffeinate, config = harness.configHash }
+  local chunk = os.getenv("SMOKE_THEN")
+  if chunk then out.result = assert(load(chunk))(); out.after = harness.awakeInfo() end
+  io.write(json.encode(out), "\n")
+  return
+end
 
 local port = R.ports.harness
 local function call(t) return json.decode(port(nil, 0, json.encode(t))) end
