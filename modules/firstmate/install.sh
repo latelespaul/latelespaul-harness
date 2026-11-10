@@ -79,7 +79,8 @@ if [[ $mode == --start ]]; then
   fi
 else
   if ! tmux has-session -t $FIRSTMATE_SESSION 2>/dev/null; then
-    if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate with: $0 --start  (after that it starts by itself at every login)"
+    if [[ $FIRSTMATE_AUTOSTART == 1 ]] && ! dry && launchd_loaded $FIRSTMATE_LABEL; then print "firstmate is starting via its LaunchAgent $FIRSTMATE_LABEL, and again at every login (watch: tmux attach -t $FIRSTMATE_SESSION)."
+    elif [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate with: $0 --start  (after that it starts by itself at every login)"
     else print "Start firstmate with: $0 --start  (FIRSTMATE_AUTOSTART=0: start it again after a reboot)"; fi
   fi
 fi
