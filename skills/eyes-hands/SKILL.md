@@ -30,7 +30,7 @@ task
  └─ only if the task QUALIFIES for CDP (list below) → CDP (Chrome with the debug port)
 ```
 
-CDP is the browser module's `agent` mode (Chrome runs with its debug port); DESKTOP is its `desktop` mode.
+CDP (Chrome DevTools Protocol) is the browser module's `agent` mode (Chrome runs with its debug port); DESKTOP is its `desktop` mode.
 
 **DESKTOP is the default** for every task that acts as the user or on a site that watches for bots: applying, signing up, logging in, filling or submitting forms, sending messages, editing account settings, anything on LinkedIn, ATS/job portals, Google, banks, shops.
 
