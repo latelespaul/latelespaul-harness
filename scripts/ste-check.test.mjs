@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,6 +150,29 @@ test('a fenced diagram counts as the diagram part even without a heading', () =>
 test('markdown headings work like bold labels', () => {
   const md = GOOD.replace(/^\*\*(.+?)\.?\*\*\.? ?/gm, '## $1\n\n');
   assert.deepEqual(json(md).out.findings, []);
+});
+
+test('bold text inside list items does not count as a part', () => {
+  const r = json(GOOD
+    .replace('**Where it fits.** The scheduler', 'The scheduler')
+    .replace('**Next.** Run', '1. **Verify** the backup. Run')
+    .replace('- Tick:', '- **Context**: the folder of a job.\n- Tick:'));
+  assert.equal(r.status, 1);
+  assert.deepEqual(r.out.findings.map(f => f.section), ['next', 'fits']);
+});
+
+test('the CLI runs from a path with a space and through a symlink with another name', () => {
+  const d = join(mkdtempSync(join(tmpdir(), 'ste-check-')), 'a b');
+  mkdirSync(d);
+  const copy = join(d, 'ste-check.mjs');
+  copyFileSync(CHECK, copy);
+  const link = join(d, 'stc.mjs');
+  symlinkSync(CHECK, link);
+  for (const script of [copy, link]) {
+    const r = spawnSync(process.execPath, [script, '-'], { input: 'The file was deleted.\n', encoding: 'utf8' });
+    assert.equal(r.status, 1, script);
+    assert.match(r.stdout, /passive-voice/);
+  }
 });
 
 test('bad usage exits 2 with a message', () => {

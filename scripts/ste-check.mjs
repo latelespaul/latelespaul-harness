@@ -12,7 +12,8 @@
 // over --long-words words must have the eight parts of its type). Code blocks and `code` are skipped.
 // Exit 0: no findings. Exit 1: findings. Exit 2: bad usage or unreadable input.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const USAGE = 'usage: ste-check <file|-> [--json] [--type concept|procedure|troubleshooting|decision] [--structure|--no-structure]\n'
   + '                 [--long-words N] [--allow ACR,ACR] [--max-procedural N] [--max-descriptive N] [--max-paragraph N]';
@@ -97,8 +98,8 @@ function sentences(text) {
 }
 
 const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
-const BOLD_HEADING = /^\s*(?:\d+[.)]\s*)?\*\*([^*]+?)\*\*\s*:?\s*$/;
-const BOLD_LEAD = /^\s*(?:\d+[.)]\s*)?\*\*([^*]+?)[.:]?\*\*[.:]?\s+\S/;
+const BOLD_HEADING = /^\s*\*\*([^*]+?)\*\*\s*:?\s*$/;
+const BOLD_LEAD = /^\s*\*\*([^*]+?)[.:]?\*\*[.:]?\s+\S/;
 const LIST = /^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$/;
 
 // Blocks: { kind: 'heading'|'para'|'item'|'code'|'table', line, text, numbered }
@@ -210,4 +211,5 @@ function main(argv) {
   return r.findings.length ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('/ste-check')) process.exitCode = main(process.argv.slice(2));
+const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
+if (isMain()) process.exitCode = main(process.argv.slice(2));
