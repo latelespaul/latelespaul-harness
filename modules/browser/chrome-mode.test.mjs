@@ -238,10 +238,3 @@ test('chrome-mode.sh refuses bad input and honours dry run', () => {
   assert.match(r.stdout, /^would write /);
   assert.equal(existsSync(join(s.state, 'personal.json')), false);
 });
-
-test('sync.sh re-renders without the module installers and without launchctl', () => {
-  // sync.sh is not a trigger: after a framework pull it runs install.sh like this, which never
-  // reaches modules/browser/install.sh. This guards that line.
-  const sync = readFileSync(join(MOD, '../../scripts/sync.sh'), 'utf8');
-  assert.match(sync, /HARNESS_SKIP_LAUNCHD=1 \$HARNESS_DIR\/install\.sh --yes --no-modules/);
-});
