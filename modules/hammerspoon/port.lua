@@ -8,14 +8,16 @@
 -- so the MAC covers exactly the bytes that get decoded and neither side has to re-encode them.
 -- Commands registered with auth=true need a capability (e.g. "hands") and a signed call:
 --   mac = lowercase hex HMAC-SHA256(owner's secret, seq .. "|" .. cmd .. "|" .. args)
---   seq > the owner's last accepted seq (any increasing integer; hsx uses microseconds)
+--   seq > the owner's last accepted seq (any increasing integer). Calls for one owner must be
+--   serialized through one signer (`hsx session`, or one in-process signer): a lower seq that
+--   arrives second counts as a replay and locks the owner.
 -- Built in: "arm" (args {owner, secret, pid?, minutes?}) and "disarm" (owner in the envelope, signed).
 --
 -- Who may arm, and with which capabilities and target apps, comes from the access policy file
 -- (HS_ACCESS_FILE; example: access.example.json). Default deny: an owner that is not listed and
 -- enabled cannot arm, and an invalid file denies every authenticated call until it is fixed.
 -- A bad MAC or a replay disarms the owner, locks it for lock_minutes (so a spoofer cannot re-arm it
--- with its own secret) and sends one alert.
+-- with its own secret) and always sends one alert, even inside the throttle for refusals.
 local MAX_BYTES = 4 * 1024 * 1024
 local NAME = "^[%w._-]+$"
 local OWNER_KEYS = { enabled = 1, capabilities = 1, apps = 1, window = 1, manual_runs = 1, max_arm_minutes = 1,
@@ -117,12 +119,12 @@ return function(deps)
     deps.log(string.format("%s %s owner=%s cmd=%s%s", stamp(now()), what, clean(owner), clean(cmd),
       reason and (" reason=" .. clean(reason)) or ""))
   end
-  -- One alert per owner per 10 minutes (owners not in the policy share one bucket), so a flood of
-  -- bad calls is one message, not a hundred.
+  -- Refusals and denials: one alert per owner per 10 minutes (owners not in the policy share one
+  -- bucket), so a flood of bad calls is one message, not a hundred.
   local lastAlert = {}
-  local function alert(owner, text)
+  local function alert(owner, text, always)
     local key = (owner and policy.owners[owner]) and owner or "?"
-    if lastAlert[key] and now() - lastAlert[key] < 600 then return end
+    if not always and lastAlert[key] and now() - lastAlert[key] < 600 then return end
     lastAlert[key] = now()
     deps.alert(text)
   end
@@ -208,7 +210,7 @@ return function(deps)
     M.disarm(owner, reason)
     s.trippedUntil = now() + (p and p.lock_minutes or 360) * 60
     alert(owner, string.format("%s: %s on %s; disarmed and locked until %s UTC", owner, reason, clean(cmd),
-      stamp(s.trippedUntil):sub(12, 16)))
+      stamp(s.trippedUntil):sub(12, 16)), true)
     return deny(owner, cmd, reason)
   end
 
@@ -234,7 +236,7 @@ return function(deps)
       audit("deny", owner, "arm", "bad secret"); return false, "secret must be 64-256 hex characters"
     end
     local minutes = math.min(tonumber(opts.minutes) or p.max_arm_minutes, p.max_arm_minutes)
-    s.secret, s.seq = secret:lower(), 0
+    s.secret, s.seq = secret, 0
     s.pid = int(opts.pid)
     s.untilAt = now() + minutes * 60
     s.allowUntil = nil   -- a one-off allowance is used up by the arm it allowed

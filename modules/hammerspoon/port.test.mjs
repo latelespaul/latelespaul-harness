@@ -197,6 +197,22 @@ test('refused arms alert at most once per owner per 10 minutes', { skip: skipLua
   assert.equal(out[6], 2);
 });
 
+test('a trip alerts even right after a refused-arm alert for the same owner', { skip: skipLua }, () => {
+  const k = secret(), evil = secret();
+  const out = drive([arm('runner', k), arm('runner', evil), signed(evil, 'runner', 'hands.click', '{}', 1),
+    '!return #ALERTS', '!return ALERTS[2]']);
+  assert.deepEqual(out[2], { ok: false, error: 'bad mac' });
+  assert.equal(out[3], 2);
+  assert.match(out[4], /runner: bad mac on hands\.click; disarmed and locked/);
+});
+
+test('an upper-case hex secret signs the same way on both sides', { skip: skipLua }, () => {
+  const k = secret().toUpperCase();
+  const [a, c] = drive([arm('runner', k), signed(k, 'runner', 'hands.click', '{"x":3}', 1)]);
+  assert.equal(a.ok, true);
+  assert.deepEqual(c, { ok: true, result: { clicked: 3 } });
+});
+
 test('the status view shows owners and capabilities but never a secret', { skip: skipLua }, () => {
   const k = secret();
   const [, info] = drive([arm('runner', k), '!return port.policyInfo()']);

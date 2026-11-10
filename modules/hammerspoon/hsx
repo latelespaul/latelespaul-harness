@@ -71,8 +71,10 @@ def send(port_name, payload, timeout):
 
 
 class Signer:
-    """Signs requests for one owner. seq starts at the current time in microseconds, so separate
-    hsx runs that share a secret still send strictly increasing numbers."""
+    """Signs requests for one owner. seq starts at the current time in microseconds and rises by at
+    least one per call. Calls for one owner must go through one signer in turn (`hsx session`):
+    separate signers that overlap, or a clock step backwards, can send a lower seq second, which
+    Hammerspoon treats as a replay and locks the owner."""
 
     def __init__(self, owner, secret):
         self.owner, self.key, self.seq = owner, secret.encode(), 0
