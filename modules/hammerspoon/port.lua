@@ -8,6 +8,8 @@
 -- so the MAC covers exactly the bytes that get decoded and neither side has to re-encode them.
 -- Commands registered with auth=true need a capability (e.g. "hands") and a signed call:
 --   mac = lowercase hex HMAC-SHA256(owner's secret, seq .. "|" .. cmd .. "|" .. args)
+--   The HMAC key is the secret's hex TEXT exactly as armed (its ASCII bytes, case kept), not the
+--   bytes it decodes to: in Node, createHmac('sha256', secret), never Buffer.from(secret, 'hex').
 --   seq > the owner's last accepted seq (any increasing integer). Calls for one owner must be
 --   serialized through one signer (`hsx session`, or one in-process signer): a lower seq that
 --   arrives second counts as a replay and locks the owner.
