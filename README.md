@@ -74,7 +74,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 
 ## Updates
 - The framework is pull-only by default: each session start and each sync pulls it (`--ff-only`), and when it changed, `install.sh` re-renders CLAUDE.md, settings and links on its own. Module changes need `install.sh` by hand.
-- Changing the framework yourself? Follow [CONTRIBUTING.md](CONTRIBUTING.md): every change goes upstream as a PR from a worktree (`scripts/upstream.sh`), and your Mac runs upstream plus your open PRs. (`FRAMEWORK_PUSH=1` instead makes `sync.sh` commit and push framework changes straight to your remote.)
+- Changing the framework yourself? Follow [CONTRIBUTING.md](CONTRIBUTING.md): every change goes upstream as a PR from a worktree (`scripts/upstream.sh`), and your Mac runs upstream plus your open PRs. (`FRAMEWORK_PUSH=1` instead makes `sync.sh` commit and push changes to tracked framework files straight to your remote; new files are never committed.)
 - Undo an install: everything replaced is in `~/.claude/backups/harness-<time>/`; move it back. Stop syncing: `launchctl bootout gui/$(id -u)/com.<prefix>.harness-sync`.
 
 ## Credits

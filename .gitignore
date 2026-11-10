@@ -19,3 +19,6 @@ id_ed25519*
 logs/
 *.log
 __pycache__/
+.lavish/
+.claude/worktrees/
+.claude/settings.local.json
