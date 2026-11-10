@@ -17,7 +17,7 @@
    | git, tmux, gh, node, jq | Homebrew (`brew install <name>`) | Homebrew's current |
    | curl | ships with macOS | - |
    | gh-axi, chrome-devtools-axi, tasks-axi, quota-axi | `npm i -g <name>@<pin>`; a first install also runs `<name> setup hooks` (not tasks-axi, quota-axi) | 0.1.46, 0.1.44, 0.2.6, 0.1.69 |
-   | lavish-axi (optional: visual plans and reports) | `npm i -g lavish-axi@0.1.92` | 0.1.92 |
+   | lavish-axi (optional: visual plans and reports) | `npm i -g lavish-axi@0.1.92`; a first install also runs `lavish-axi setup hooks` | 0.1.92 |
    | treehouse | GitHub release archive, SHA-256 checked, into `~/.local/bin` | 3.1.8 |
    | no-mistakes | GitHub release archive, SHA-256 checked, into `~/.no-mistakes/bin` (linked from `~/.local/bin`) | 1.84.0 |
    | claude | not installed by the script (its installer is an unpinned `curl \| bash`); it prints the command | - |
