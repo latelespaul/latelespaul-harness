@@ -15,7 +15,7 @@ Check what is installed:
 ```sh
 for c in brew git gh claude tmux jq python3 node; do printf '%-8s %s\n' $c "$(command -v $c || echo MISSING)"; done; gh auth status 2>&1 | head -3
 ```
-- Required: `git`, `jq`, `gh` (logged in), `claude`, `python3`. `tmux` is needed for the firstmate module, `node`/`npm` for the optional agent tools.
+- Required: `git`, `jq`, `gh` (logged in), `claude`, `python3`. `tmux` is needed for the firstmate module (its installer adds tmux and the rest of firstmate's toolchain), `node`/`npm` for the optional agent tools.
 - Offer to install what is missing with Homebrew (`brew install git gh jq tmux node`). No Homebrew: point them to https://brew.sh and stop until they have it. Claude Code: https://docs.claude.com/en/docs/claude-code/setup.
 - `gh` not logged in: ask them to run `! gh auth login` (browser flow; they handle it).
 

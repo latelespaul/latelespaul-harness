@@ -1,9 +1,10 @@
 #!/bin/zsh
-# Firstmate module: clones firstmate (kunchenguid/firstmate, or your fork) and installs the
-# skill that delegates code work to it. Firstmate itself runs in tmux via run-firstmate.sh.
-#   install.sh           clone if missing, install the skill
+# Firstmate module: installs the toolchain firstmate and its crew call (tools.sh), clones firstmate
+# (kunchenguid/firstmate, or your fork) and installs the skill that delegates code work to it.
+# Firstmate itself runs in tmux via run-firstmate.sh.
+#   install.sh           install missing tools, clone if missing, install the skill
 #   install.sh --start   also start the tmux session if it is not running
-#   install.sh --status  is the session up? (exit 1 if not)
+#   install.sh --status  tools present and the session up? (exit 1 if not)
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -13,19 +14,22 @@ mode=${1:-install}
 
 case $mode in
 --status)
+  rc=0
+  zsh $mod/tools.sh --status || rc=1
   if tmux has-session -t $FIRSTMATE_SESSION 2>/dev/null; then
     print "firstmate is running in tmux session $FIRSTMATE_SESSION ($FIRSTMATE_DIR)."
     [[ -x $FIRSTMATE_DIR/bin/fm-inbox.sh ]] && $FIRSTMATE_DIR/bin/fm-inbox.sh status 2>/dev/null | head -20 || true
-    exit 0
+  else
+    print "firstmate is not running (start: $0 --start)."
+    rc=1
   fi
-  print "firstmate is not running (start: $0 --start)."
-  exit 1 ;;
+  exit $rc ;;
 install|--start) ;;
 *) print "usage: $0 [--start|--status]"; exit 1 ;;
 esac
 
-command -v tmux >/dev/null || print "Note: firstmate runs in tmux: brew install tmux"
-gh auth status >/dev/null 2>&1 || print "Note: firstmate needs an authenticated GitHub CLI: gh auth login"
+# A tool that could not be installed is reported but does not stop the clone and skill.
+zsh $mod/tools.sh || print "Note: some firstmate tools are still missing (see above; check: $mod/tools.sh --status)."
 
 if [[ ! -d $FIRSTMATE_DIR/.git ]]; then
   act mkdir -p ${FIRSTMATE_DIR:h}
