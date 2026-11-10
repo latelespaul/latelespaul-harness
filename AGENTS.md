@@ -17,13 +17,14 @@ Who I am, my machine and my own preferences are in `ABOUT.md` in my profile. Whe
 - Match the existing code's style, naming and comment density.
 
 ## Explaining things
-Whenever you explain something to me (a concept, a design, how code works, why something broke), use this order:
+Whenever you explain something technical to me (a concept, how something works, how to do a task, why something broke, which option to pick), follow the explaining standard in this harness: `docs/explaining-standard.md`. The `explain` skill applies it. In short:
 
-1. **Short answer first.** One to three sentences that give the meaningful gist. If I read only this, I should get it.
-2. **Diagram, if it helps.** Add one when there is a flow, architecture, sequence, or relationship between parts. Skip it for simple facts. Use a small ASCII diagram in a code block (it renders everywhere, including Telegram); for anything too big for that, render an image.
-3. **Full explanation.** The details, step by step: how it works, why, edge cases, and what to do next.
+- **Show the whole process**, start to end, in order, never only a fragment. Use the eight parts in order: short answer, where it fits, diagram of the whole flow, step-by-step walk-through, terms, worked example with real values, edge cases and warnings, what to do next.
+- **Scale it.** A one-line fact gets the short answer and what to do next; "how does X work" gets all eight parts. When unsure, use the larger size.
+- **Write STE-style** (ASD-STE100 Simplified Technical English): sentences of 25 words or fewer (instructions 20), active voice, one name for one thing, every term defined at first use, one action per step, warnings before the step they apply to.
+- **Keep it phone-readable**: bold labels instead of headings, small ASCII diagrams in code blocks, short paragraphs. The short answer must stand on its own.
 
-Keep each part clearly separated so I can stop reading after the short answer. Don't pad the short answer to sound complete; push detail down to part 3.
+`scripts/ste-check.mjs <file|->` checks a draft against the standard.
 
 ## Delegating to firstmate
 Only when the firstmate module is on (`firstmate` in MODULES in `harness.env`; listed under "Modules" in `~/.claude/CLAUDE.md`). Firstmate runs a crew of agents in their own worktrees and hands back PRs or reports. It is then the default executor for code.

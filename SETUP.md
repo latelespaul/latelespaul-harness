@@ -24,7 +24,7 @@ for c in brew git gh claude tmux jq python3 node; do printf '%-8s %s\n' $c "$(co
 ## 2. Interview
 Ask these together in one short message, with the default in brackets, and wait for the answers:
 1. What should I call you?
-2. How do you like explanations? [short answer first, then a diagram if it helps, then the details]
+2. How do you like explanations? [the harness explaining standard, `docs/explaining-standard.md`: short answer first, then the whole process]
 3. Where do your projects live? [`~/Projects`]
 4. GitHub handle? [from `gh api user -q .login`]
 5. Anything agents should always know about you or your setup? (machine, accounts, tone)

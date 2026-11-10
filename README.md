@@ -32,7 +32,9 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ harness.env      your values (gitignored)       ├─ secrets.md     where secrets live, never values
  ├─ lib/             env loading, helpers           ├─ skills/ commands/ agents/   your own
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
- ├─ scripts/         sync, learn, check, pr-merge   └─ telegram/ browser/   module data
+ ├─ scripts/         sync, learn, check, pr-merge,  └─ telegram/ browser/   module data
+ │                   ste-check
+ ├─ docs/            explaining-standard.md
  ├─ skills/ commands/ agents/
  ├─ modules/         telegram, browser, firstmate, hammerspoon, cron
  └─ profile.example/ starting point for a profile
@@ -54,6 +56,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 ## Customizing
 - **About you:** edit `ABOUT.md` in your profile. It is loaded into every session and wins over `AGENTS.md`.
 - **Rules for everyone:** edit `AGENTS.md` here (and send it upstream if it helps others).
+- **How agents explain things:** `docs/explaining-standard.md` (whole process, STE-style writing), applied by the `explain` skill; `node scripts/ste-check.mjs <file|->` checks a draft (tests: `node --test scripts/ste-check.test.mjs`).
 - **A skill, command or subagent:** add `skills/<name>/SKILL.md`, `commands/<name>.md` or `agents/<name>.md` to your profile (private) or to this repo (shared), then re-run `install.sh` to link it.
 - **Claude settings on every machine:** put them in your profile's `settings.json` (for example `model`, `theme`, extra hooks); `install.sh` merges it into `~/.claude/settings.json`. Settings you change locally are kept too.
 - **More working folders with shared memory:** add them to `MEMORY_DIRS` in `harness.env`.
