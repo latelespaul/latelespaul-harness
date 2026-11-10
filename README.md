@@ -70,7 +70,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 | `browser` | "Claude Chrome": a separate Chrome with its own logins that agents drive through `chrome-devtools-axi`; optional extra browsers per account |
 | `hammerspoon` | Links a Hammerspoon config so screen-reading and mouse/keyboard tools run inside one signed app: permissions are granted once. Eyes and hands go through an authenticated port (`hsx`) with a default-deny access policy file |
 | `cron` | `hcron`: one scheduler (a single LaunchAgent) for every job, with windows across midnight, catch-up after sleep, lock-aware GUI jobs and Telegram alerts |
-| `firstmate` | Installs the toolchain [firstmate](https://github.com/kunchenguid/firstmate) needs (pinned npm and release tools, Homebrew for the rest), clones it and makes it the default executor for code work, via its inbox. Starts at login (`FIRSTMATE_AUTOSTART`) |
+| `firstmate` | Installs the toolchain [firstmate](https://github.com/kunchenguid/firstmate) needs (pinned npm and release tools, Homebrew for the rest), clones it and makes it the default executor for code work, via its inbox. Starts after login or reboot via the hcron job `firstmate-start` (`FIRSTMATE_AUTOSTART`, needs `cron`) |
 
 ## Updates
 - The framework is pull-only by default: each session start and each sync pulls it (`--ff-only`), and when it changed, `install.sh` re-renders CLAUDE.md, settings and links on its own. Module changes need `install.sh` by hand.
