@@ -82,6 +82,35 @@ end
 -- Tools that post their own mouse or key events must tag them, or the watcher takes them for a
 -- person:  event:setProperty(hs.eventtap.event.properties.eventSourceUserData, harness.EVENT_TAG)
 harness.EVENT_TAG = 0x484E
+-- A tool may tag its events with a tag of its own instead: harness.addEventTag(tag) registers it
+-- (a non-zero integer other than EVENT_TAG; adding it again is a no-op), and the watcher and the
+-- awake guard then take events carrying it for machine input too. harness.removeEventTag(tag)
+-- undoes it (on a Spoon unload, say). Both return true, or false and why the tag was refused.
+local eventTags = {}
+local function checkTag(tag)
+  local t = type(tag) == "number" and math.tointeger(tag) or nil
+  if not t then return nil, "event tag must be an integer" end
+  if t == 0 then return nil, "event tag 0 is the untagged default" end
+  if t == harness.EVENT_TAG then return nil, "event tag is harness.EVENT_TAG, which always counts" end
+  return t
+end
+function harness.addEventTag(tag)
+  local t, why = checkTag(tag)
+  if not t then return false, why end
+  eventTags[t] = true
+  return true
+end
+function harness.removeEventTag(tag)
+  local t, why = checkTag(tag)
+  if not t then return false, why end
+  eventTags[t] = nil
+  return true
+end
+-- Machine input: an event posted with EVENT_TAG or a registered tag.
+local function machineEvent(e)
+  local tag = e:getProperty(hs.eventtap.event.properties.eventSourceUserData)
+  return tag == harness.EVENT_TAG or eventTags[tag] == true
+end
 local BKEY = "harness.awake.brightness"
 local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {}, ended = {} }
 local AWAY_SECS = 300   -- no human input for this long = the person has left
@@ -166,7 +195,7 @@ local function humanWatcher()
   local P = hs.eventtap.event.properties
   return hs.eventtap.new({ T.keyDown, T.leftMouseDown, T.rightMouseDown, T.otherMouseDown,
                            T.mouseMoved, T.scrollWheel }, function(e)
-    if e:getProperty(P.eventSourceUserData) == harness.EVENT_TAG then return false end
+    if machineEvent(e) then return false end
     local now = hs.timer.secondsSinceEpoch()
     if aw.mode ~= "away" then aw.lastHuman = now; return false end   -- present: let the person work
     if now < (aw.armedAt or 0) then return false end
@@ -400,8 +429,9 @@ end
 
 -- The awake guard (guard.lua): nothing uses eyes or hands without an awake hold. It covers owners
 -- armed on the port (hooks above), modules whose public <name>.hands.status() says armed or busy
--- (probed every 30 s, read only), and any input posted with EVENT_TAG. When nothing held awake
--- mode it takes a hold itself and sends one alert; see SETUP.md, "Awake guard".
+-- (probed every 30 s, read only), and any input posted with EVENT_TAG or a tag registered with
+-- harness.addEventTag. When nothing held awake mode it takes a hold itself and sends one alert;
+-- see SETUP.md, "Awake guard".
 local guardOk, guardCore = pcall(function() return dofile(moduleDir .. "/guard.lua") end)
 if guardOk then
   local guard = guardCore({
@@ -428,10 +458,10 @@ if guardOk then
     return out
   end
   harness.guardTick = function() guard.tick(drivers()) end
-  -- Tagged input (keys, clicks, scrolls a tool posted): a listen-only tap, at most one check per 30 s.
-  local T, P, lastTag = hs.eventtap.event.types, hs.eventtap.event.properties, nil
+  -- Tagged input (keys, clicks, scrolls a tool posted, with EVENT_TAG or a registered tag): a listen-only tap, at most one check per 30 s.
+  local T, lastTag = hs.eventtap.event.types, nil
   harness._guardTap = hs.eventtap.new({ T.keyDown, T.leftMouseDown, T.rightMouseDown, T.otherMouseDown, T.scrollWheel }, function(e)
-    if e:getProperty(P.eventSourceUserData) == harness.EVENT_TAG then
+    if machineEvent(e) then
       local t = hs.timer.secondsSinceEpoch()
       if not lastTag or t - lastTag >= 30 then lastTag = t; hs.timer.doAfter(0, guard.input) end
     end

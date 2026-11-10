@@ -173,3 +173,17 @@ test('init.lua: a module whose hands.status() says armed is found by the 30 s pr
   assert.deepEqual(JSON.parse(out.result), { 'guard.jobs': { held: true, source: 'driver' } });
   assert.deepEqual(out.after.owners, ['guard.jobs']);
 });
+
+test('init.lua: input with a tag registered by harness.addEventTag takes the input hold; other tags do not', { skip }, () => {
+  const out = load(`local tap = SMOKE.taps[#SMOKE.taps]   -- the guard's tagged-input tap
+    harness.addEventTag(0x4548)
+    tap.fn(SMOKE.event("keyDown", 0x1234))
+    tap.fn(SMOKE.event("leftMouseDown", 0))
+    local before = hs.json.decode(harness.status()).guard
+    tap.fn(SMOKE.event("keyDown", 0x4548))
+    return hs.json.encode({ before = before, after = hs.json.decode(harness.status()).guard })`);
+  const res = JSON.parse(out.result);
+  assert.deepEqual(Object.keys(res.before ?? {}), [], 'an unregistered tag and an untagged click are a person, not machine input');
+  assert.deepEqual(res.after, { 'guard.input': { held: true, source: 'input' } });
+  assert.deepEqual(out.after.owners, ['guard.input']);
+});
