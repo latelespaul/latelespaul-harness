@@ -428,7 +428,7 @@ When a detector fires, hands refuse with `foreign_hands` and `retry_after_s: 60`
 
 **Mutual stop.** If both drivers start at the same moment, each one sees the other's events as foreign. job-hunt's tap counts any event without its tag as a person. The Eyes & Hands tap counts any event without its own tag as a takeover. Both stop. That outcome is safe: nothing types into the wrong field.
 
-**Harness awake watcher.** Today the awake watcher counts every event without `harness.EVENT_TAG` as a person. In away mode it then locks the screen and drops the event. Thus Eyes & Hands events would lock the Mac. PR 2 (part 19) adds `harness.addEventTag(tag)`, so registered tags count as machine input. Until that PR is live, the Spoon refuses hands while awake mode is in away mode.
+**Harness awake watcher.** Before PR 2 (part 19), the awake watcher counted every event without `harness.EVENT_TAG` as a person. In away mode it then locked the screen and dropped the event. Thus Eyes & Hands events would lock the Mac. PR 2 adds `harness.addEventTag(tag)`, so registered tags count as machine input. On a harness without `harness.addEventTag`, the Spoon refuses hands while awake mode is in away mode.
 
 **Live tests next to job-hunt.** Part 18 lists the rules: own namespace, own port, own access file, a throwaway Chrome profile and no reload. The test waits while job-hunt holds its hands.
 

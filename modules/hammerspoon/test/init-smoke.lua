@@ -66,7 +66,7 @@ function SMOKE.event(kind, tag)
     getProperty = function(_, p) if p == P.eventSourceUserData then return tag or 0 end; return 50 end }
 end
 hs.caffeinate.lockScreen = function() SMOKE.locked = SMOKE.locked + 1 end
-hs.pathwatcher ={ new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
+hs.pathwatcher = { new = function(dir, fn) R.watched = dir; return { start = function(self) R.watch = fn; return self end } end }
 hs.ipc = { cliInstall = function() end, __default = { delete = function() R.genericClosed = true end },
   localPort = function(name, fn) R.ports[name] = fn; return {} end }
 hs.fs = {
