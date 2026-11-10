@@ -46,6 +46,8 @@ command -v chrome-devtools-axi >/dev/null || print "Note: install the controller
 
 ensure_dir $agents_dir
 render_keys+=(CHROME_LABEL CHROME_PROFILE CHROME_PORT CHROME_ID)
+# A profile that fails is reported and the loop goes on, so one profile never stops the next one.
+rc=0
 for b in $browsers; do
   CHROME_ID=${b%%:*} CHROME_PORT=${b#*:}
   CHROME_LABEL=com.$LABEL_PREFIX.chrome-$CHROME_ID CHROME_PROFILE=.chrome-$CHROME_ID
@@ -72,9 +74,12 @@ for b in $browsers; do
     print "chrome-$CHROME_ID already running; left it alone."
     continue
   fi
-  launchd_load $CHROME_LABEL $plist
+  # Agent mode (or no record): the agent must end up loaded. A changed plist is reloaded, which stops
+  # its Chrome for a moment; launchd_load waits for the old job to go before loading the new one.
+  launchd_load $CHROME_LABEL $plist || { print "chrome-$CHROME_ID: could not load its agent; re-run this installer."; rc=1; continue }
   if [[ $HARNESS_SKIP_LAUNCHD == 1 ]] || dry; then continue; fi
   for i in {1..20}; do up $CHROME_PORT && break; sleep 1; done
   up $CHROME_PORT && print "chrome-$CHROME_ID is running on 127.0.0.1:$CHROME_PORT. Log in to the accounts agents should use, in that window." \
-    || { print "chrome-$CHROME_ID did not open its debug port; see ~/$CHROME_PROFILE-logs/chrome.log"; exit 1 }
+    || { print "chrome-$CHROME_ID did not open its debug port yet (its agent stays loaded and retries); see ~/$CHROME_PROFILE-logs/chrome.log"; rc=1 }
 done
+exit $rc
