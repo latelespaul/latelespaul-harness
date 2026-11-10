@@ -333,8 +333,13 @@ test('the person watcher takes a registered tag for machine input, like EVENT_TA
 });
 
 test('an unregistered or removed tag is a person: in away mode it locks and the key is dropped', { skip: skipLua }, () => {
-  for (const setup of [`harness.addEventTag(${OWN_TAG})`, `harness.addEventTag(${OTHER_TAG}); harness.removeEventTag(${OTHER_TAG})`]) {
-    const out = load(undefined, `${setup}; ${AWAY_KEY(OTHER_TAG)}`);
+  const cases = [
+    [`harness.addEventTag(${OWN_TAG})`, OTHER_TAG],
+    [`harness.addEventTag(${OTHER_TAG}); harness.removeEventTag(${OTHER_TAG})`, OTHER_TAG],
+    [`harness.addEventTag(${OWN_TAG}); harness.addEventTag(${OWN_TAG}); harness.addEventTag(${OWN_TAG}.0); harness.removeEventTag(${OWN_TAG})`, OWN_TAG],
+  ];
+  for (const [setup, tag] of cases) {
+    const out = load(undefined, `${setup}; ${AWAY_KEY(tag)}`);
     const res = JSON.parse(out.result);
     assert.equal(res.mode, 'away');
     assert.equal(res.dropped, true, 'the key does not reach the app');
@@ -344,13 +349,12 @@ test('an unregistered or removed tag is a person: in away mode it locks and the 
   }
 });
 
-test('addEventTag refuses bad tags, and adding a tag again is a no-op', { skip: skipLua }, () => {
+test('addEventTag refuses bad tags and accepts a tag again', { skip: skipLua }, () => {
   const out = load(undefined, `local r = {}
     for k, v in pairs({ str = "18760", frac = 1.5, zero = 0, base = harness.EVENT_TAG, bool = true }) do r[k] = { harness.addEventTag(v) } end
     r.none = { harness.addEventTag() }
     r.removeBad = { harness.removeEventTag(0) }
     r.add = { harness.addEventTag(${OWN_TAG}), harness.addEventTag(${OWN_TAG}), harness.addEventTag(${OWN_TAG}.0) }
-    r.tags = harness.eventTags()
     return hs.json.encode(r)`);
   const r = JSON.parse(out.result);
   for (const x of [r.str, r.frac, r.bool, r.none]) assert.deepEqual(x, [false, 'event tag must be an integer']);
@@ -358,5 +362,4 @@ test('addEventTag refuses bad tags, and adding a tag again is a no-op', { skip: 
   assert.deepEqual(r.base, [false, 'event tag is harness.EVENT_TAG, which always counts']);
   assert.equal(r.removeBad[0], false);
   assert.deepEqual(r.add, [true, true, true]);
-  assert.deepEqual(r.tags, [OWN_TAG], 'one registration, however often it is added');
 });

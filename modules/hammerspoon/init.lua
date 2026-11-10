@@ -106,12 +106,6 @@ function harness.removeEventTag(tag)
   eventTags[t] = nil
   return true
 end
-function harness.eventTags()
-  local out = {}
-  for t in pairs(eventTags) do table.insert(out, t) end
-  table.sort(out)
-  return out
-end
 -- Machine input: an event posted with EVENT_TAG or a registered tag.
 local function machineEvent(e)
   local tag = e:getProperty(hs.eventtap.event.properties.eventSourceUserData)
