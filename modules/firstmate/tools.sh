@@ -102,7 +102,7 @@ for t in $tools; do
   [[ $state == ok ]] && continue
   case $how in
     brew)
-      if (( brew_ok )); then act brew install $name; else print "skipped $name: needs Homebrew"; rc=1; fi ;;
+      if (( brew_ok )); then act brew install $name || rc=1; else print "skipped $name: needs Homebrew"; rc=1; fi ;;
     npm)
       if ! command -v npm >/dev/null; then print "skipped $name: needs node/npm"; rc=1; continue; fi
       # A global prefix you cannot write (e.g. /usr/local from a pkg install) would need sudo; we don't.
@@ -111,9 +111,9 @@ for t in $tools; do
         npm_ok=0
       fi
       (( npm_ok )) || { print "skipped $name: run npm i -g $name@$pin yourself"; rc=1; continue }
-      act npm i -g --no-fund --no-audit $name@$pin
+      act npm i -g --no-fund --no-audit $name@$pin || { rc=1; continue }
       # A first install also wires its agent SessionStart hook, as firstmate's own installer does.
-      [[ $state == missing && $name == (gh-axi|chrome-devtools-axi|lavish-axi) ]] && act $name setup hooks ;;
+      [[ $state == missing && $name == (gh-axi|chrome-devtools-axi|lavish-axi) ]] && { act $name setup hooks || rc=1 } ;;
     release)
       release_install $name $pin || rc=1 ;;
     system|claude)
