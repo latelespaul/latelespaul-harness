@@ -44,7 +44,7 @@ write_file $claude_dir/skills/firstmate/SKILL.md "$(render $mod/skill/SKILL.md.t
 
 # Its own Telegram bot shares the plugin settings with the telegram module.
 if [[ $FIRSTMATE_TELEGRAM == 1 ]]; then
-  link $HARNESS_DIR/modules/telegram/session-settings.json $HOME/.claude/telegram-settings.json
+  write_file $HOME/.claude/telegram-settings.json "$(render $HARNESS_DIR/modules/telegram/session-settings.json.tmpl)"
   act mkdir -p ~/.claude/channels/telegram-firstmate/logs
 fi
 
