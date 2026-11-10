@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""hsx: client for Hammerspoon's authenticated "harness" port (modules/hammerspoon/port.lua).
+
+Talks to the port directly over CFMessagePort (CoreFoundation via ctypes): no `hs -c`, no Lua is
+sent, no compiled helper. Secrets are read from stdin, never from argv or the environment, which
+`ps` shows. Linked to ~/.local/bin/hsx by install.sh.
+
+  hsx status                                 harness.status() as JSON (no secret needed)
+  hsx call <cmd> [ARGS-JSON]                 a command registered with auth=false
+  hsx call --owner O <cmd> [ARGS-JSON]       signed call as owner O: first stdin line is its secret
+  hsx arm <owner> [--pid P] [--minutes N]    arm with the secret on stdin (pid defaults to the caller)
+  hsx arm <owner> --new [...]                make a fresh secret, arm, print the secret on stdout:
+                                               hsx arm my-runner --new | node runner.mjs
+  hsx disarm <owner>                         release it (secret on stdin)
+  hsx session <owner>                        stdin: secret line, then {"cmd":..,"args":..} lines;
+                                               signs each, prints one JSON reply line per request
+  hsx raw                                    stdin: envelopes the caller signed itself; one reply per line
+  hsx access list                            the access policy file (HS_ACCESS_FILE), checked
+  hsx access allow <owner> <cap,cap> [--apps a,b] [--window 20:00-05:00 | --any-time]
+                   [--manual-runs | --no-manual-runs] [--max-minutes N] [--alert telegram|deny]
+  hsx access deny <owner>                    set enabled=false
+                                             (edits are checked, then written atomically; Hammerspoon
+                                              reloads the file by itself)
+Options: --port NAME (default "harness"), --timeout SECONDS (default 10), --file PATH (access).
+Exit: 0 ok, 1 refused (reason on stderr), 2 usage, 3 Hammerspoon not reachable.
+"""
+import argparse, ctypes, hashlib, hmac, json, os, re, secrets, subprocess, sys, tempfile, time
+
+CF = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+vp = ctypes.c_void_p
+CF.CFStringCreateWithCString.restype, CF.CFStringCreateWithCString.argtypes = vp, [vp, ctypes.c_char_p, ctypes.c_uint32]
+CF.CFMessagePortCreateRemote.restype, CF.CFMessagePortCreateRemote.argtypes = vp, [vp, vp]
+CF.CFDataCreate.restype, CF.CFDataCreate.argtypes = vp, [vp, ctypes.c_char_p, ctypes.c_long]
+CF.CFDataGetLength.restype, CF.CFDataGetLength.argtypes = ctypes.c_long, [vp]
+CF.CFDataGetBytePtr.restype, CF.CFDataGetBytePtr.argtypes = vp, [vp]
+CF.CFMessagePortSendRequest.restype = ctypes.c_int32
+CF.CFMessagePortSendRequest.argtypes = [vp, ctypes.c_int32, vp, ctypes.c_double, ctypes.c_double, vp, ctypes.POINTER(vp)]
+CF.CFRelease.argtypes = [vp]
+UTF8 = 0x08000100
+DEFAULT_MODE = vp.in_dll(CF, "kCFRunLoopDefaultMode")
+SEND_ERRORS = {-1: "send timeout", -2: "no reply in time", -3: "port is invalid", -4: "transport error", -5: "port went away"}
+NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class Unreachable(Exception):
+    pass
+
+
+def send(port_name, payload, timeout):
+    """One request/reply over the named CFMessagePort; returns the reply text."""
+    name = CF.CFStringCreateWithCString(None, port_name.encode(), UTF8)
+    port = CF.CFMessagePortCreateRemote(None, name)
+    CF.CFRelease(name)
+    if not port:
+        raise Unreachable(f'no "{port_name}" port (is Hammerspoon running the harness config?)')
+    data = CF.CFDataCreate(None, payload, len(payload))
+    out = vp()
+    try:
+        rc = CF.CFMessagePortSendRequest(port, 0, data, timeout, timeout, DEFAULT_MODE, ctypes.byref(out))
+    finally:
+        CF.CFRelease(data)
+        CF.CFRelease(port)
+    if rc != 0:
+        raise Unreachable(f"{SEND_ERRORS.get(rc, rc)} on the {port_name} port")
+    if not out.value:
+        raise Unreachable("empty reply")
+    try:
+        return ctypes.string_at(CF.CFDataGetBytePtr(out), CF.CFDataGetLength(out)).decode("utf-8", "replace")
+    finally:
+        CF.CFRelease(out)
+
+
+class Signer:
+    """Signs requests for one owner. seq starts at the current time in microseconds and rises by at
+    least one per call. Calls for one owner must go through one signer in turn (`hsx session`):
+    separate signers that overlap, or a clock step backwards, can send a lower seq second, which
+    Hammerspoon treats as a replay and locks the owner."""
+
+    def __init__(self, owner, secret):
+        self.owner, self.key, self.seq = owner, secret.encode(), 0
+
+    def envelope(self, cmd, args_text):
+        self.seq = max(self.seq + 1, time.time_ns() // 1000)
+        mac = hmac.new(self.key, f"{self.seq}|{cmd}|{args_text}".encode(), hashlib.sha256).hexdigest()
+        return {"cmd": cmd, "owner": self.owner, "args": args_text, "seq": self.seq, "mac": mac}
+
+
+def args_text(value):
+    return "" if value is None else json.dumps(value, separators=(",", ":"))
+
+
+def read_secret(stream):
+    s = stream.readline().strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{64,256}", s):
+        die(2, "hsx: the first stdin line must be the secret (64-256 hex characters)")
+    return s
+
+
+def die(code, msg):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def request(opts, env):
+    try:
+        text = send(opts.port, json.dumps(env, separators=(",", ":")).encode(), opts.timeout)
+    except Unreachable as e:
+        die(3, f"hsx: {e}")
+    try:
+        rep = json.loads(text)
+    except ValueError:
+        die(3, f"hsx: not a harness port reply: {text[:200]}")
+    return rep
+
+
+def finish(rep, show=True):
+    """Prints the result (or the refusal) and exits with the matching code."""
+    if not isinstance(rep, dict) or rep.get("ok") is not True:
+        die(1, f"hsx: refused: {rep.get('error') if isinstance(rep, dict) else rep}")
+    if show:
+        r = rep.get("result")
+        print(r if isinstance(r, str) else json.dumps(r, separators=(",", ":")))
+    sys.exit(0)
+
+
+def stream(opts, signer):
+    """session / raw: one request per stdin line, one reply line on stdout; never exits on a refusal."""
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+            if not isinstance(req, dict) or not isinstance(req.get("cmd"), str):
+                raise ValueError("need an object with a cmd")
+            if signer:
+                env = signer.envelope(req["cmd"], args_text(req.get("args")))
+            else:
+                env = req
+            out = send(opts.port, json.dumps(env, separators=(",", ":")).encode(), opts.timeout)
+        except (ValueError, Unreachable) as e:
+            out = json.dumps({"ok": False, "error": f"hsx: {e}"})
+        print(out, flush=True)
+
+
+# ---------- access policy file (the same rules as parsePolicy in port.lua) ----------
+OWNER_KEYS = {"enabled", "capabilities", "apps", "window", "manual_runs", "max_arm_minutes", "lock_minutes", "alert"}
+WINDOW = re.compile(r"^(\d\d?):(\d\d)-(\d\d?):(\d\d)$")
+
+
+def window_ok(w):
+    m = WINDOW.match(w) if isinstance(w, str) else None
+    return bool(m) and int(m[1]) < 24 and int(m[3]) < 24 and int(m[2]) < 60 and int(m[4]) < 60
+
+
+def is_int(v, lo, hi):
+    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
+
+
+def policy_error(doc):
+    """None when the policy is valid, else the reason (Hammerspoon would deny everything)."""
+    if not isinstance(doc, dict):
+        return "not a JSON object"
+    for k in doc:
+        if k != "owners" and not k.startswith("_"):
+            return f"unknown top-level key {k}"
+    owners = doc.get("owners", {})
+    if owners == []:   # Lua cannot tell an empty list from an empty object; neither does this
+        owners = {}
+    if not isinstance(owners, dict):
+        return "owners must be an object"
+    for name, o in owners.items():
+        if not NAME.fullmatch(name):
+            return f"bad owner name {name}"
+        if not isinstance(o, dict):
+            return f"{name}: must be an object"
+        for k in o:
+            if k not in OWNER_KEYS and not k.startswith("_"):
+                return f"{name}: unknown key {k}"
+        for k in ("enabled", "manual_runs"):
+            if k in o and not isinstance(o[k], bool):
+                return f"{name}: {k} must be true or false"
+        for k in ("capabilities", "apps"):
+            v = o.get(k, [])
+            v = [] if v == {} else v
+            if not isinstance(v, list) or not all(isinstance(x, str) and NAME.fullmatch(x) for x in v):
+                return f"{name}: {k} must be a list of names (letters, digits, . _ -)"
+        if "window" in o and not window_ok(o["window"]):
+            return f"{name}: window must look like 20:00-05:00"
+        if "max_arm_minutes" in o and not is_int(o["max_arm_minutes"], 1, 1440):
+            return f"{name}: max_arm_minutes must be 1-1440"
+        if "lock_minutes" in o and not is_int(o["lock_minutes"], 1, 10080):
+            return f"{name}: lock_minutes must be 1-10080"
+        if "alert" in o and o["alert"] not in ("telegram", "deny"):
+            return f"{name}: alert must be telegram or deny"
+    return None
+
+
+def access_file(opts):
+    if opts.file:
+        return opts.file
+    harness = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    out = subprocess.run(["/bin/zsh", "-c", 'source "$1/lib/env.sh"; print -r -- "$HS_ACCESS_FILE"', "hsx", harness],
+                         capture_output=True, text=True).stdout.strip()
+    if not out:
+        die(2, "hsx: HS_ACCESS_FILE is not set (harness.env) and no --file given")
+    return out
+
+
+def load_policy(path, missing_ok):
+    try:
+        with open(path) as f:
+            text = f.read()
+    except FileNotFoundError:
+        if missing_ok:
+            return {"owners": {}}
+        die(1, f"hsx: no access file at {path}: nothing may arm (default deny)")
+    try:
+        doc = json.loads(text)
+    except ValueError as e:
+        die(1, f"hsx: {path} is not valid JSON ({e}); Hammerspoon denies everything until it is fixed")
+    err = policy_error(doc)
+    if err:
+        die(1, f"hsx: {path} is invalid ({err}); Hammerspoon denies everything until it is fixed")
+    if doc.get("owners") == []:
+        doc["owners"] = {}
+    for o in doc.get("owners", {}).values():
+        for k in ("capabilities", "apps"):
+            if o.get(k) == {}:
+                o[k] = []
+    return doc
+
+
+def save_policy(path, doc):
+    err = policy_error(doc)
+    if err:
+        die(2, f"hsx: refusing to write an invalid policy ({err})")
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".access-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(doc, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)   # atomic: Hammerspoon never reads a half-written file
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def names(csv):
+    out = [x for x in csv.split(",") if x]
+    if not out or not all(NAME.fullmatch(x) for x in out):
+        die(2, "hsx: give names separated by commas (letters, digits, . _ -)")
+    return out
+
+
+def access(opts):
+    path = access_file(opts)
+    if opts.action == "list":
+        doc = load_policy(path, missing_ok=False)
+        print(path)
+        owners = doc.get("owners", {})
+        if not owners:
+            print("  (no owners: nothing may arm)")
+        for name, o in sorted(owners.items()):
+            bits = ["on " if o.get("enabled") is True else "off", ",".join(o.get("capabilities", [])) or "-"]
+            if o.get("apps"):
+                bits.append("apps=" + ",".join(o["apps"]))
+            bits.append("window=" + o.get("window", "any"))
+            if o.get("manual_runs"):
+                bits.append("manual-runs")
+            bits.append(f"max={o.get('max_arm_minutes', 720)}m")
+            bits.append("alert=" + o.get("alert", "deny"))
+            print(f"  {name:<20} " + "  ".join(bits))
+        return
+    if not NAME.fullmatch(opts.owner):
+        die(2, "hsx: owner names are letters, digits, . _ -")
+    doc = load_policy(path, missing_ok=True)
+    owners = doc.setdefault("owners", {})
+    if opts.action == "deny":
+        if opts.owner not in owners:
+            print(f"{opts.owner} is not in {path}: already denied")
+            return
+        owners[opts.owner]["enabled"] = False
+    else:
+        o = owners.setdefault(opts.owner, {})
+        o["enabled"] = True
+        o["capabilities"] = names(opts.caps)
+        if opts.apps is not None:
+            o["apps"] = names(opts.apps)
+        if opts.any_time:
+            o.pop("window", None)
+        elif opts.window is not None:
+            o["window"] = opts.window
+        if opts.manual_runs is not None:
+            o["manual_runs"] = opts.manual_runs
+        if opts.max_minutes is not None:
+            o["max_arm_minutes"] = opts.max_minutes
+        if opts.alert is not None:
+            o["alert"] = opts.alert
+    save_policy(path, doc)
+    print(f"{opts.owner}: {'denied' if opts.action == 'deny' else 'allowed ' + ','.join(owners[opts.owner]['capabilities'])} in {path}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="hsx", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--port", default=os.environ.get("HSX_PORT", "harness"))
+    p.add_argument("--timeout", type=float, default=10.0)
+    sub = p.add_subparsers(dest="op", required=True)
+    sub.add_parser("status")
+    c = sub.add_parser("call")
+    c.add_argument("--owner")
+    c.add_argument("cmd")
+    c.add_argument("args", nargs="?")
+    a = sub.add_parser("arm")
+    a.add_argument("owner")
+    a.add_argument("--pid", type=int, default=os.getppid())
+    a.add_argument("--minutes", type=int)
+    a.add_argument("--new", action="store_true")
+    d = sub.add_parser("disarm")
+    d.add_argument("owner")
+    sub.add_parser("session").add_argument("owner")
+    sub.add_parser("raw")
+    ac = sub.add_parser("access").add_subparsers(dest="action", required=True)
+    for q in (ac.add_parser("list"), ac.add_parser("allow"), ac.add_parser("deny")):
+        q.add_argument("--file")
+    ac.choices["allow"].add_argument("owner")
+    ac.choices["allow"].add_argument("caps")
+    ac.choices["allow"].add_argument("--apps")
+    ac.choices["allow"].add_argument("--window")
+    ac.choices["allow"].add_argument("--any-time", action="store_true")
+    ac.choices["allow"].add_argument("--manual-runs", dest="manual_runs", action="store_true", default=None)
+    ac.choices["allow"].add_argument("--no-manual-runs", dest="manual_runs", action="store_false")
+    ac.choices["allow"].add_argument("--max-minutes", type=int)
+    ac.choices["allow"].add_argument("--alert", choices=["telegram", "deny"])
+    ac.choices["deny"].add_argument("owner")
+    opts = p.parse_args()
+
+    if opts.op == "access":
+        access(opts)
+        sys.exit(0)
+    if opts.op == "status":
+        finish(request(opts, {"cmd": "status"}))
+    if opts.op == "call":
+        if not NAME.fullmatch(opts.cmd):
+            die(2, "hsx: command names are letters, digits, . _ -")
+        try:
+            value = None if opts.args is None else json.loads(opts.args)
+        except ValueError:
+            die(2, "hsx: ARGS-JSON is not valid JSON")
+        if value is not None and not isinstance(value, (dict, list)):
+            die(2, "hsx: ARGS-JSON must be an object or an array")
+        text = args_text(value)
+        if opts.owner is not None and not NAME.fullmatch(opts.owner):
+            die(2, "hsx: owner names are letters, digits, . _ -")
+        env = Signer(opts.owner, read_secret(sys.stdin)).envelope(opts.cmd, text) if opts.owner else {"cmd": opts.cmd, "args": text}
+        finish(request(opts, env))
+    if opts.op in ("arm", "disarm", "session") and not NAME.fullmatch(opts.owner):
+        die(2, "hsx: owner names are letters, digits, . _ -")
+    if opts.op == "arm":
+        secret = secrets.token_hex(32) if opts.new else read_secret(sys.stdin)
+        args = {"owner": opts.owner, "secret": secret, "pid": opts.pid}
+        if opts.minutes:
+            args["minutes"] = opts.minutes
+        rep = request(opts, {"cmd": "arm", "args": args_text(args)})
+        if opts.new and isinstance(rep, dict) and rep.get("ok") is True:
+            print(secret, flush=True)   # stdout carries only the secret, for a pipe into the runner
+            sys.exit(0)
+        finish(rep)
+    if opts.op == "disarm":
+        env = Signer(opts.owner, read_secret(sys.stdin)).envelope("disarm", "")
+        finish(request(opts, env))
+    if opts.op == "session":
+        stream(opts, Signer(opts.owner, read_secret(sys.stdin)))
+    if opts.op == "raw":
+        stream(opts, None)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (BrokenPipeError, KeyboardInterrupt):
+        sys.exit(1)

@@ -68,7 +68,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 |---|---|
 | `telegram` | Always-on Claude session you message from your phone, with a watchdog and an optional morning brief. One Mac at a time |
 | `browser` | "Claude Chrome": a separate Chrome with its own logins that agents drive through `chrome-devtools-axi`; optional extra browsers per account |
-| `hammerspoon` | Links a Hammerspoon config so screen-reading and mouse/keyboard tools run inside one signed app: permissions are granted once |
+| `hammerspoon` | Links a Hammerspoon config so screen-reading and mouse/keyboard tools run inside one signed app: permissions are granted once. Eyes and hands go through an authenticated port (`hsx`) with a default-deny access policy file |
 | `cron` | `hcron`: one scheduler (a single LaunchAgent) for every job, with windows across midnight, catch-up after sleep, lock-aware GUI jobs and Telegram alerts |
 | `firstmate` | Installs the toolchain [firstmate](https://github.com/kunchenguid/firstmate) needs (pinned npm and release tools, Homebrew for the rest), clones it and makes it the default executor for code work, via its inbox. Starts at login (`FIRSTMATE_AUTOSTART`) |
 

@@ -119,9 +119,17 @@ const saveState = (id, s) => writeJson(statePath(id), s);
 function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 
 // ---------- environment checks ----------
+// Hammerspoon through `hs -c`, or through the harness port (`hsx`) when the generic port is closed
+// (HS_IPC_GENERIC=0). Throws when neither answers.
+function hammerspoon(lua, cmd, args, timeout) {
+  const opts = { encoding: 'utf8', env: { ...process.env, PATH }, stdio: ['ignore', 'pipe', 'ignore'] };
+  try { return execFileSync('hs', ['-t', String(timeout), '-c', lua], opts); }
+  catch { return execFileSync('hsx', ['--timeout', String(timeout), 'call', cmd, ...(args ? [JSON.stringify(args)] : [])], opts); }
+}
+
 function screenLocked() {
   try {
-    const out = execFileSync('hs', ['-t', '3', '-c', 'return harness and harness.status() or "{}"'], { encoding: 'utf8', env: { ...process.env, PATH }, stdio: ['ignore', 'pipe', 'ignore'] });
+    const out = hammerspoon('return harness and harness.status() or "{}"', 'status', null, 3);
     const j = JSON.parse(out.trim().split('\n').pop());
     return { locked: !!j.screen_locked, gui: j.accessibility === true, via: 'hammerspoon' };
   } catch {
@@ -154,9 +162,9 @@ export const wantsAwake = job => !!job.awake || (job.needs || []).includes('gui'
 function awake(id, on, minutes) {
   const call = on ? `harness.awake(true, {owner=${JSON.stringify(id)}, minutes=${minutes}, pid=${process.pid}})`
     : `harness.awake(false, {owner=${JSON.stringify(id)}, lock=true, reason="job ended"})`;
+  const args = on ? { owner: id, minutes, pid: process.pid } : { owner: id, lock: true, reason: 'job ended' };
   try {
-    const out = execFileSync('hs', ['-t', '5', '-c', `return harness.awake and ${call} or "no awake mode"`],
-      { encoding: 'utf8', env: { ...process.env, PATH }, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const out = hammerspoon(`return harness.awake and ${call} or "no awake mode"`, on ? 'awake.on' : 'awake.off', args, 5).trim();
     console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'}: ${out.split('\n').pop()}`);
   } catch (e) { console.log(`${new Date().toISOString()} awake ${on ? 'on' : 'off'} failed: Hammerspoon not answering`); }
 }
