@@ -25,7 +25,7 @@ cmd=$1; shift 2>/dev/null
 name=$1; shift 2>/dev/null
 [[ $name =~ '^[A-Za-z0-9._-]+$' ]] || { print -u2 "awake: name must be letters, digits, . _ -"; exit 2 }
 
-minutes=600 dim=true lock=true pid=$$
+minutes=600 dim=true lock=true pid=$PPID
 while (( $# )); do
   case $1 in
     --minutes) [[ $2 == <1-> ]] || usage; minutes=$2; shift 2 ;;
@@ -37,8 +37,14 @@ while (( $# )); do
   esac
 done
 
-on()  { hs_call "harness.awake(true, {owner='$name', minutes=$minutes, dim=$dim, pid=$1})" >/dev/null \
-          || print -u2 "awake: Hammerspoon not answering; running without awake mode" }
+on() {
+  local ans
+  ans=$(hs_call "harness.awake(true, {owner='$name', minutes=$minutes, dim=$dim, pid=$1})") \
+    || { print -u2 "awake: Hammerspoon not answering; running without awake mode"; return }
+  [[ $ans =~ '"on" *: *true' ]] && return
+  [[ $ans =~ '"reason" *: *"([^"]*)"' ]] && print -u2 "awake: awake mode refused ($match[1]); running without it" \
+    || print -u2 "awake: awake mode refused; running without it"
+}
 off() { hs_call "harness.awake(false, {owner='$name', lock=$lock, reason='$name finished'})" >/dev/null }
 
 case $cmd in

@@ -56,3 +56,24 @@ test('on, off and status call Hammerspoon and print its answer', () => {
   assert.equal(s.run('status').status, 0);
   assert.equal(s.run('bogus').status, 2);
 });
+
+test('on without --pid ties the hold to the caller, not to the short-lived awake process', () => {
+  const s = sandbox();
+  const r = spawnSync('/bin/zsh', ['-c', `${AWAKE} on job; print -r -- $$`], { env: { ...process.env, PATH: `${s.d}:/usr/bin:/bin` }, encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  const callerPid = r.stdout.trim().split('\n').pop();
+  assert.match(s.lines()[0], new RegExp(`pid=${callerPid}\\}`));
+});
+
+test('run warns when Hammerspoon refuses awake mode, and still runs the command', () => {
+  const s = sandbox('{"on":false,"reason":"screen already locked"}');
+  const r = s.run('run', 'x', '--', 'sh', '-c', 'echo ran');
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), 'ran');
+  assert.match(r.stderr, /refused \(screen already locked\)/);
+});
+
+test('run stays quiet when awake mode is granted', () => {
+  const s = sandbox();
+  assert.equal(s.run('run', 'x', '--', 'true').stderr, '');
+});
