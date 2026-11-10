@@ -34,6 +34,20 @@ runner ──stdin: secret──► hsx ──CFMessagePort "harness"──► p
 
 `hsx` is Python calling CoreFoundation's CFMessagePort through `ctypes`: no compile step, no Xcode, and no new binary that macOS would ask permissions for. Exit codes: 0 ok, 1 refused, 2 usage, 3 Hammerspoon not reachable.
 
+**Live verification after install.** The node tests use a stub `hs`, so check the real app once, right after `install.sh` reloads Hammerspoon. Use a throwaway owner: `hsx access allow hs-test eyes,hands --apps test-app --any-time`, plus `hsx access allow hs-eyes eyes` and a disabled `hs-off`. In the Hammerspoon console, register a test command: `harness.register("test.hands", function(a) return a end, {cap="hands", app="test-app"})` (and one with `app="other-app"`). Then:
+1. Load and port: the console shows no error, `hsx status` answers without a secret and lists the policy, and `install.sh --status` still works.
+2. Unsigned: `hsx call test.hands` is refused.
+3. Signed: `S=$(hsx arm hs-test --new)`, then `printf '%s\n{"cmd":"test.hands","args":{}}\n' "$S" | hsx session hs-test` succeeds (this proves `hs.hash.hmacSHA256`).
+4. First arm wins: a second `hsx arm hs-test --new` is refused and a Telegram alert arrives through `tg-notify.py`.
+5. Forged MAC: send an envelope with a wrong `mac` through `hsx raw`. It is denied, the owner is disarmed, a new arm is refused (locked), and a trip alert arrives even right after the step 4 alert. Run `harness.resetOwner("hs-test")` and re-arm.
+6. Replay: send the same signed envelope twice through `hsx raw`. The second is denied.
+7. Policy: `hsx arm` for an unknown owner and for `hs-off` is refused; `hs-eyes` calling `test.hands` is denied; the `other-app` command is denied.
+8. Window: set a window that excludes now (`hsx access allow hs-test eyes,hands --apps test-app --window <closed>`). Arm is refused; add `--manual-runs`, run `harness.allowArm("hs-test", 10)`, and it succeeds.
+9. Fail closed: break the JSON in the access file. Within a second an alert arrives and every signed call is denied; fix the file and calls work again (this proves the pathwatcher).
+10. Audit: `~/Library/Logs/hammerspoon-harness.log` has time, owner, command and ok or deny for each step, and `grep "$S"` on it finds nothing.
+
+Afterwards remove the test owners from the access file (`hsx access deny` only disables them) and reload Hammerspoon to drop the test commands.
+
 **Close `hs -c` (opt-in).** While the generic port is open, any program running as you can skip the harness port and post input with plain Lua, so the checks above only stop tools that play by the rules. When every caller uses `hsx`, set `HS_IPC_GENERIC=0` in `harness.env` and reload Hammerspoon: the generic port closes, and `awake`, hcron and `install.sh --status` switch to the harness port by themselves. The `hs` CLI then stops working; set it back to `1` to debug.
 
 **The limit, stated plainly.** Inside one macOS user this makes spoofing hard and loud, not impossible: another program running as you can still read the runner's memory, edit your files or wait and act like you (Hammerspoon announces a policy edit, but it still applies it). Only a separate macOS user for the runner is a hard wall.
