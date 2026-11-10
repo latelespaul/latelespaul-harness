@@ -42,7 +42,7 @@ Restarts resume the conversation (`--continue`).
 If `$PROFILE_DIR/telegram/morning-brief.md` exists, `com.<prefix>.morning-brief` runs `morning-brief.py` at `TELEGRAM_BRIEF_TIME`: headless `claude -p` writes the brief from that prompt and the bot sends it (split under Telegram's 4096-char limit). Names in `watchlist.txt` next to it fill `{{WATCHLIST}}` in the prompt. If it fails twice, it sends a failure message instead. Only the `ACTIVE_HOST` Mac sends. Start from `morning-brief.example.md`. Test now: `morning-brief.py --now`. Log: `~/.claude/channels/telegram/logs/morning-brief.log`.
 
 ## Files
-- Here (framework): `run.sh` (restart loop), `watchdog.py`, `morning-brief.py`, `session-settings.json` (linked to `~/.claude/telegram-settings.json`, enables the plugin for this session only), `launchd/*.plist.tmpl`.
+- Here (framework): `run.sh` (restart loop), `watchdog.py`, `morning-brief.py`, `session-settings.json.tmpl` (rendered to `~/.claude/telegram-settings.json`: enables the plugin for this session only and pre-allows `scripts/pr-merge.sh`), `launchd/*.plist.tmpl`.
 - In the profile (synced): `telegram/ACTIVE_HOST`, `telegram/morning-brief.md`, `telegram/watchlist.txt`.
 - Per Mac, never in git: `~/.claude/channels/telegram/` holds `.env` (token), `access.json` (pairing), `logs/` and `watchdog/state.json`.
 

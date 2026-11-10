@@ -32,7 +32,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ harness.env      your values (gitignored)       ├─ secrets.md     where secrets live, never values
  ├─ lib/             env loading, helpers           ├─ skills/ commands/ agents/   your own
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
- ├─ scripts/         sync, session-learn, check     └─ telegram/ browser/   module data
+ ├─ scripts/         sync, learn, check, pr-merge   └─ telegram/ browser/   module data
  ├─ skills/ commands/ agents/
  ├─ modules/         telegram, browser, firstmate, hammerspoon, cron
  └─ profile.example/ starting point for a profile

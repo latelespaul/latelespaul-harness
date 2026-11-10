@@ -157,7 +157,7 @@ elif [[ -s $state/.env ]] && polled_elsewhere; then
 fi
 
 act mkdir -p $state/logs $state/watchdog $TELEGRAM_WORKDIR
-link $mod/session-settings.json $HOME/.claude/telegram-settings.json
+write_file $HOME/.claude/telegram-settings.json "$(render $mod/session-settings.json.tmpl)"
 link_memory $TELEGRAM_WORKDIR
 
 # Claude asks to trust a new working folder once; an unattended session would sit on that prompt.
