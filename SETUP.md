@@ -31,6 +31,8 @@ Ask these together in one short message, with the default in brackets, and wait 
 6. Will you often drive sessions from your phone? If yes, offer the **telegram** module (an always-on Claude session you message through your own Telegram bot).
 7. Do you want agents to have their own browser with its own logins? If yes, offer the **browser** module (Claude Chrome). A second browser for another account is possible (BROWSER_EXTRA).
 8. Do you want a crew of agents that takes coding tasks and hands back PRs? If yes, offer the **firstmate** module.
+9. Will agents need to read the screen or drive the mouse and keyboard? If yes, offer the **hammerspoon** module (one signed app that holds Accessibility and Screen Recording, granted once; needs `brew install --cask hammerspoon`).
+10. Do you want scheduled jobs on this Mac? If yes, offer the **cron** module (`hcron`, one scheduler for every job). Failure alerts on Telegram need the telegram module.
 
 Derive: `GH_USER`, `PROJECTS_DIR`, `PROFILE_DIR` [`$PROJECTS_DIR/agent-profile`], `LABEL_PREFIX` [the handle, lowercased], `MODULES` (space separated). Read them back and get a yes.
 
@@ -83,7 +85,7 @@ Ask which they want, then: `npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtoo
 **Verify:** `for t in lavish-axi gnhf chrome-devtools-axi; do command -v $t; done`
 
 ## 8. Modules
-For each module in MODULES, follow `H/modules/<name>/SETUP.md` step by step (they include the steps that need the human). Order: browser, telegram, firstmate. To add or drop a module later: `H/install.sh MODULES="..."`.
+For each module in MODULES, follow `H/modules/<name>/SETUP.md` step by step (they include the steps that need the human). Order: browser, telegram, hammerspoon, cron, firstmate. To add or drop a module later: `H/install.sh MODULES="..."`.
 
 **Verify:** `H/modules/<name>/install.sh --status` exits 0 for each.
 

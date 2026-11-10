@@ -34,7 +34,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
  ├─ scripts/         sync, session-learn, check     └─ telegram/ browser/   module data
  ├─ skills/ commands/ agents/
- ├─ modules/         telegram, browser, firstmate
+ ├─ modules/         telegram, browser, firstmate, hammerspoon, cron
  └─ profile.example/ starting point for a profile
 
  install.sh renders and links into:
@@ -63,6 +63,8 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 |---|---|
 | `telegram` | Always-on Claude session you message from your phone, with a watchdog and an optional morning brief. One Mac at a time |
 | `browser` | "Claude Chrome": a separate Chrome with its own logins that agents drive through `chrome-devtools-axi`; optional extra browsers per account |
+| `hammerspoon` | Links a Hammerspoon config so screen-reading and mouse/keyboard tools run inside one signed app: permissions are granted once |
+| `cron` | `hcron`: one scheduler (a single LaunchAgent) for every job, with windows across midnight, catch-up after sleep, lock-aware GUI jobs and Telegram alerts |
 | `firstmate` | Clones [firstmate](https://github.com/kunchenguid/firstmate) and makes it the default executor for code work, via its inbox |
 
 ## Updates
