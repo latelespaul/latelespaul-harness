@@ -3,7 +3,8 @@
 # Prints one line per item: "ok", or "FIX" followed by the exact command the user runs.
 # Exit 0 when everything is ok, 1 otherwise. Never changes anything and never needs sudo.
 source ${0:A:h:h:h:h}/lib/env.sh
-uid=$(id -u) bad=0
+source ${0:A:h}/common.sh
+bad=0
 ok()  { printf '  ok   %s\n' "$1" }
 fix() { printf '  FIX  %s\n       → %s\n' "$1" "$2"; bad=1 }
 pm() { pmset -g custom | awk -v sec="$1" -v k="$2" '$0 ~ sec {f=1; next} /Power:$/ {f=0} f && $1==k {print $2}' }
@@ -27,8 +28,7 @@ print "Login"
 fv=$(fdesetup status 2>/dev/null)
 al=$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)
 if [[ $fv == *"is On"* ]]; then
-  fix "FileVault is on, so after a reboot the Mac waits for a password (auto-login impossible)" \
-      "accept it (agents start once you log in), or turn FileVault off in System Settings > Privacy & Security"
+  print "  note FileVault is on, so after a reboot nothing starts until you log in (auto-login impossible)"
 elif [[ $al == $USER ]]; then ok "auto-login as $USER"
 else fix "no auto-login: after a reboot nothing starts until someone logs in" \
          "System Settings > Users & Groups > Automatically log in as: $USER (asks for your password)"; fi
@@ -38,12 +38,16 @@ print "  note restart-after-freeze is not checked (macOS restarts after a crash 
 print "Agents (launchd)"
 for p in $HOME/Library/LaunchAgents/com.$LABEL_PREFIX.*.plist(N); do
   l=${p:t:r}
+  if bot_elsewhere $l; then ok "$l (bot runs on ${owner:-no Mac})"; continue; fi
   if ! launchctl print gui/$uid/$l >/dev/null 2>&1; then fix "$l not loaded" "${0:A:h}/recover.sh"; continue; fi
   st=$(launchctl print gui/$uid/$l | sed -n 's/^\tstate = //p' | head -1)
   # Interval jobs (watchdog, sync, brief) are "not running" between runs; that is fine.
   if [[ $st == running ]] || ! plutil -extract KeepAlive raw $p >/dev/null 2>&1; then ok "$l ($st)"
   else fix "$l should stay up but is $st" "${0:A:h}/recover.sh"; fi
 done
+if (( ${${(z)MODULES}[(Ie)hammerspoon]} )); then
+  pgrep -xq Hammerspoon && ok "Hammerspoon running" || fix "Hammerspoon is not running" "open -a Hammerspoon"
+fi
 
 print "Battery"
 b=$(pmset -g batt | head -1)

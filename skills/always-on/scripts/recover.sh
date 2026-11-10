@@ -1,11 +1,12 @@
 #!/bin/zsh
 # Bring every harness launchd agent back: load any that are unloaded and restart any KeepAlive
 # agent that is not running. Leaves healthy agents alone (restarting the Telegram session would
-# interrupt its conversation). Needs no sudo.
+# interrupt its conversation) and skips the bot on a Mac that does not own it. Needs no sudo.
 source ${0:A:h:h:h:h}/lib/env.sh
-uid=$(id -u)
+source ${0:A:h}/common.sh
 for p in $HOME/Library/LaunchAgents/com.$LABEL_PREFIX.*.plist(N); do
   l=${p:t:r}
+  bot_elsewhere $l && continue
   if ! launchctl print gui/$uid/$l >/dev/null 2>&1; then
     launchctl bootstrap gui/$uid $p && print "loaded $l" || print "could not load $l"
   elif plutil -extract KeepAlive raw $p >/dev/null 2>&1 &&
