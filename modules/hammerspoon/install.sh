@@ -22,7 +22,7 @@ status_json() {
 config_hash() {
   local out
   out=$({ print -rl -- ${mod:A} "HS_IPC_GENERIC=$HS_IPC_GENERIC" "HS_ACCESS_FILE=$HS_ACCESS_FILE"
-          cat ${mod:A}/init.lua ${mod:A}/port.lua } | shasum -a 256)
+          cat ${mod:A}/init.lua ${mod:A}/port.lua ${mod:A}/guard.lua } | shasum -a 256)
   print -r -- ${out%% *}
 }
 
