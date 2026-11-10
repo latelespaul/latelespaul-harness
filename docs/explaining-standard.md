@@ -210,7 +210,7 @@ How it works, and its limits:
 - It skips code blocks and code spans, and it counts words as part 3 tells.
 - It treats each sentence in a numbered list as an instruction (20 words). Other sentences are descriptions (25 words).
 - The passive test is a pattern match. A past participle that names a state ("the screen is locked") is an adjective under STE 3.3, so the checker does not flag it unless "by" follows.
-- It finds a part by its label: a `#` heading, a bold line, or a bold lead-in such as `**Example.**`. A fenced diagram with arrows also counts as part 3.
+- It finds a part by its label: a `#` heading, a bold line, or a bold lead-in such as `**Example.**`. Bold text inside a list item is not a label. A fenced diagram with arrows also counts as part 3.
 - It accepts an acronym as defined when the text has "(ACR)", "ACR (full name)", a "ACR: ..." line, or a table row that starts with the acronym. `--allow ACR,ACR` accepts more.
 - `--type procedure` and `--type decision` make the diagram optional. `--structure` checks the parts on a short answer too, and `--no-structure` turns the parts check off.
 - Exit codes: 0 when it finds no problem, 1 when it finds problems, and 2 for a usage error.
