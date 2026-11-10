@@ -8,7 +8,7 @@ It comes in two parts:
 
 > **Start here.** Open Claude Code and say:
 >
-> `Clone https://github.com/latelespaul/latelespaul-harness into ~/Projects/agent-harness and follow SETUP.md`
+> `Clone https://github.com/<owner>/agent-harness into ~/Projects/agent-harness and follow SETUP.md`
 >
 > On a fresh Mac, install Claude Code first: `curl -fsSL https://claude.ai/install.sh | bash`, then run `claude`.
 >
@@ -16,7 +16,7 @@ It comes in two parts:
 
 ## Manual path
 ```sh
-git clone https://github.com/latelespaul/latelespaul-harness ~/Projects/agent-harness   # or your fork
+git clone https://github.com/<owner>/agent-harness ~/Projects/agent-harness   # or your fork
 cd ~/Projects/agent-harness
 gh repo create <you>/agent-profile --private        # optional: sync memory across machines
 ./install.sh --dry-run                              # asks for your values, shows what it would do

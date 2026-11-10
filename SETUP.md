@@ -92,16 +92,14 @@ The framework ships skills for these CLI tools (pinned versions; see each skill'
 - `lavish-axi`: plans and reviews as annotatable HTML pages.
 - `gnhf`: long unattended coding runs on their own branch.
 - `chrome-devtools-axi`: drives the browser module's Claude Chrome (needed when `browser` is on).
-- `gh-axi`: an agent-friendly wrapper around the GitHub CLI.
-- `no-mistakes`: a gate that reviews, tests and opens the PR before code is pushed.
 
 Recommend all of them; ask once, then install the chosen ones:
 ```sh
-npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtools-axi@0.1.44 gh-axi@0.1.46
+npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtools-axi@0.1.44
 ```
-`no-mistakes` installs with its own script, which downloads and runs code, so the user runs it: `! curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh`. It is turned on per repo with `no-mistakes init` (it pushes and opens PRs there), so only run that in a repo with the user's OK.
+`gh-axi` and `no-mistakes` (a gate that reviews, tests and opens the PR before code is pushed) are part of firstmate's toolchain: `H/modules/firstmate/tools.sh` installs them pinned and checksummed, and works without the firstmate module too. `no-mistakes init` turns it on per repo (it pushes and opens PRs there), so only run that in a repo with the user's OK.
 
-**Verify:** `for t in lavish-axi gnhf chrome-devtools-axi gh-axi no-mistakes; do printf '%-20s %s\n' $t "$(command -v $t || echo not installed)"; done`
+**Verify:** `for t in lavish-axi gnhf chrome-devtools-axi; do command -v $t; done`
 
 ## 8. Modules
 For each module in MODULES, follow `H/modules/<name>/SETUP.md` step by step (they include the steps that need the human). Order: browser, telegram, hammerspoon, cron, firstmate. To add or drop a module later: `H/install.sh MODULES="..."`.
