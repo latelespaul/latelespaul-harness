@@ -36,7 +36,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
  ├─ scripts/         sync, learn, check, pr-merge,  └─ telegram/ browser/   module data
  │                   ste-check
- ├─ docs/            explaining-standard.md, eyes-hands-design.md, master-session.md
+ ├─ docs/            explaining-standard.md, eyes-hands-design.md, master-session.md, prompts/ (build prompts)
  ├─ skills/ commands/ agents/
  ├─ modules/         telegram, browser, firstmate, hammerspoon, cron
  └─ profile.example/ starting point for a profile
