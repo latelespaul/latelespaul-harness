@@ -1,0 +1,27 @@
+{
+  "_comment": "Who may use Eyes & Hands. In the harness this is the one access policy file the harness port reads too (HS_ACCESS_FILE, default <PROFILE_DIR>/hammerspoon/access.json), so merge these owners into it, or add them with `eyeshands access allow`. Default deny: an owner that is not listed and enabled cannot arm. Capabilities: eyes (AX reads), shot (screen pixels; only with eyes), hands (posted input). apps: the target names (targets file) and bundle ids the owner may read or drive. Keys starting with _ are comments.",
+  "owners": {
+    "harness-session": {
+      "enabled": true,
+      "capabilities": ["eyes", "shot", "hands"],
+      "apps": ["chrome-agent", "com.apple.TextEdit"],
+      "max_arm_minutes": 240,
+      "alert": "telegram"
+    },
+    "nightly-runner": {
+      "enabled": true,
+      "capabilities": ["eyes", "hands"],
+      "apps": ["chrome-agent"],
+      "window": "20:00-05:00",
+      "manual_runs": true,
+      "max_arm_minutes": 600,
+      "lock_minutes": 360,
+      "alert": "telegram"
+    },
+    "read-only-helper": {
+      "enabled": false,
+      "capabilities": ["eyes"],
+      "apps": ["com.apple.TextEdit"]
+    }
+  }
+}

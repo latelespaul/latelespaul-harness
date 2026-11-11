@@ -1,0 +1,6 @@
+{
+  "_comment": "Eyes & Hands targets: names that a call (and an owner's apps in the access policy) uses for an app or one browser profile. Copy to the file EYESHANDS_TARGETS_FILE names (default <PROFILE_DIR>/eyeshands/targets.json). bundle: the app's bundle id. profile: a Chromium --user-data-dir; the target is the browser main process started with exactly that folder. refuse_debug_port: refuse that process while it runs with --remote-debugging-port. A bundle id (com.apple.TextEdit) works as a target without an entry here. Keys starting with _ are comments.",
+  "targets": {
+    "chrome-agent": { "bundle": "com.google.Chrome", "profile": "~/.chrome-agent", "refuse_debug_port": true }
+  }
+}

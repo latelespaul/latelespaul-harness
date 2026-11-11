@@ -80,7 +80,7 @@ if [[ ! -f $env_file ]]; then
   ask PROFILE_DIR "Profile folder (private)" "${vals[PROJECTS_DIR]:-$HOME/Projects}/agent-profile"
   ask PROFILE_REMOTE "Profile GitHub repo URL (empty = local only)" ""
   ask LABEL_PREFIX "launchd label prefix" "${${(L)${vals[GH_USER]:-$USER}}//[^a-z0-9-]/}"
-  ask MODULES "Modules (telegram browser firstmate hammerspoon cron)" ""
+  ask MODULES "Modules (telegram browser firstmate hammerspoon cron eyeshands)" ""
   for k in $keys; do
     if [[ -z ${vals[$k]} && -n ${(P)k} ]]; then vals[$k]=${(P)k}; fi
   done
