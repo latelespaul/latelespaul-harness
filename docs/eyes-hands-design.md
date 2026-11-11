@@ -531,15 +531,17 @@ macOS drops all input to a locked screen. An agent that drives an app while the 
 eyeshands doctor [--fix]          check everything; --fix opens the right panes
 eyeshands status                  no secret needed
 eyeshands targets                 configured targets and their state
-eyeshands eyes  <cmd> --owner O --target T [JSON]
-eyeshands hands <cmd> --owner O --target T [JSON] [--wait]
+eyeshands eyes  <cmd> --owner O --target T [JSON | -]
+eyeshands hands <cmd> --owner O --target T [JSON | -] [--max-wait S]
 eyeshands session --owner O       arm, then sign JSON lines from stdin (scripts)
 eyeshands mcp --owner O           MCP server over stdio
 eyeshands access list|allow|deny  edit the access policy file (hsx rules)
 eyeshands stop                    stop switch; no secret needed
 eyeshands install | uninstall     standalone install and removal
 ```
-A one-shot `eyes` or `hands` command arms, makes one call, and disarms. A script that makes many calls uses `session`, which keeps one signer, so `seq` never goes backwards.
+A one-shot `eyes` or `hands` command arms, makes one call, and disarms. A disarm aborts a running job, so a one-shot hands command waits for its job to end first (at most `--max-wait` seconds, default 900; then it aborts the job). It prints the final state.
+
+A script that makes many calls uses `session`, which keeps one signer, so `seq` never goes backwards. A session line with `"wait": true` also waits for its job. `-` in place of the JSON reads the arguments from stdin, so typed text does not show in `ps`. When another session holds the owner, the CLI returns `owner_in_use` and sends no arm, as the MCP server does.
 
 **MCP server lifecycle**
 1. The agent starts `eyeshands mcp --owner O`.
