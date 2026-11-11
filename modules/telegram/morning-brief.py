@@ -125,6 +125,9 @@ def main():
             )
             brief = r.stdout.strip()
             if r.returncode == 0 and len(brief) > 200:
+                # Keep each day's brief so its quality can be reviewed and the prompt tuned.
+                with open(os.path.join(WORK_DIR, time.strftime("%Y-%m-%d") + ".txt"), "w") as f:
+                    f.write(brief + "\n")
                 for part in chunks(brief):
                     send(part)
                 log(f"sent brief ({len(brief)} chars, attempt {attempt})")
