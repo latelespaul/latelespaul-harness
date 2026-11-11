@@ -303,15 +303,46 @@ test('combos: modifiers down in order, the key, modifiers up in reverse; codes f
     call('plan', 'key', { combo: 'cmd+q' }, 1, null, azerty), call('plan', 'type', { text: 'aAàé&!' }, 1, null, azerty),
     call('keyfor', [0x61, 0x41, 0xe0, 0xc0, 0xe9, 0x26, 0x21, 0x31], azerty)]);
   assert.equal(a.events[1].key, 12); assert.equal(q.events[1].key, 0);
-  assert.deepEqual(typed.events.filter(e => e.type === 'keyDown').map(e => e.key), [12, 12, 12, 19, 18, 0]);
+  assert.deepEqual(typed.events.filter(e => e.type === 'keyDown').map(e => e.key), [12, 12, 12, 19, 18, undefined]);
   assert.deepEqual(keys, [[0x61, 12, 0], [0x41, 12, 1], [0xe0, 12, 0], [0xc0, 12, 1], [0xe9, 19, 0], [0x26, 18, 0],
-    [0x21, 0, 0], [0x31, 0, 0]], 'no US shifted symbols on a key the layout moved');
+    [0x21, false, 0], [0x31, false, 0]], 'no guessed key for a character the layout does not map');
   const errs = drive([call('plan', 'key', { combo: 'hyper+x' }, 1), call('plan', 'key', { combo: 'cmd+foo' }, 1),
     call('plan', 'key', { combo: 'cmd+' }, 1), call('plan', 'key', {}, 1)]);
   assert.match(errs[0], /unknown modifier "hyper"/);
   assert.match(errs[1], /unknown key "foo"/);
   assert.match(errs[2], /bad key combo/);
   assert.match(errs[3], /bad key combo/);
+});
+
+test('only the US layout gets the US shifted symbols; other layouts never guess a key code', { skip }, () => {
+  const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
+    9: 25, 7: 26, '-': 27, 8: 28, 0: 29, ']': 30, '[': 33, "'": 39, ';': 41, '\\': 42, ',': 43, '/': 44, '.': 47, '`': 50 };
+  // British: the US keys plus §; Shift+2 is " and Shift+' is @, so the US pairs would be wrong.
+  const british = { ...US, '§': 10 };
+  // A British-style map whose own entries differ from US (no layout name needed to tell).
+  const iso = { ...US, '`': 10, '§': 50 };
+  // QWERTZ: y and z swapped, and Shift+7 is / rather than &.
+  const qwertz = { ...US, z: 16, y: 6, 'ß': 27, 'ü': 33, 'ö': 41, 'ä': 39 };
+  const cps = [0x40, 0x22, 0x21, 0x26, 0x32, 0x27];
+  const [usPlain, usName, abc, gb, gbIso, de, deTyped, usUnmapped, gbUnmapped] = drive([call('keyfor', cps, US),
+    call('keyfor', cps, US, 'U.S.'), call('keyfor', cps, null, 'ABC'), call('keyfor', cps, british, 'British'),
+    call('keyfor', cps, iso), call('keyfor', cps, qwertz), call('plan', 'type', { text: 'z&' }, 1, null, qwertz),
+    call('keyfor', [0x6f22], US), call('keyfor', [0x6f22], british, 'British')]);
+  const usKeys = [[0x40, 19, 1], [0x22, 39, 1], [0x21, 18, 1], [0x26, 26, 1], [0x32, 19, 0], [0x27, 39, 0]];
+  assert.deepEqual(usPlain, usKeys, 'a map equal to US is the US layout');
+  assert.deepEqual(usName, usKeys, 'the layout name U.S.');
+  assert.deepEqual(abc, usKeys, 'the layout name ABC');
+  const noShifted = [[0x40, false, 0], [0x22, false, 0], [0x21, false, 0], [0x26, false, 0], [0x32, 19, 0], [0x27, 39, 0]];
+  assert.deepEqual(gb, noShifted, 'British: no guessed @ or "');
+  assert.deepEqual(gbIso, noShifted, 'a map that differs from US gets no US shifted symbols');
+  assert.deepEqual(de.slice(3, 4), [[0x26, false, 0]], 'QWERTZ: no guessed &');
+  const downs = deTyped.events.filter(e => e.type === 'keyDown' || e.type === 'keyUp');
+  assert.deepEqual(downs.map(e => [e.type, e.key, e.flags, e.chars]), [['keyDown', 16, 0, 'z'], ['keyUp', 16, 0, 'z'],
+    ['keyDown', undefined, 0, '&'], ['keyUp', undefined, 0, '&']]);
+  assert.ok(downs.slice(2).every(e => !('key' in e)), 'Unicode-only events carry no key field');
+  assert.ok(!deTyped.events.some(e => e.type === 'flagsDown'), 'no Shift for an unmapped symbol');
+  assert.deepEqual([usUnmapped, gbUnmapped], [[[0x6f22, 0, 0]], [[0x6f22, false, 0]]], 'US keeps code 0, others none');
 });
 
 test('scroll ticks sum exactly to the request, speed up then slow down', { skip }, () => {

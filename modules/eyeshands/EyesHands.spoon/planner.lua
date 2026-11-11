@@ -2,17 +2,22 @@
 -- list. Pure Lua 5.4: no hs.* calls, no global writes, nothing posted; hands.lua plays the list.
 -- A line-by-line port of job-hunt's plan.mjs with the same constants and the same SplitMix64 RNG,
 -- so for one seed both planners give the same events (test/planner-golden.json checks it).
--- One change: key codes come from a layout (keys(hs.keycodes.map) in the Spoon), not a fixed
--- US table; with the default US layout the output equals plan.mjs.
+-- One change: key codes come from a layout (keys(hs.keycodes.map, hs.keycodes.currentLayout()) in
+-- the Spoon), not a fixed US table; with the default US layout the output equals plan.mjs. The
+-- planner never guesses a key: on a layout other than US, a character with no key in the map (and
+-- no base letter in it) gets keyDown/keyUp events with no key field, only chars and flags, and
+-- hands.lua posts them as Unicode-only key events without a key code. On the US layout such a
+-- character uses key code 0, as in plan.mjs.
 --
 -- Times are milliseconds from the start of the action; positions are global screen points with the
 -- origin at the top-left of the main display (what Accessibility reports).
 --   local P = dofile(spoonPath .. "/planner.lua")
 --   local plan = P.plan("click", { rect = { 412, 388, 320, 32 } },
---     { rng = P.Rng(seed), from = { x = 100, y = 200 }, layout = P.keys(hs.keycodes.map) })
+--     { rng = P.Rng(seed), from = { x = 100, y = 200 },
+--       layout = P.keys(hs.keycodes.map, hs.keycodes.currentLayout()) })
 --   plan.events -> { {t = 0, type = "move", x = 101, y = 201, dx = 1, dy = 1, phase = "main"}, ... }
 -- Event types: move (x, y, dx, dy, phase main|correct), down/up (x, y, clicks), flagsDown/flagsUp
--- (key, flags), keyDown/keyUp (key, flags, chars = the Unicode string), scroll (dx, dy wheel
+-- (key, flags), keyDown/keyUp (key or none, flags, chars = the Unicode string), scroll (dx, dy wheel
 -- values, positive = up/left), paste (text: put on the clipboard) and restore (old clipboard back).
 local P = {}
 
@@ -245,11 +250,20 @@ local Layout = {}
 Layout.__index = Layout
 
 --- A keyboard layout from a character -> key code map (hs.keycodes.map for the current layout; its
---- numeric and named entries are ignored). Letters also get their capitals on Shift. `shifted`
---- (symbol -> unshifted character of its key) defaults to the US pairs whose key sits where the US
---- layout has it. With no arguments: the US layout, the same table as plan.mjs.
-function P.keys(map, shifted)
+--- numeric and named entries are ignored). Letters also get their capitals on Shift. `name` is the
+--- layout name (hs.keycodes.currentLayout()); without it, the map is the US layout when every
+--- US_MAP entry has the same code in it. Only the US layout ("U.S." or "ABC") gets the US shifted
+--- symbols; other layouts get no key for a symbol their map does not have.
+--- With no arguments: the US layout, the same table as plan.mjs.
+function P.keys(map, name)
   map = map or P.US_MAP
+  local us = name == "U.S." or name == "ABC"
+  if name == nil then
+    us = true
+    for c, code in pairs(P.US_MAP) do
+      if map[c] ~= code then us = false; break end
+    end
+  end
   local chars = {}
   for c, code in pairs(map) do
     if isChar(c) and math.type(code) == "integer" then
@@ -259,23 +273,24 @@ function P.keys(map, shifted)
     end
   end
   for c, code in pairs(FIXED) do chars[c] = { code, false } end
-  for sym, base in pairs(shifted or P.US_SHIFTED) do
-    if chars[sym] == nil and map[base] ~= nil and (shifted or map[base] == P.US_MAP[base]) then
-      chars[sym] = { map[base], true }
+  if us then
+    for sym, base in pairs(P.US_SHIFTED) do
+      if chars[sym] == nil and map[base] ~= nil then chars[sym] = { map[base], true } end
     end
   end
-  return setmetatable({ map = map, chars = chars }, Layout)
+  return setmetatable({ map = map, chars = chars, us = us }, Layout)
 end
 
 --- Key code and whether Shift is held for a character: its own key, else the key of its base letter
---- (u for ü), else 0. The typed text always comes from the Unicode string.
+--- (u for ü), else 0 on the US layout and nil (no key code; Shift not held) on any other layout.
+--- The typed text always comes from the Unicode string.
 function Layout:keyFor(c)
   local k = self.chars[c]
   if k then return k[1], k[2] end
   local base = BASE[c]
   local b = base and self.chars[base]
   if b then return b[1], base:match("^%u$") ~= nil end
-  return 0, false
+  return self.us and 0 or nil, false
 end
 
 P.NAMED_KEYS = { enter = 36, ["return"] = 36, tab = 48, space = 49, delete = 51, backspace = 51, escape = 53,

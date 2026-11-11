@@ -1,10 +1,11 @@
 -- Test driver for planner.lua (used by planner.test.mjs). Reads one Lua chunk per line from stdin
 -- and prints its return value as one JSON line (or "ERROR <message>"). The chunks see:
 --   P                                  the planner module
---   plan(kind, args, seed, from, map)  P.plan with a fresh P.Rng(seed); map is a layout map (optional)
+--   plan(kind, args, seed, from, map, name)  P.plan with a fresh P.Rng(seed); P.keys(map, name) when
+--                                      a map or layout name is given
 --   seq(seed, steps)                   several {kind, args, from} steps sharing one RNG
 --   raw(seed, n), unit(seed, n)        the first n RNG outputs (hex text) or unit() values
---   keyfor(cps, map)                   {cp, code, shift 0|1} for each code point
+--   keyfor(cps, map, name)             {cp, code (false for none), shift 0|1} for each code point
 --   PLANNER                            the planner's path (to load it again in a sealed environment)
 -- Numbers print so that JavaScript parses back the same double (%.17g), integers as integers.
 local here = arg[0]:match("^(.*)/") or "."
@@ -39,8 +40,9 @@ local function encode(v)
   error("cannot encode " .. t)
 end
 
-function plan(kind, args, seed, from, map)
-  return P.plan(kind, args, { rng = P.Rng(seed), from = from, layout = map and P.keys(map) or nil })
+function plan(kind, args, seed, from, map, name)
+  local layout = (map or name) and P.keys(map, name) or nil
+  return P.plan(kind, args, { rng = P.Rng(seed), from = from, layout = layout })
 end
 
 function seq(seed, steps)
@@ -61,11 +63,11 @@ function unit(seed, n)
   return out
 end
 
-function keyfor(cps, map)
-  local layout, out = map and P.keys(map) or P.US, {}
+function keyfor(cps, map, name)
+  local layout, out = (map or name) and P.keys(map, name) or P.US, {}
   for i, cp in ipairs(cps) do
     local code, shift = layout:keyFor(utf8.char(cp))
-    out[i] = { cp, code, shift and 1 or 0 }
+    out[i] = { cp, code or false, shift and 1 or 0 }
   end
   return out
 end
