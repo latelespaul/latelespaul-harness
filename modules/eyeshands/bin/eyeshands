@@ -1,0 +1,615 @@
+#!/usr/bin/env python3
+"""eyeshands: the Eyes & Hands command line (part 14 of docs/eyes-hands-design.md).
+
+Talks to the Spoon's own CFMessagePort ("eyeshands") with hsx's send and Signer: the harness copy
+(modules/hammerspoon/hsx) when it exists, else the bundled copy next to this file (a test checks
+that the two are the same). Python 3 standard library only.
+
+  eyeshands status                   the Spoon's status (no secret needed)
+  eyeshands targets                  configured targets and whether each one runs (no secret)
+  eyeshands stop                     the stop switch: stops every job, disarms every owner (no secret)
+  eyeshands eyes <cmd> --owner O [--target T] [ARGS-JSON | -]
+        cmd: fields value text focused dialog tree frontmost pixels shot
+  eyeshands hands <cmd> --owner O [--target T] [ARGS-JSON | -] [--max-wait S]
+        cmd: focus move click type key scroll drag play job status resume abort
+  eyeshands session --owner O        arm, then one {"cmd":..,"args":{..},"wait":bool} per stdin
+                                     line; one reply line each; disarm at the end of stdin
+  eyeshands access list | allow <owner> <cap,cap> [--apps a,b] [...] | deny <owner>
+                                     hsx access rules on the Eyes & Hands access policy file
+  eyeshands doctor [--fix] [--smoke --owner O]   check the install (part 17)
+
+One-shot eyes and hands commands arm the owner with a fresh secret, make one call and disarm. A
+hands command that starts a job waits for the job to end first (a disarm aborts it), then prints
+the job's final state. Scripts that make many calls use `session`: one signer, so seq never goes
+backwards. The secret is made here and travels only inside the port messages: never in an
+argument, the environment or a file. ARGS-JSON `-` reads the arguments from stdin, so typed text
+stays out of `ps`. `eyes text` adds `wall` (human, hcaptcha, recaptcha, captcha, otp, unusual).
+
+Options: --port NAME (default $EYESHANDS_PORT or "eyeshands"), --timeout SECONDS (default 15).
+Files: the access policy file is $EYESHANDS_ACCESS_FILE, else the harness HS_ACCESS_FILE (when
+this copy runs inside a configured harness), else ~/.config/eyeshands/access.json.
+Exit: 0 ok, 1 refused (the reply says why), 2 usage, 3 Hammerspoon not reachable.
+"""
+import argparse, importlib.machinery, importlib.util, json, os, platform, re, secrets, shutil, signal, subprocess, sys, time
+
+sys.dont_write_bytecode = True   # loading hsx must not leave a __pycache__ next to it
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+HARNESS_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+HSX_PATHS = (os.path.join(HARNESS_ROOT, "modules", "hammerspoon", "hsx"), os.path.join(HERE, "hsx"))
+
+
+def load_hsx():
+    for path in HSX_PATHS:
+        if os.path.isfile(path):
+            loader = importlib.machinery.SourceFileLoader("hsx", path)
+            mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("hsx", loader))
+            loader.exec_module(mod)
+            return mod, path
+    print("eyeshands: hsx not found (expected next to this file)", file=sys.stderr)
+    sys.exit(2)
+
+
+hsx, HSX_PATH = load_hsx()
+NAME = hsx.NAME
+EYES = ("fields", "value", "text", "focused", "dialog", "tree", "frontmost", "pixels", "shot")
+HANDS = ("focus", "move", "click", "type", "key", "scroll", "drag", "play", "job", "status", "resume", "abort")
+NO_TARGET = {"eyes": {"frontmost"}, "hands": {"job", "status", "resume", "abort"}}
+CAPS = {"eyes", "shot", "hands"}
+POLL_S = 0.12
+HS_TEAM = "VQCYSNZB89"   # the Hammerspoon developers' Apple team id
+
+# Walls in page text (part 8): the generic patterns from job-hunt's desktop client.
+WALLS = [
+    ("human", re.compile(r"verify (that )?you are (a )?human|are you a robot|i.?m not a robot", re.I | re.A)),
+    ("hcaptcha", re.compile(r"hcaptcha", re.I | re.A)),
+    ("recaptcha", re.compile(r"recaptcha", re.I | re.A)),
+    ("captcha", re.compile(r"\bcaptcha\b", re.I | re.A)),
+    ("otp", re.compile(r"one[- ]time (code|pass(word|code))|verification code|security code|enter the code", re.I | re.A)),
+    ("unusual", re.compile(r"unusual (activity|traffic)", re.I | re.A)),
+]
+
+
+def walls(result):
+    """The walls that show in an eh.eyes.text result (its lines and frames)."""
+    parts = [x for k in ("lines", "frames") for x in (result.get(k) or []) if isinstance(x, str)]
+    text = "\n".join(parts)
+    return [name for name, rx in WALLS if rx.search(text)]
+
+
+class Failed(Exception):
+    def __init__(self, code, out):
+        super().__init__(code)
+        self.code, self.out = code, out
+
+
+def emit(value, stream=None):
+    stream = stream or sys.stdout
+    pretty = stream.isatty()
+    stream.write(json.dumps(value, indent=2 if pretty else None, separators=None if pretty else (",", ":")) + "\n")
+    stream.flush()
+
+
+def usage(msg):
+    print(f"eyeshands: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+# ---------- the port ----------
+class Port:
+    def __init__(self, name, timeout):
+        self.name, self.timeout = name, timeout
+
+    def raw(self, env):
+        """One envelope out, the decoded reply back; Failed(3) when Hammerspoon does not answer."""
+        try:
+            text = hsx.send(self.name, json.dumps(env, separators=(",", ":")).encode(), self.timeout)
+        except hsx.Unreachable as e:
+            raise Failed(3, {"ok": False, "error": f"unreachable: {e}"})
+        try:
+            rep = json.loads(text)
+        except ValueError:
+            raise Failed(3, {"ok": False, "error": "not an Eyes & Hands port reply"})
+        if not isinstance(rep, dict):
+            raise Failed(3, {"ok": False, "error": "not an Eyes & Hands port reply"})
+        return rep
+
+    def unsigned(self, cmd):
+        return self.raw({"cmd": cmd})
+
+
+def result_of(rep):
+    """The command's result, or Failed(1) with the port's refusal."""
+    if rep.get("ok") is not True:
+        raise Failed(1, {"ok": False, "error": rep.get("error", "refused")})
+    return rep.get("result")
+
+
+class Owner:
+    """One armed owner: a fresh secret in memory, one signer, a disarm at the end."""
+
+    def __init__(self, port, owner, minutes):
+        self.port, self.owner, self.minutes = port, owner, minutes
+        self.signer = None
+
+    def arm(self):
+        # Another session holds this owner: say so without an arm, so the person gets no alarm.
+        st = result_of(self.port.unsigned("status"))
+        info = ((st or {}).get("access") or {}).get("owners", {}).get(self.owner) if isinstance(st, dict) else None
+        if isinstance(info, dict) and info.get("armed") is True:
+            raise Failed(1, {"ok": False, "reason": "owner_in_use",
+                             "hint": "another session holds this owner; give each agent its own owner name"})
+        secret = secrets.token_hex(32)
+        args = {"owner": self.owner, "secret": secret, "pid": os.getpid()}
+        if self.minutes:
+            args["minutes"] = self.minutes
+        rep = self.port.raw({"cmd": "arm", "args": hsx.args_text(args)})
+        result_of(rep)
+        self.signer = hsx.Signer(self.owner, secret)
+
+    def call(self, cmd, args):
+        if not self.signer:
+            raise Failed(1, {"ok": False, "error": "not armed"})
+        return self.port.raw(self.signer.envelope(cmd, hsx.args_text(args)))
+
+    def disarm(self):
+        if not self.signer:
+            return
+        signer, self.signer = self.signer, None
+        try:
+            self.port.raw(signer.envelope("disarm", ""))
+        except Failed:
+            print("eyeshands: disarm did not reach Hammerspoon; its sweep disarms within 15 s", file=sys.stderr)
+
+    def wait_job(self, started, max_wait):
+        """Polls eh.hands.job until the job ends; aborts it after max_wait seconds."""
+        job, deadline = started.get("job"), time.monotonic() + max_wait
+        while True:
+            time.sleep(POLL_S)
+            rep = self.call("eh.hands.job", {"id": job})
+            res = rep.get("result") if rep.get("ok") is True else None
+            if not isinstance(res, dict):
+                return rep
+            if res.get("state") != "running":
+                return rep
+            if time.monotonic() > deadline:
+                self.call("eh.hands.abort", None)
+                res = dict(res, state="aborted", ok=False, reason="max_wait", hint=f"the job ran over {max_wait:g} s")
+                return {"ok": True, "result": res}
+
+
+def enrich(cmd, rep):
+    """eh.eyes.text gets `wall`."""
+    res = rep.get("result")
+    if cmd == "eh.eyes.text" and rep.get("ok") is True and isinstance(res, dict) and res.get("ok") is not False:
+        res["wall"] = walls(res)
+    return rep
+
+
+def running_job(rep):
+    res = rep.get("result")
+    return rep.get("ok") is True and isinstance(res, dict) and res.get("state") == "running" and res.get("job") is not None
+
+
+def on_signal(signum, _frame):
+    raise SystemExit(128 + signum)   # runs the finally that disarms
+
+
+# ---------- commands ----------
+def parse_args_json(text):
+    if text is None:
+        return {}
+    if text == "-":
+        text = sys.stdin.read()
+    try:
+        value = json.loads(text) if text.strip() else {}
+    except ValueError:
+        usage("ARGS-JSON is not valid JSON")
+    if not isinstance(value, dict):
+        usage("ARGS-JSON must be an object")
+    return value
+
+
+def one_shot(opts, port):
+    kind, cmd = opts.op, opts.cmd
+    args = parse_args_json(opts.args)
+    if opts.target is not None:
+        if not NAME.fullmatch(opts.target):
+            usage("target names are letters, digits, . _ -")
+        if "target" in args and args["target"] != opts.target:
+            usage("--target and the target in ARGS-JSON differ")
+        args["target"] = opts.target
+    if cmd not in NO_TARGET[kind] and not args.get("target"):
+        usage(f"{kind} {cmd} needs --target")
+    full = f"eh.{kind}.{cmd}"
+    owner = Owner(port, opts.owner, opts.minutes)
+    try:
+        owner.arm()
+        rep = enrich(full, owner.call(full, args or None))
+        if kind == "hands" and running_job(rep):
+            rep = owner.wait_job(rep["result"], opts.max_wait)
+    finally:
+        owner.disarm()
+    res = result_of(rep)
+    if isinstance(res, dict) and res.get("ok") is False:
+        raise Failed(1, res)
+    return res
+
+
+def session(opts, port):
+    """Arms once, then signs each stdin line with one signer; prints one reply line each."""
+    owner = Owner(port, opts.owner, opts.minutes)
+    try:
+        owner.arm()
+        for line in iter(sys.stdin.readline, ""):
+            line, cmd = line.strip(), None
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+                if not isinstance(req, dict) or not isinstance(req.get("cmd"), str):
+                    raise ValueError("need an object with a cmd")
+                cmd = req["cmd"]
+                if cmd.startswith(("eyes.", "hands.")):
+                    cmd = "eh." + cmd
+                elif cmd == "targets":
+                    cmd = "eh.targets"
+                if not NAME.fullmatch(cmd):
+                    raise ValueError("command names are letters, digits, . _ -")
+                a = req.get("args")
+                if a is not None and not isinstance(a, (dict, list)):
+                    raise ValueError("args must be an object or an array")
+                rep = enrich(cmd, owner.call(cmd, a))
+                if req.get("wait") is True and running_job(rep):
+                    rep = owner.wait_job(rep["result"], opts.max_wait)
+            except ValueError as e:
+                rep = {"ok": False, "error": f"eyeshands: {e}"}
+            except Failed as e:
+                rep = e.out
+            emit(rep)
+            if cmd == "disarm" and rep.get("ok") is True:
+                owner.signer = None
+    finally:
+        owner.disarm()
+
+
+# ---------- files ----------
+def harness_env():
+    """HS_ACCESS_FILE and PROFILE_DIR from a configured harness around this copy, else None."""
+    env_sh = os.path.join(HARNESS_ROOT, "lib", "env.sh")
+    conf = os.environ.get("HARNESS_ENV") or os.path.join(HARNESS_ROOT, "harness.env")
+    if not (os.path.isfile(env_sh) and os.path.isfile(conf)):
+        return None
+    out = subprocess.run(["/bin/zsh", "-c", 'source "$1"; print -r -- "$HS_ACCESS_FILE"; print -r -- "$PROFILE_DIR"',
+                          "eyeshands", env_sh], capture_output=True, text=True).stdout.splitlines()
+    return {"access": out[0], "profile": out[1]} if len(out) >= 2 and out[0] else None
+
+
+def home(*parts):
+    return os.path.join(os.path.expanduser("~"), *parts)
+
+
+def access_path():
+    if os.environ.get("EYESHANDS_ACCESS_FILE"):
+        return os.environ["EYESHANDS_ACCESS_FILE"]
+    h = harness_env()
+    return h["access"] if h else home(".config", "eyeshands", "access.json")
+
+
+def access(opts):
+    if opts.action == "allow":
+        caps = [c for c in opts.caps.split(",") if c]
+        other = [c for c in caps if c not in CAPS]
+        if other:
+            print(f"eyeshands: note: Eyes & Hands uses eyes, shot and hands; {','.join(other)} is for other port commands",
+                  file=sys.stderr)
+        if "shot" in caps and "eyes" not in caps:
+            print("eyeshands: note: shot works only together with eyes", file=sys.stderr)
+    opts.file = opts.file or access_path()
+    hsx.access(opts)
+
+
+# ---------- doctor (part 17) ----------
+class Report:
+    def __init__(self):
+        self.fails = 0
+
+    def line(self, kind, text, fix=None):
+        if kind == "FAIL":
+            self.fails += 1
+        print(f"{kind:<5} {text}" + (f"\n      fix: {fix}" if fix else ""), flush=True)
+
+
+def run(cmd):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return p.returncode, p.stdout + p.stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+
+
+AX_PANES = ("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility")
+SR_PANES = ("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture")
+
+
+def open_pane(urls):
+    for u in urls:
+        if run(["open", u])[0] == 0:
+            return True
+    return False
+
+
+def doctor(opts, port):
+    r = Report()
+    # 1. macOS
+    rc, out = run(["sw_vers", "-productVersion"])
+    ver = out.strip() if rc == 0 else platform.mac_ver()[0]
+    major = int(ver.split(".")[0]) if re.match(r"^\d+", ver or "") else 0
+    r.line("PASS" if major >= 13 else "FAIL", f"macOS {ver or 'unknown'}", None if major >= 13 else "Hammerspoon needs macOS 13 or later")
+    # 2. Hammerspoon in /Applications, signed by its developers
+    app = os.environ.get("EYESHANDS_HAMMERSPOON_APP", "/Applications/Hammerspoon.app")
+    if not os.path.isdir(app):
+        r.line("FAIL", f"Hammerspoon is not in {os.path.dirname(app)}", "brew install --cask hammerspoon (or the download from hammerspoon.org)")
+    else:
+        rc, out = run(["codesign", "-dv", "--verbose=2", app])
+        team = re.search(r"TeamIdentifier=(\S+)", out)
+        if rc == 0 and team and team.group(1) == HS_TEAM:
+            r.line("PASS", f"Hammerspoon at {app}, signed by the Hammerspoon team ({HS_TEAM})")
+        else:
+            r.line("FAIL", f"Hammerspoon at {app} is not signed by the Hammerspoon team",
+                   "install the official release again (brew reinstall --cask hammerspoon)")
+    # 3. Hammerspoon runs
+    running = run(["pgrep", "-x", "Hammerspoon"])[0] == 0
+    r.line("PASS" if running else "FAIL", "Hammerspoon runs" if running else "Hammerspoon does not run",
+           None if running else "open -a Hammerspoon")
+    # 4. the Spoon and its port
+    st = None
+    try:
+        st = result_of(port.unsigned("status"))
+    except Failed as e:
+        r.line("FAIL", f'the "{port.name}" port does not answer status ({e.out.get("error")})',
+               'load the Spoon in Hammerspoon: hs.loadSpoon("EyesHands"):start()')
+    if isinstance(st, dict):
+        if st.get("running") is True:
+            r.line("PASS", f'the "{port.name}" port answers ({st.get("name", "EyesHands")} {st.get("version", "?")})')
+        else:
+            r.line("FAIL", "the Spoon is loaded but not started", 'spoon.EyesHands:start() in the Hammerspoon console')
+    # 5. the Spoon loads at start
+    loader = home(".hammerspoon", "local", "eyeshands.lua")
+    init = home(".hammerspoon", "init.lua")
+    try:
+        with open(init, encoding="utf-8", errors="replace") as f:
+            in_init = 'loadSpoon("EyesHands")' in f.read()
+    except OSError:
+        in_init = False
+    if os.path.isfile(loader) or in_init:
+        r.line("PASS", "the Spoon loads at start (" + (loader if os.path.isfile(loader) else init) + ")")
+    else:
+        r.line("WARN", "nothing loads the Spoon when Hammerspoon starts",
+               "harness: the eyeshands module install; standalone: add hs.loadSpoon(\"EyesHands\"):start() to " + init)
+    # 6. Accessibility (nothing works without it)
+    grants = st.get("grants") if isinstance(st, dict) and isinstance(st.get("grants"), dict) else None
+    if grants is None:
+        r.line("WARN", "Accessibility: unknown until the port answers")
+    elif grants.get("accessibility") is True:
+        r.line("PASS", "Accessibility is on for Hammerspoon")
+    else:
+        ok = False
+        if opts.fix:
+            print("      opening System Settings > Privacy & Security > Accessibility; turn Hammerspoon on", flush=True)
+            open_pane(AX_PANES)
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline and not ok:
+                time.sleep(2)
+                try:
+                    g = (result_of(port.unsigned("status")) or {}).get("grants") or {}
+                    ok = g.get("accessibility") is True
+                except Failed:
+                    pass
+        if ok:
+            r.line("PASS", "Accessibility is on for Hammerspoon")
+        else:
+            r.line("FAIL", "Accessibility is off for Hammerspoon: nothing works without it",
+                   "eyeshands doctor --fix (opens the pane), then turn Hammerspoon on")
+            print("\nStopped: grant Accessibility first.")
+            return 1
+    # 7. Screen Recording (shots and pixels only)
+    if grants is not None:
+        if grants.get("screen_recording") is True:
+            r.line("PASS", "Screen Recording is on for Hammerspoon")
+        else:
+            r.line("WARN", "Screen Recording is off or unknown: no shots or pixels; AX eyes and hands still work",
+                   "eyeshands doctor --fix (opens the pane); then restart Hammerspoon yourself")
+            if opts.fix:
+                open_pane(SR_PANES)
+    # 8. the access policy file
+    path = access_path()
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        err = hsx.policy_error(doc)
+    except FileNotFoundError:
+        doc, err = None, "missing: nothing may arm (default deny)"
+    except ValueError as e:
+        doc, err = None, f"not valid JSON ({e})"
+    if err:
+        r.line("FAIL", f"access policy {path}: {err}", "eyeshands access allow <owner> eyes --apps <target>")
+    else:
+        owners = doc.get("owners") or {}
+        on = sorted(n for n, o in owners.items() if o.get("enabled") is True)
+        if on:
+            r.line("PASS", f"access policy {path}: enabled owners {', '.join(on)}")
+        else:
+            r.line("FAIL", f"access policy {path}: no enabled owner", "eyeshands access allow <owner> eyes --apps <target>")
+        seen = ((st or {}).get("access") or {}).get("policy") if isinstance(st, dict) else None
+        if seen not in (None, "ok"):
+            r.line("FAIL", f"the Spoon reports its policy as: {seen}", "fix the file the Spoon reads (the loader's access_file)")
+    # 9. the targets file
+    if isinstance(st, dict):
+        try:
+            t = result_of(port.unsigned("eh.targets")) or {}
+        except Failed as e:
+            t = {"error": e.out.get("error")}
+        if t.get("error"):
+            r.line("FAIL", f"targets file {t.get('file', '?')}: {t['error']}", "fix the JSON (see targets.example.json)")
+        elif not t.get("targets"):
+            r.line("WARN", f"targets file {t.get('file', '?')}: no targets (bundle ids still work)")
+        else:
+            r.line("PASS", f"targets file {t.get('file', '?')}")
+            for row in t["targets"]:
+                state = f"runs (pid {row.get('pid')})" if row.get("running") else ("not running" if not row.get("reason") else row["reason"])
+                r.line("PASS" if row.get("running") else "WARN", f"  target {row.get('name')}: {state}")
+    # 10. python3 and the CLI on PATH
+    r.line("PASS", f"python3 {platform.python_version()}")
+    where = shutil.which("eyeshands")
+    r.line("PASS" if where else "WARN", f"eyeshands on PATH ({where})" if where else "eyeshands is not on PATH",
+           None if where else f"ln -s {os.path.realpath(__file__)} ~/.local/bin/eyeshands")
+    # 11. MCP wiring (report only)
+    mcp_report(r)
+    # 12. smoke test, after the person says yes
+    if opts.smoke:
+        smoke(opts, port, r)
+    print()
+    print(f"{r.fails} check(s) failed." if r.fails else "All checks passed.")
+    return 1 if r.fails else 0
+
+
+def mcp_report(r):
+    def has_json(path, key):
+        try:
+            with open(path) as f:
+                return key in ((json.load(f) or {}).get("mcpServers") or {})
+        except (OSError, ValueError, AttributeError):
+            return None
+    def has_toml(path):
+        try:
+            with open(path) as f:
+                return re.search(r"^\s*\[mcp_servers\.eyeshands\]", f.read(), re.M) is not None
+        except OSError:
+            return None
+    clients = [
+        ("Claude Code", has_json(home(".claude.json"), "eyeshands"),
+         "claude mcp add --scope user eyeshands -- eyeshands mcp --owner claude-code"),
+        ("Codex", has_toml(home(".codex", "config.toml")),
+         '~/.codex/config.toml: [mcp_servers.eyeshands] command = "eyeshands", args = ["mcp", "--owner", "codex"]'),
+        ("Cursor", has_json(home(".cursor", "mcp.json"), "eyeshands"),
+         '~/.cursor/mcp.json: { "mcpServers": { "eyeshands": { "command": "eyeshands", "args": ["mcp", "--owner", "cursor"] } } }'),
+    ]
+    for name, wired, snippet in clients:
+        if wired:
+            r.line("PASS", f"MCP: {name} has an eyeshands server")
+        elif wired is False:
+            r.line("WARN", f"MCP: {name} has no eyeshands server", snippet)
+    if not any(w is not None for _, w, _ in clients):
+        r.line("WARN", "MCP: no Claude Code, Codex or Cursor configuration found (the CLI works without MCP)")
+
+
+def smoke(opts, port, r):
+    if not opts.owner:
+        r.line("FAIL", "--smoke needs --owner O (an owner with eyes in the access policy)")
+        return
+    if not sys.stdin.isatty():
+        r.line("WARN", "smoke test skipped: it asks first, and stdin is not a terminal")
+        return
+    answer = input(f"Smoke test: arm {opts.owner} and read the front app (and TextEdit fields if it runs)? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        r.line("WARN", "smoke test skipped")
+        return
+    owner = Owner(port, opts.owner, 5)
+    try:
+        owner.arm()
+        front = result_of(owner.call("eh.eyes.frontmost", None))
+        r.line("PASS", f"eyes frontmost: {(front or {}).get('name', '?')}")
+        f = result_of(owner.call("eh.eyes.fields", {"target": "com.apple.TextEdit"}))
+        if isinstance(f, dict) and f.get("ok") is not False:
+            r.line("PASS", f"eyes fields on TextEdit: {len(f.get('fields') or [])} field(s), {f.get('nodes')} nodes")
+        else:
+            r.line("WARN", f"eyes fields on TextEdit: {(f or {}).get('reason')} (open a new TextEdit document and grant com.apple.TextEdit)")
+    except Failed as e:
+        r.line("FAIL", f"smoke test: {e.out.get('error') or e.out.get('reason')}")
+    finally:
+        owner.disarm()
+
+
+# ---------- main ----------
+def parser():
+    p = argparse.ArgumentParser(prog="eyeshands", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--port", default=os.environ.get("EYESHANDS_PORT") or "eyeshands")
+    p.add_argument("--timeout", type=float, default=15.0)
+    sub = p.add_subparsers(dest="op", required=True)
+    sub.add_parser("status")
+    sub.add_parser("targets")
+    sub.add_parser("stop")
+    for kind, cmds in (("eyes", EYES), ("hands", HANDS)):
+        q = sub.add_parser(kind)
+        q.add_argument("cmd", choices=cmds)
+        q.add_argument("args", nargs="?", metavar="ARGS-JSON")
+        q.add_argument("--owner", required=True)
+        q.add_argument("--target")
+        q.add_argument("--minutes", type=int, default=15, help="arm for at most this long (the policy may allow less)")
+        if kind == "hands":
+            q.add_argument("--max-wait", type=float, default=900.0, help="abort a job that runs longer (seconds)")
+    s = sub.add_parser("session")
+    s.add_argument("--owner", required=True)
+    s.add_argument("--minutes", type=int)
+    s.add_argument("--max-wait", type=float, default=900.0)
+    d = sub.add_parser("doctor")
+    d.add_argument("--fix", action="store_true")
+    d.add_argument("--smoke", action="store_true")
+    d.add_argument("--owner")
+    ac = sub.add_parser("access").add_subparsers(dest="action", required=True)
+    for q in (ac.add_parser("list"), ac.add_parser("allow"), ac.add_parser("deny")):
+        q.add_argument("--file")
+    al = ac.choices["allow"]
+    al.add_argument("owner")
+    al.add_argument("caps")
+    al.add_argument("--apps")
+    al.add_argument("--window")
+    al.add_argument("--any-time", action="store_true")
+    al.add_argument("--manual-runs", dest="manual_runs", action="store_true", default=None)
+    al.add_argument("--no-manual-runs", dest="manual_runs", action="store_false")
+    al.add_argument("--max-minutes", type=int)
+    al.add_argument("--alert", choices=["telegram", "deny"])
+    ac.choices["deny"].add_argument("owner")
+    return p
+
+
+def main():
+    p = parser()
+    # argparse fills an optional positional only before the options, so ARGS-JSON after
+    # --owner/--target comes back as an extra argument.
+    opts, extra = p.parse_known_args()
+    if opts.op in ("eyes", "hands") and opts.args is None and len(extra) == 1 and not extra[0].startswith("--"):
+        opts.args, extra = extra[0], []
+    if extra:
+        p.error("unrecognized arguments: " + " ".join(extra))
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+    if getattr(opts, "owner", None) is not None and not NAME.fullmatch(opts.owner):
+        usage("owner names are letters, digits, . _ -")
+    if opts.op == "access":
+        access(opts)
+        return 0
+    port = Port(opts.port, opts.timeout)
+    if opts.op == "doctor":
+        return doctor(opts, port)
+    try:
+        if opts.op in ("status", "targets", "stop"):
+            emit(result_of(port.unsigned({"status": "status", "targets": "eh.targets", "stop": "stop"}[opts.op])))
+        elif opts.op in ("eyes", "hands"):
+            emit(one_shot(opts, port))
+        elif opts.op == "session":
+            session(opts, port)
+    except Failed as e:
+        emit(e.out)
+        return e.code
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (BrokenPipeError, KeyboardInterrupt):
+        sys.exit(1)
