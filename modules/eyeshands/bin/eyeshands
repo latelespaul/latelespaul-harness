@@ -376,6 +376,7 @@ def doctor(opts, port):
             r.line("PASS", f'the "{port.name}" port answers ({st.get("name", "EyesHands")} {st.get("version", "?")})')
         else:
             r.line("FAIL", "the Spoon is loaded but not started", 'spoon.EyesHands:start() in the Hammerspoon console')
+        hold_report(r, st.get("hold"))
     # 5. the Spoon loads at start
     loader = home(".hammerspoon", "local", "eyeshands.lua")
     init = home(".hammerspoon", "init.lua")
@@ -474,6 +475,28 @@ def doctor(opts, port):
     print()
     print(f"{r.fails} check(s) failed." if r.fails else "All checks passed.")
     return 1 if r.fails else 0
+
+
+def hold_report(r, hold):
+    """The hold file (the Spoon's hold_file; off by default): free, held, or unreadable."""
+    if not isinstance(hold, dict) or hold.get("configured") is not True:
+        return
+    where = f"hold file {hold.get('file', '?')}"
+    kind = hold.get("kind")
+    if not hold.get("held"):
+        r.line("PASS", f"{where}: free" + (" (no file)" if kind == "missing" else ""))
+    elif kind in ("unreadable", "malformed"):
+        r.line("FAIL", f"{where}: {kind}, so it counts as held and hands are refused",
+               "fix the file or remove it (only its owner's tool should write it)")
+    else:
+        who = hold.get("who") or "someone"
+        parts = [f"since {hold['since']}" if hold.get("since") else None, f"until {hold['until']}" if hold.get("until") else None]
+        if kind == "pid":
+            what = f"pid {hold.get('pid')} ({who})"
+        else:
+            what = ("borrowed manual hold" if kind == "borrowed" else "manual hold") + f" by {who}"
+        extra = ", ".join(p for p in parts if p)
+        r.line("WARN", f"{where}: held ({what}{f', {extra}' if extra else ''}); hands are refused until it ends")
 
 
 def mcp_report(r):

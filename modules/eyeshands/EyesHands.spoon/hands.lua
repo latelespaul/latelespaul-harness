@@ -22,8 +22,9 @@
 -- Jobs. A command that posts input plans it (planner.lua), starts a job and returns at once with
 -- {ok, job, state = "running", planned_ms}. A 4 ms timer posts the due events, so the main thread
 -- never blocks. Final states: done, interrupted (takeover), focus (the target lost the front),
--- locked, failed, aborted. Every 250 ms during a job the session (guard 4) and the front app
--- (guard 7) are checked again; the takeover tap ends the job at its next tick.
+-- locked, held (the hold file), failed, aborted. Every 250 ms during a job the hold file (guard 2),
+-- the session (guard 5) and the front app (guard 8) are checked again; the takeover tap ends the job
+-- at its next tick.
 --
 -- Every posted event carries EVENT_TAG in eventSourceUserData; nothing is posted any other way.
 -- A job that ends (any state, done too) releases a held mouse button and every held key or modifier,
@@ -209,6 +210,8 @@ return function(deps)
     local t = deps.nowMs() - j.t0
     if t - j.lastCheck >= CHECK_MS then
       j.lastCheck = t
+      local h = G.holdCheck()
+      if h then return finish(j, "held", { kind = h.kind, who = h.who, since = h.since, ["until"] = h["until"] }) end
       local r = G.sessionCheck()
       if r then return finish(j, "locked", { why = r.why or r.reason }) end
       if not frontOk(j) then return finish(j, "focus", { hint = "call hands_focus" }) end
@@ -328,7 +331,7 @@ return function(deps)
     return refuse("interrupted", "the person took over; wait until they leave, then hands_resume",
       { by = takeover.by, since = takeover.at, interrupts = interrupts })
   end
-  -- Guards 1-7 for the target: the target's pid, or nil and the refusal.
+  -- Guards 1-8 for the target: the target's pid, or nil and the refusal.
   local function guard(a, caller)
     local t = deps.resolve(a.target)
     if not t.ok then return nil, t end
@@ -562,7 +565,7 @@ return function(deps)
     a = type(a) == "table" and a or {}
     local t = deps.resolve(a.target)
     if not t.ok then return t end
-    -- Guards 1-6: focus is what fixes guard 7.
+    -- Guards 1-7: focus is what fixes guard 8.
     local r = G.check({ owner = caller.owner, lease = leaseCheck, takeover = takeoverCheck })
     if r then return r end
     takeLease(caller)

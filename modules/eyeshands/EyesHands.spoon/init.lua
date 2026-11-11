@@ -19,7 +19,7 @@
 --- Port commands, over the CFMessagePort named by cfg.port (default "eyeshands"; same wire
 --- format, policy file schema and client as the harness port, e.g. `hsx --port eyeshands status`):
 ---   status       (no secret) grants, session, present state, policy summary, hands state,
----                foreign drivers, stop state; never a secret
+---                foreign drivers, the hold file's state, stop state; never a secret
 ---   eh.targets   (no secret) each target in the targets file: name, bundle, profile, running, pid
 ---   stop         (no secret) stops every job and disarms every owner; stopping is always safe
 ---   arm, disarm  built into port.lua
@@ -58,6 +58,17 @@ local function harnessFn(name)
   return type(f) == "function" and f or nil
 end
 local function pidAlive(pid) return os.execute("/bin/kill -0 " .. math.floor(pid) .. " 2>/dev/null") == true end
+-- A pid that exists, even one owned by another user (kill -0 would say no to that one).
+local function pidExists(pid) return os.execute("/bin/ps -p " .. math.floor(pid) .. " >/dev/null 2>&1") == true end
+-- The hold file's text, or nil and "missing" (no such file) or "unreadable" (anything else).
+local function readHold(path)
+  local f, _, code = io.open(path, "r")
+  if not f then return nil, code == 2 and "missing" or "unreadable" end   -- 2 = ENOENT
+  local ok, text, err = pcall(f.read, f, 65537)
+  f:close()
+  if not ok or (text == nil and err ~= nil) then return nil, "unreadable" end   -- a folder, say
+  return text or ""                  -- nil with no error: an empty file
+end
 local function readFile(path)
   local f = io.open(path)
   if not f then return nil end
@@ -124,6 +135,7 @@ function obj:start(user)
     json = hs.json,
     idleBuffer = cfg.idle_buffer_s, stopMinutes = cfg.stop_minutes, consentMinutes = cfg.consent_minutes,
     detectors = cfg.detectors,
+    holdFile = cfg.hold_file or nil, readHold = readHold, pidAlive = pidExists,
     ownTag = obj.EVENT_TAG,
     tagRegistered = function() return s.tagRegistered == true end,
   })
@@ -411,6 +423,7 @@ function obj:status()
     access = s.core.policyInfo(),
     hands = s.hands.info(),
     foreign = s.guards.foreign(),
+    hold = s.guards.holdInfo(),
     stop = s.guards.stopInfo(),
     targets = s.targets.fileState(),
   }

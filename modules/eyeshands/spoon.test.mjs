@@ -2,7 +2,8 @@
 // The Spoon skeleton (EyesHands.spoon: init.lua, config.lua, targets.lua, guards.lua and its port.lua)
 // runs under a plain Lua 5.4 with a fake hs (test/spoon-driver.lua): config, the guard order, the
 // present rule with known and unknown event tags, the foreign hands detectors (fake jobhunt and
-// harness tables, read only), the stop switch, target resolution from fake ps output, and the
+// harness tables, read only), the hold file (a manual hold, a live pid, a borrowed hold, and a bad
+// file that counts as held), the stop switch, target resolution from fake ps output, and the
 // Spoon's own port with status, eh.targets and stop. Also checks that the vendored port.lua equals
 // the harness file.
 // Needs Lua 5.4 (LUA=..., `lua5.4`, `lua`, or Homebrew's lua@5.4); the Lua tests skip without it.
@@ -53,11 +54,13 @@ test('the vendored EyesHands.spoon/port.lua equals the harness port.lua', () => 
 });
 
 test('config: defaults, ~ expansion, and a bad key or value fails at start', { skip }, () => {
-  const [d, mine, typo, badBuf, badKey, noKey, badPort, tags] = drive([
+  const [d, mine, typo, badBuf, badKey, noKey, badPort, tags, hold, badHold] = drive([
     'return config(nil)', 'return config({ idle_buffer_s = 45, stop_hotkey = false, menubar = false, detectors = {"otherdriver"} })',
     'return select(2, config({ idle_bufer_s = 30 }))', 'return select(2, config({ idle_buffer_s = 0 }))',
     'return select(2, config({ stop_hotkey = { mods = {"hyper"}, key = "x" } }))', 'return select(2, config({ access_file = "relative.json" }))',
-    'return select(2, config({ port = "bad name" }))', 'return select(2, config({ machine_tags = { 0x1234 } }))']);
+    'return select(2, config({ port = "bad name" }))', 'return select(2, config({ machine_tags = { 0x1234 } }))',
+    'return { config({ hold_file = "~/driver.lock" }).hold_file, config({ hold_file = false }).hold_file }',
+    'return select(2, config({ hold_file = "driver.lock" }))']);
   assert.equal(d.idle_buffer_s, 20);
   assert.equal(d.port, 'eyeshands');
   assert.equal(d.access_file, '/home/test/.config/eyeshands/access.json');
@@ -77,6 +80,9 @@ test('config: defaults, ~ expansion, and a bad key or value fails at start', { s
   assert.match(noKey, /^access_file: must be an absolute path/);
   assert.match(badPort, /^port:/);
   assert.equal(tags, 'unknown config key machine_tags');
+  assert.equal(d.hold_file, undefined, 'the hold file is off by default');
+  assert.deepEqual(hold, ['/home/test/driver.lock', false]);
+  assert.match(badHold, /^hold_file: must be an absolute path/);
 });
 
 test('guard order: stop switch, foreign hands, lease, session, present, takeover, focus', { skip }, () => {
@@ -198,6 +204,97 @@ test('foreign hands detectors read jobhunt, the harness port and configured glob
   assert.equal(out[5], 2, 'a status() that fails is not a driver');
   assert.equal(out[6], true, 'the detectors wrote nothing into jobhunt or harness');
   assert.equal(out[7], 2, 'rawget only: no metatable runs');
+});
+
+// guards() with a hold file: HOLD is its text (nil = no file; HOLDWHY then says why), ALIVE[pid]
+// says whether a pid exists, PIDS counts the pid checks; held(r) is { reason, kind }. T is
+// 1800000000 seconds (2027-01-15T08:00:00Z).
+const HOLDG = `HOLD, HOLDWHY, ALIVE, PIDS = nil, nil, {}, 0
+  G = guards({ holdFile = "/locks/driver.lock",
+    readHold = function() if HOLD == nil then return nil, HOLDWHY or "missing" end; return HOLD end,
+    pidAlive = function(pid) PIDS = PIDS + 1; return ALIVE[pid] == true end })
+  IDLE = 600
+  function hold(t) HOLD = hs.json.encode(t) end
+  function held(r) return r and { r.reason, r.kind } or false end`;
+
+test('hold file: off by default; no file is free; a manual hold counts until `until` passes', { skip }, () => {
+  const ms = s => (1800000000 + s) * 1000;
+  const out = ok(drive([
+    'return { guards().holdInfo(), guards().holdCheck() == nil, guards().check() == nil }',
+    `${HOLDG}; return { G.holdInfo(), G.check() == nil }`,
+    `hold({ pid = 0, who = "captain", since = ${ms(-60)}, manual = true, ["until"] = ${ms(600)} }); return G.check()`,
+    `hold({ pid = 0, who = "captain", since = ${ms(-60)}, manual = true, ["until"] = ${ms(-1)} }); return { G.check() == nil, G.holdInfo().kind }`,
+    'hold({ pid = 0, who = "captain", manual = true, ["until"] = "2027-01-15T08:00:00.000Z" }); return G.holdInfo()',
+    'hold({ pid = 0, who = "captain", manual = true, ["until"] = "2027-01-15T00:00:00+05:30" }); return G.holdInfo()["until"]',
+    'hold({ pid = 0, who = "captain", manual = true, ["until"] = 1800000300 }); return G.holdCheck().retry_after_s',
+    'hold({ pid = 0, who = "captain", manual = true }); return G.holdCheck()',
+    'hold({ pid = 0, who = "captain", manual = true, ["until"] = "soon" }); return held(G.holdCheck())',
+  ]));
+  assert.deepEqual(out[0], [{ configured: false }, true, true]);
+  assert.deepEqual(out[1], [{ configured: true, file: '/locks/driver.lock', held: false, kind: 'missing' }, true]);
+  assert.deepEqual(out[2], { ok: false, reason: 'held', kind: 'manual', who: 'captain', pid: 0, since: '2027-01-15T07:59:00Z',
+    until: '2027-01-15T08:10:00Z', retry_after_s: 600, hint: 'the person holds the desktop; do offline work only until the hold ends; never force' });
+  assert.deepEqual(out[3], [true, 'free'], 'a manual hold past its until is free');
+  assert.equal(out[4].until, '2027-01-15T08:00:00Z', 'an ISO until (T is 2027-01-15T08:00:00Z, so it just ended)');
+  assert.equal(out[4].held, false, 'a hold ends at its until');
+  assert.equal(out[5], '2027-01-14T18:30:00Z', 'an ISO until with an offset');
+  assert.equal(out[6], 300, 'until in seconds works too');
+  assert.equal(out[7].kind, 'manual');
+  assert.equal(out[7].until, undefined);
+  assert.equal(out[7].retry_after_s, 60, 'a manual hold with no until stays held (the safe side)');
+  assert.deepEqual(out[8], ['held', 'manual'], 'an until that does not parse stays held');
+});
+
+test('hold file: a live pid holds; a dead borrower falls back to the manual hold it borrowed', { skip }, () => {
+  const ms = s => (1800000000 + s) * 1000;
+  const manual = until => `{ pid = 0, who = "captain", since = ${ms(-60)}, manual = true, ["until"] = ${until} }`;
+  const out = ok(drive([
+    `${HOLDG}; ALIVE[4242] = true; hold({ pid = 4242, who = "night run", since = ${ms(-5)} }); return G.check()`,
+    'ALIVE[4242] = false; T = T + 2; return { G.check() == nil, G.holdInfo().kind }',
+    `ALIVE[5151] = true; T = T + 2; hold({ pid = 5151, who = "refill under captain's hold", since = ${ms(0)}, borrowed = ${manual(ms(600))} }); return held(G.check())`,
+    `ALIVE[5151] = false; T = T + 2; return G.check()`,
+    `hold({ pid = 5151, who = "refill", since = ${ms(0)}, borrowed = ${manual(ms(-10))} }); return { G.check() == nil, G.holdInfo().kind }`,
+    'HOLD = "4242"; ALIVE[4242] = true; T = T + 2; return held(G.check())',
+    'HOLD = "0"; return G.check() == nil',
+    // One pid check per second at most, during a job's 250 ms re-checks too.
+    'HOLD = "6161"; PIDS = 0; for _ = 1, 8 do G.holdCheck() end; local n = PIDS; T = T + 1; G.holdCheck(); return { n, PIDS }',
+    'ALIVE[7171] = true; hold({ pid = 7171, manual = true, ["until"] = 1 }); T = T + 2; return held(G.check())',
+  ]));
+  assert.equal(out[0].reason, 'held');
+  assert.equal(out[0].kind, 'pid');
+  assert.equal(out[0].pid, 4242);
+  assert.equal(out[0].who, 'night run');
+  assert.equal(out[0].retry_after_s, 60);
+  assert.deepEqual(out[1], [true, 'free'], 'a holder whose pid is gone is stale');
+  assert.deepEqual(out[2], ['held', 'pid'], 'a live borrower holds');
+  assert.equal(out[3].kind, 'borrowed');
+  assert.equal(out[3].who, 'captain', 'the borrowed manual hold is what holds now');
+  assert.equal(out[3].until, '2027-01-15T08:10:00Z');
+  assert.deepEqual(out[4], [true, 'free'], 'a dead borrower of an expired hold is free');
+  assert.deepEqual(out[5], ['held', 'pid'], 'a bare pid as the whole file');
+  assert.equal(out[6], true, 'a bare 0 names no process');
+  assert.deepEqual(out[7], [1, 2]);
+  assert.deepEqual(out[8], ['held', 'pid'], 'an expired manual hold with a live pid still holds');
+});
+
+test('hold file: an unreadable or malformed file counts as held; the order is stop switch, hold file, foreign hands', { skip }, () => {
+  const bad = ['"{not json"', '""', '"[]"', '"null"', '"{\\"who\\":\\"x\\"}"', '"{\\"pid\\":\\"12\\"}"', '"{\\"pid\\":-3}"',
+    '"{\\"pid\\":1,\\"manual\\":\\"yes\\"}"', '"{\\"pid\\":1,\\"borrowed\\":{\\"pid\\":0}}"', 'string.rep(" ", 70000) .. "1"'];
+  const out = ok(drive([
+    `${HOLDG}; HOLDWHY = "unreadable"; return G.check()`,
+    ...bad.map(b => `HOLD = ${b}; return held(G.check())`),
+    `G2 = guards({ holdFile = "/locks/driver.lock", readHold = function() error("boom") end }); return held(G2.check())`,
+    `G.stopFor("hotkey"); HOLD = nil; HOLDWHY = nil; hold({ pid = 0, who = "captain", manual = true })
+     jobhunt = { hands = { status = function() return { armed = true } end } }; return G.check().reason`,
+    'G.clearStop(); return G.check().reason',
+    'HOLD = nil; return G.check().reason',
+  ]));
+  assert.equal(out[0].reason, 'held');
+  assert.equal(out[0].kind, 'unreadable');
+  assert.match(out[0].hint, /cannot be read; it counts as held/);
+  for (let i = 0; i < bad.length; i++) assert.deepEqual(out[1 + i], ['held', 'malformed'], `bad file ${bad[i]}`);
+  assert.deepEqual(out[1 + bad.length], ['held', 'unreadable'], 'a reader that fails counts as held');
+  assert.deepEqual(out.slice(2 + bad.length), ['stopped', 'held', 'foreign_hands']);
 });
 
 test('stop switch: refuses hands for stop_minutes, then ends; clearStop ends it early', { skip }, () => {

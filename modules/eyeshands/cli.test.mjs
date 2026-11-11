@@ -3,7 +3,8 @@
 // real CFMessagePort with the arm, HMAC and seq rules of port.lua and canned replies): argument parsing,
 // arm-call-disarm for one-shot commands, a hands job waited out before the disarm, session seq always
 // rising, owner_in_use without an arm, the secret only inside port messages, access edits on a throwaway
-// file, wall detection, the doctor with fake system tools, and the bundled hsx equal to the harness file.
+// file, wall detection, the doctor with fake system tools (and its hold file line), and the bundled hsx equal
+// to the harness file.
 // Every run uses a throwaway HOME, port name and access file. Needs python3; skips without it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -239,6 +240,30 @@ test('eyes text: wall detection for each pattern, and none on a plain page', { s
   assert.deepEqual(walls(['We noticed unusual activity']), ['unusual']);
   assert.deepEqual(walls(['Email', 'First name', 'Submit application']), []);
   assert.deepEqual(walls([], [{ not: 'a string' }]), []);
+});
+
+// The doctor's hold file line, through the CLI's own hold_report() (loaded as a module, not run).
+function holdLines(hold) {
+  const code = `import importlib.machinery as m, importlib.util as u, json, sys
+l = m.SourceFileLoader("eh", sys.argv[1]); mod = u.module_from_spec(u.spec_from_loader("eh", l)); l.exec_module(mod)
+r = mod.Report(); mod.hold_report(r, json.loads(sys.argv[2])); print("fails", r.fails)`;
+  const r = spawnSync('python3', ['-c', code, CLI, JSON.stringify(hold)], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
+}
+
+test('doctor: the hold file line says free, held (by whom, until when) or unreadable; nothing when it is off', { skip }, () => {
+  const file = '/locks/driver.lock';
+  assert.equal(holdLines({ configured: false }), 'fails 0\n');
+  assert.equal(holdLines(null), 'fails 0\n');
+  assert.equal(holdLines({ configured: true, file, held: false, kind: 'missing' }), `PASS  hold file ${file}: free (no file)\nfails 0\n`);
+  assert.equal(holdLines({ configured: true, file, held: true, kind: 'manual', who: 'captain', since: '2027-01-15T07:59:00Z', until: '2027-01-15T08:10:00Z' }),
+    `WARN  hold file ${file}: held (manual hold by captain, since 2027-01-15T07:59:00Z, until 2027-01-15T08:10:00Z); hands are refused until it ends\nfails 0\n`);
+  assert.match(holdLines({ configured: true, file, held: true, kind: 'pid', pid: 4242, who: 'night run' }), /WARN  hold file .*: held \(pid 4242 \(night run\)\); hands/);
+  assert.match(holdLines({ configured: true, file, held: true, kind: 'borrowed', who: 'captain' }), /held \(borrowed manual hold by captain\);/);
+  const bad = holdLines({ configured: true, file, held: true, kind: 'malformed' });
+  assert.match(bad, /^FAIL  hold file \/locks\/driver\.lock: malformed, so it counts as held and hands are refused\n      fix: /);
+  assert.match(bad, /fails 1\n$/);
 });
 
 test('a one-shot eyes text adds wall', { skip }, async () => {

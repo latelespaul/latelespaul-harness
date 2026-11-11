@@ -3,8 +3,9 @@
 // fake hs (test/spoon-driver.lua): the guard order before a job, jobs on the 4 ms timer, the 250 ms
 // re-checks, the takeover tap (it only reads) and resume, the lease (one owner, 2 idle minutes,
 // disarm), a held button, held keys and the clipboard on abort and unload, the awake hold (harness
-// with the caller's pid, released with lock=true; standalone hs.caffeinate), and the Eyes & Hands tag
-// on every posted event. "Posted" here means the fake hs.eventtap recorded it; nothing reaches a Mac.
+// with the caller's pid, released with lock=true; standalone hs.caffeinate), the hold file (a real
+// file and real pids: it refuses hands and ends a running job), and the Eyes & Hands tag on every
+// posted event. "Posted" here means the fake hs.eventtap recorded it; nothing reaches a Mac.
 // Needs Lua 5.4 (LUA=..., `lua5.4`, `lua`, or Homebrew's lua@5.4); the tests skip without it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -248,6 +249,63 @@ test('the 250 ms re-checks end a job as focus or locked; the stop switch aborts 
   assert.deepEqual(out[3][0], { lease: false, busy: false, interrupted: false, watch: 'off', awake: false });
   assert.equal(out[3][1], false, 'the stop switch disarmed the owner');
   assert.deepEqual(out[4], [2, false, true, 0], 'the lease ended: hold released with lock=true, tap off');
+});
+
+test('the hold file: a hold refuses hands before any input, a hold that appears ends a running job, status shows it', { skip }, () => {
+  const lock = join(mkdtempSync(join(tmpdir(), 'eh-hold-')), 'driver.lock');
+  const p = prelude({ extra: `, hold_file = ${lstr(lock)}` });
+  const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;   // gone once spawnSync returns
+  const ms = s => (1800000000 + s) * 1000;                    // the driver's clock T, in ms
+  const manual = until => ({ pid: 0, who: 'captain', since: ms(-60), manual: true, until });
+  const click = j({ target: 'textedit', to: { rect: RECT } });
+  const text = j({ target: 'textedit', text: 'a slow sentence to type out' });
+  const out = ok(drive([
+    p.lua,
+    `HP = ${lstr(lock)}
+     function put(text) local f = assert(io.open(HP, "w")); f:write(text); f:close() end
+     return call({ cmd = "status" }).result.hold`,
+    `put(${j(manual(ms(600)))}); local r = hc("runner", "eh.hands.click", ${click})
+     return { r, #POSTED, SPOONOBJ._s.hands.info().lease, call({ cmd = "status" }).result.hold }`,
+    `put(${j({ pid: process.pid, who: 'night run', since: ms(-5) })}); return hc("runner", "eh.hands.focus", ${j({ target: 'textedit' })})`,
+    `put(${j({ pid: dead, who: 'refill', since: ms(0), borrowed: manual(ms(600)) })}); local r = hc("runner", "eh.hands.click", ${click})
+     return { r.reason, r.kind, r.who }`,
+    `put("{not json"); return hc("runner", "eh.hands.click", ${click}).kind`,
+    `os.remove(HP); os.execute("mkdir " .. HP); local r = hc("runner", "eh.hands.click", ${click}); os.execute("rmdir " .. HP)
+     return { r.reason, r.kind, #POSTED }`,
+    `put(${j({ pid: dead, who: 'refill', since: ms(0), borrowed: manual(ms(-10)) })}); local r = hc("runner", "eh.hands.click", ${click})
+     run(3000); return { r.state, hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state, #POSTED > 10 }`,
+    `os.remove(HP); local r = hc("runner", "eh.hands.type", ${text}); JOB = r.job; run(100); local n = #POSTED
+     put(${j(manual(ms(600)))}); run(260); local n2 = #POSTED; run(2000)
+     return { r.state, n2 > n, #POSTED == n2, hc("runner", "eh.hands.job", hs.json.encode({ id = JOB })) }`,
+    `return { SPOONOBJ._s.hands.info().busy, hc("runner", "eh.hands.click", ${click}).reason }`,
+  ]));
+  assert.deepEqual(out[1], { configured: true, file: lock, held: false, kind: 'missing' }, 'no file is free');
+  const [refused, posted, lease, status] = out[2];
+  assert.equal(refused.reason, 'held');
+  assert.equal(refused.kind, 'manual');
+  assert.equal(refused.who, 'captain');
+  assert.equal(refused.until, '2027-01-15T08:10:00Z');
+  assert.equal(refused.retry_after_s, 600);
+  assert.equal(posted, 0, 'nothing posted');
+  assert.equal(lease, false, 'no lease taken');
+  assert.equal(status.held, true);
+  assert.equal(status.kind, 'manual');
+  assert.equal(out[3].reason, 'held', 'focus is refused too');
+  assert.equal(out[3].kind, 'pid');
+  assert.equal(out[3].pid, process.pid);
+  assert.deepEqual(out[4], ['held', 'borrowed', 'captain'], 'a dead borrower falls back to the manual hold');
+  assert.equal(out[5], 'malformed');
+  assert.deepEqual(out[6], ['held', 'unreadable', 0]);
+  assert.deepEqual(out[7], ['running', 'done', true], 'a dead borrower of an expired hold: hands run');
+  const [state, postedBefore, stopped, job] = out[8];
+  assert.equal(state, 'running');
+  assert.ok(postedBefore, 'the job posted before the hold appeared');
+  assert.ok(stopped, 'nothing posts after the hold appears');
+  assert.equal(job.state, 'held');
+  assert.equal(job.reason, 'held');
+  assert.equal(job.who, 'captain');
+  assert.equal(job.kind, 'manual');
+  assert.deepEqual(out[9], [false, 'held']);
 });
 
 test('lease: one owner at a time; it ends after 2 idle minutes or on disarm, with the awake hold', { skip }, () => {
