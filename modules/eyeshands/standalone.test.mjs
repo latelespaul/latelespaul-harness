@@ -169,6 +169,10 @@ test('uninstall keeps what the person changed after the install', { skip }, () =
   const doc = JSON.parse(readFileSync(w.h('.cursor', 'mcp.json'), 'utf8'));
   doc.mcpServers.eyeshands.args.push('--minutes', '5');
   writeFileSync(w.h('.cursor', 'mcp.json'), JSON.stringify(doc));
+  const dry = w.run(['uninstall', '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /left mcpServers\.eyeshands .*changed after the install/);
+  assert.doesNotMatch(dry.stdout, /remove mcpServers\.eyeshands/, 'the plan does not list a removal it will not make');
   const u = w.run(['uninstall', '--yes']);
   assert.equal(u.status, 0, u.stderr);
   assert.equal(readFileSync(f, 'utf8'), `-- top\n${INIT}-- bottom\n`);

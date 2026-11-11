@@ -1357,7 +1357,21 @@ def uninstall(opts):
                 continue
             steps.append((f"remove the eyeshands table from {rec['file']}", ("codex", rec)))
         elif c == "cursor" and os.path.exists(rec.get("file", "")):
-            steps.append((f"remove mcpServers.eyeshands from {rec.get('file')}", ("cursor", rec)))
+            path = rec["file"]
+            try:
+                with open(path) as f:
+                    doc = json.load(f)
+                servers = doc.get("mcpServers") or {}
+                entry = servers.get("eyeshands")
+            except (OSError, ValueError, AttributeError):
+                print(f"left {path}: it is not valid JSON")
+                continue
+            if entry is None:
+                continue
+            if entry != rec.get("entry"):
+                print(f"left mcpServers.eyeshands in {path}: it changed after the install")
+                continue
+            steps.append((f"remove mcpServers.eyeshands from {path}", ("cursor", (path, doc, servers, rec))))
     keep = [x for x in (p["access"], p["targets"], p["backups"]) if os.path.exists(x)]
     if opts.purge:
         purge = keep + [x for x in (p["log"], p["shots"]) if os.path.exists(x)]
@@ -1390,19 +1404,9 @@ def uninstall(opts):
         elif kind == "codex":
             print(remove_added(arg["file"], arg.get("added"), TOML_START, TOML_END, arg.get("created", False)))
         elif kind == "cursor":
-            path = arg.get("file", p["cursor"])
-            try:
-                with open(path) as f:
-                    doc = json.load(f)
-                servers = doc.get("mcpServers") or {}
-            except (OSError, ValueError, AttributeError):
-                print(f"left {path}: it is missing or not valid JSON")
-                continue
-            if servers.get("eyeshands") != arg.get("entry"):
-                print(f"left mcpServers.eyeshands in {path}: it changed after the install")
-                continue
+            path, doc, servers, rec = arg
             del servers["eyeshands"]
-            if arg.get("created") and not servers and set(doc) <= {"mcpServers"}:
+            if rec.get("created") and not servers and set(doc) <= {"mcpServers"}:
                 os.unlink(path)
                 print(f"removed {path} (install created it)")
             else:
