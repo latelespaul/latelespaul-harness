@@ -458,3 +458,77 @@ test('a reload while the screen is locked keeps live holds suspended for the unl
     assert.equal(out.saved.holds.job.until, t, 'the same deadline');
   } finally { live.kill(); }
 });
+
+// A clock and lock flag the test moves, the lock watchers and every 30 s timer it can tick.
+const CYCLE = `local TIMERS = {}
+  local de = hs.timer.doEvery; hs.timer.doEvery = function(s, fn) local t = de(s, fn); TIMERS[#TIMERS+1] = t; return t end
+  local now = os.time(); hs.timer.secondsSinceEpoch = function() return now end
+  local function adv(s) now = now + s end
+  local locked = false; hs.caffeinate.sessionProperties = function() return { CGSSessionScreenIsLocked = locked } end
+  local function tick() for _, t in ipairs(TIMERS) do t.fn() end end
+  local function ev(e) for _, w in ipairs(SMOKE.watchers) do w(e) end end
+  local function touch() SMOKE.taps[#SMOKE.taps].fn(SMOKE.event("keyDown", 0)) end
+  local function lock() locked = true; ev(hs.caffeinate.watcher.screensDidLock) end
+  local function unlock() locked = false; ev(hs.caffeinate.watcher.screensDidUnlock) end
+  local steps = {}
+  local function snap(name) local i = harness.awakeInfo()
+    steps[name] = { on = i.on, mode = i.mode, owners = i.owners, suspended = i.suspended ~= nil, locks = SMOKE.locked } end
+  hs.host.idleTime = function() return 0 end`;
+
+test('two away-touch-lock-unlock cycles: the live hold comes back each time; a present touch never locks', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  try {
+    const out = load(undefined, `${CYCLE}
+      harness.awake(true, {owner="job", minutes=60, pid=${live.pid}})
+      adv(100); touch(); tick(); snap("presentTouch")
+      adv(301); tick(); snap("away1")
+      adv(10); touch(); lock(); snap("locked1")
+      adv(60); unlock(); snap("back1")
+      adv(350); tick(); snap("away2")
+      adv(10); touch(); lock(); snap("locked2")
+      adv(60); unlock(); snap("back2")
+      return hs.json.encode(steps)`);
+    const s = JSON.parse(out.result);
+    assert.deepEqual([s.presentTouch.mode, s.presentTouch.locks], ['present', 0], 'a person using the Mac is never locked out');
+    assert.equal(s.away1.mode, 'away');
+    for (const [l, b, n] of [[s.locked1, s.back1, 1], [s.locked2, s.back2, 2]]) {
+      assert.deepEqual([l.on, l.suspended, l.locks], [false, true, n]);
+      assert.deepEqual([b.on, b.mode, names(b.owners), b.suspended], [true, 'present', ['job'], false]);
+    }
+    assert.equal(s.away2.mode, 'away', 'the normal away flow takes over after the resume');
+  } finally { live.kill(); }
+});
+
+test('a missed unlock event: the 30 s check waits while locked, then takes the hold back', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  try {
+    const out = load(undefined, `${CYCLE}
+      harness.awake(true, {owner="job", minutes=60, pid=${live.pid}})
+      adv(301); tick(); adv(10); touch(); lock()
+      tick(); snap("stillLocked")
+      locked = false; tick(); snap("backstop")
+      return hs.json.encode(steps)`);
+    const s = JSON.parse(out.result);
+    assert.deepEqual([s.stillLocked.on, s.stillLocked.suspended], [false, true]);
+    assert.deepEqual([s.backstop.on, s.backstop.mode, names(s.backstop.owners)], [true, 'present', ['job']]);
+  } finally { live.kill(); }
+});
+
+test('a live hold whose deadline passed during the lock ends with "deadline" at the unlock', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  try {
+    const out = load(undefined, `${CYCLE}
+      harness.awake(true, {owner="job", minutes=1, pid=${live.pid}})
+      harness.awake(true, {owner="nopid", minutes=60})
+      lock(); local mid = harness.awakeInfo()
+      local ot = os.time; os.time = function() return ot() + 120 end
+      unlock()
+      return hs.json.encode({ mid = mid })`);
+    const r = JSON.parse(out.result);
+    assert.equal(r.mid.suspended.job.reason, 'screen locked');
+    assert.deepEqual(names(out.after.owners), []);
+    assert.equal(out.after.suspended, undefined);
+    assert.equal(out.after.ended.job.reason, 'deadline');
+    assert.equal(out.after.ended.nopid.reason, 'screen locked');
+  } finally { live.kill(); }
+});
