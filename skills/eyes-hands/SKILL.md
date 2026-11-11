@@ -91,11 +91,11 @@ If the expected change didn't happen, don't repeat the action blindly. Look agai
 
 **Web form caveats** (seen on real job-application forms):
 - **Read the whole form first.** List every field on the page, including required (*) custom dropdowns, before you fill. A plan made from the job post alone misses fields, and a skipped required field blocks Submit.
-- **Choose from the real options.** Searchable dropdowns accept only their own list. Open the dropdown, read the options, and pick the best match from a list of allowed aliases (for example "University of Pune" or "Savitribai Phule Pune University"). Typing a value that is not in the list gives "No options".
-- **Close browser popups before the next click.** Press Esc after typing. The browser's own autofill popup can sit under the next field, and a click on it can open the browser's settings in a new tab.
+- **Choose from the real options.** Searchable dropdowns accept only their own list. Open the dropdown, read the options, and pick the best match from a list of allowed aliases (for example "Mumbai" or "Bombay"). Typing a value that is not in the list gives "No options".
+- **Close browser popups before the next click.** The browser's own autofill popup can sit under the next field, and a click on it can open the browser's settings in a new tab. When that popup is visible, press Esc, but not inside a dialog or an open dropdown that Esc would close. There, press Tab or click a neutral area instead.
 - **Check the tab before each step.** Confirm that the front tab's URL is the task's page. Close any tab that the run opened by mistake.
 - **Success can appear on the same URL.** Some forms show a "Success" banner without changing the URL. Read the visible text and the screenshot before you mark a submit as failed, so you never apply twice.
-- **Dead pages are not hand-offs.** "Page not found" or "no longer accepting" means the task is closed. Do not send it to the user.
+- **Dead pages are not hand-offs.** "Page not found" or "no longer accepting" means the task is closed. Do not hand it off; mark it closed in the run's report.
 - **Embedded forms.** A company page can wrap a hosted form that the eyes cannot read. Open the hosted form's own URL instead.
 
 ## 3. When the user touches the mouse or keyboard
