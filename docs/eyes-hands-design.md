@@ -372,7 +372,7 @@ During the job, the Spoon repeats checks 4 and 7 every 250 ms, and the event tap
 **Takeover.** While an owner holds the lease, an event tap watches mouse, scroll and key events. Any event without the Eyes & Hands tag stops the job at its next tick. Then the Spoon releases a held button, puts the clipboard back, and refuses hands until `hands_resume`. The tap only reads: it never changes, delays or drops an event. Hammerspoon has only active taps, so the tap runs only while a lease exists.
 
 **Present rule.** The idle buffer is `idle_buffer_s` in the Spoon config, default 20. `eyes_status` reports it, so the skill and the Spoon use one value. The Spoon keeps `lastHuman`, the time of the last human input:
-- While the tap runs, an event counts as human when it carries no known machine tag. Known machine tags are the Eyes & Hands tag, `harness.EVENT_TAG`, job-hunt's tag `0x4A484844`, and tags registered with the harness.
+- While the tap runs, an event counts as human when it carries no known machine tag. Known machine tags are the Eyes & Hands tag, `harness.EVENT_TAG`, and job-hunt's tag `0x4A484844`. Any other tag counts as a person (the safe side); the harness has no way to list the tags registered with it.
 - While no tap runs, the Spoon uses `hs.host.idleTime()`, the seconds since the last hardware input. Without Hammerspoon, the skill reads the same kind of count from `HIDIdleTime` (`ioreg -c IOHIDSystem`).
 - The live test (PR 11) measures whether posted events reset `hs.host.idleTime()`. If they do, the Spoon trusts the tap value during a lease and the idle time only before the first job.
 
