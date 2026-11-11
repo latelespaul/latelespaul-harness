@@ -84,8 +84,8 @@ Use the MCP tools when your agent has them. Use the CLI when the agent can only 
 | Bring the window to the front | `hands_focus` | `eyeshands hands focus --owner O --target T` |
 | Act | `hands_click`, `hands_type`, `hands_key`, `hands_scroll`, `hands_drag`, `hands_move` | `eyeshands hands click --owner O --target T '{"to":{"field":"f3"}}'` |
 | Check | `eyes_value`, `eyes_focused`, `eyes_text` | `eyeshands eyes value --owner O --target T '{"id":"f3"}'` |
-| Resume after a pause | `hands_resume` | `eyeshands hands resume --owner O` |
-| Interruption count | `hands_status` (`interrupts`) | `eyeshands hands status --owner O` |
+| Resume after a pause | `hands_resume` | In `eyeshands session` only: `{"cmd":"hands.resume"}`. A one-shot call needs no resume |
+| Interruption count | `hands_status` (`interrupts`) | In `eyeshands session` only: `{"cmd":"hands.status"}`. One-shot: count each `interrupted` state yourself |
 | Stop a running job | `hands_abort` | `eyeshands hands abort --owner O` |
 | End the task | `hands_release` | (a one-shot CLI call disarms by itself) |
 | Stop every agent now | (none) | `eyeshands stop` |
@@ -196,7 +196,7 @@ Their input always wins. Any untagged mouse move, click, key or scroll stops the
    until [ "$(idle)" -ge 20 ]; do sleep 2; done
    ```
 3. **Look again before acting:** the user may have changed the page. Read the form again, keep their edits when they're valid, and continue from the first step that isn't done.
-4. **Resume the hands** with `hands_resume` (CLI: `eyeshands hands resume`), then continue the loop. If it refuses with `present`, wait `retry_after_s` and try once more.
+4. **Resume the hands** with `hands_resume` (CLI: `hands.resume` inside `eyeshands session`; a one-shot call needs no resume), then continue the loop. If it refuses with `present`, wait `retry_after_s` and try once more.
 5. **Never repeat an irreversible step** (submit, pay, send, delete). If it may already have happened, check for its result instead.
 6. **Count the interruptions on this task.** MCP: `interrupts` in `hands_status` and in each interrupted reply. The server keeps it until `hands_release`. CLI: count each `interrupted` state yourself.
 7. After **3 interruptions on the same task**, stop. Tell the user in one line: "You're using the Mac; I'll continue later. Say 'go' to resume now."
