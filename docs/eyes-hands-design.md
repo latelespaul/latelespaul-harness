@@ -531,15 +531,17 @@ macOS drops all input to a locked screen. An agent that drives an app while the 
 eyeshands doctor [--fix]          check everything; --fix opens the right panes
 eyeshands status                  no secret needed
 eyeshands targets                 configured targets and their state
-eyeshands eyes  <cmd> --owner O --target T [JSON]
-eyeshands hands <cmd> --owner O --target T [JSON] [--wait]
+eyeshands eyes  <cmd> --owner O --target T [JSON | -]
+eyeshands hands <cmd> --owner O --target T [JSON | -] [--max-wait S]
 eyeshands session --owner O       arm, then sign JSON lines from stdin (scripts)
 eyeshands mcp --owner O           MCP server over stdio
 eyeshands access list|allow|deny  edit the access policy file (hsx rules)
 eyeshands stop                    stop switch; no secret needed
 eyeshands install | uninstall     standalone install and removal
 ```
-A one-shot `eyes` or `hands` command arms, makes one call, and disarms. A script that makes many calls uses `session`, which keeps one signer, so `seq` never goes backwards.
+A one-shot `eyes` or `hands` command arms, makes one call, and disarms. A disarm aborts a running job, so a one-shot hands command waits for its job to end first (at most `--max-wait` seconds, default 900; then it aborts the job). It prints the final state.
+
+A script that makes many calls uses `session`, which keeps one signer, so `seq` never goes backwards. A session line with `"wait": true` also waits for its job. `-` in place of the JSON reads the arguments from stdin, so typed text does not show in `ps`. When another session holds the owner, the CLI returns `owner_in_use` and sends no arm, as the MCP server does.
 
 **MCP server lifecycle**
 1. The agent starts `eyeshands mcp --owner O`.
@@ -707,7 +709,7 @@ On macOS 15 and later, macOS asks again about Screen Recording about once a mont
 | `planner` tests (Lua through `node --test`, as PR #16 does) | Path bounds, Fitts durations, monotone ease-out, end point in the rect, centre bias, overshoot rate, click hold, typing gaps, the 300-character paste rule, combos, scroll totals, seed replay, golden vectors from `plan.mjs` |
 | Spoon tests under fake `hs` | Guard order; present rule with known and unknown tags; foreign hands detectors (fake `jobhunt` and `harness` tables); lease; stop switch; takeover and resume; target resolution from fake `ps` output; field records from a JSON AX tree fixture; stale id fallback; pixel decisions on synthetic images |
 | Port integration | The Spoon's commands through a real `port.lua` instance: capabilities `eyes`, `shot` and `hands`; targets as `apps`; owner passed to commands |
-| CLI and MCP (Python `unittest`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by PR #16's `test/fake-port.py` |
+| CLI and MCP (`cli.test.mjs` through `node --test`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by `modules/eyeshands/test/fake-eh-port.py` |
 | Vendored copies | `EyesHands.spoon/port.lua` and the bundled `hsx` equal the harness files |
 | Packaging | DMG build with `hdiutil` (contents only); `brew audit --strict` and `brew install --build-from-source` on the formula in a local tap |
 | Docs | `ste-check` on the README; a scan for home paths, e-mail addresses and host names |
