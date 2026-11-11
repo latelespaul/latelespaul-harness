@@ -4,6 +4,8 @@ Eyes & Hands lets an agent read an app's screen ("eyes") and drive its mouse and
 
 This module runs Eyes & Hands inside the harness Hammerspoon. It needs the hammerspoon module, because Hammerspoon holds the Accessibility and Screen Recording grants.
 
+Without the harness, use `README.md` in this folder instead: `eyeshands install` links the same files and adds a marked block to `~/.hammerspoon/init.lua`. Inside a configured harness, `eyeshands install` refuses and names this module's install.
+
 **What the install changes**
 ```
 ~/.hammerspoon/Spoons/EyesHands.spoon -> modules/eyeshands/EyesHands.spoon   the engine
@@ -62,4 +64,4 @@ When the install replaced a file or link at one of the three paths, it moved the
 
 Grants stay in System Settings, because other Hammerspoon tools need them.
 
-**Tests.** `node --test modules/eyeshands/install.test.mjs` runs the install against a throwaway home folder (`HOME`) and profile, with stub `pgrep`, `hs`, `osascript`, `open` and `claude`, and a fake `eyeshands` port. It never touches the real Hammerspoon. The loader test needs Lua 5.4 (`brew install lua@5.4`).
+**Tests.** `node --test modules/eyeshands/install.test.mjs` runs the install against a throwaway home folder (`HOME`) and profile, with stub `pgrep`, `hs`, `osascript`, `open` and `claude`, and a fake `eyeshands` port. It never touches the real Hammerspoon. The loader test needs Lua 5.4 (`brew install lua@5.4`). `node --test modules/eyeshands/standalone.test.mjs` runs the standalone `eyeshands install` and `uninstall` against a throwaway home folder in the same way.
