@@ -1311,6 +1311,25 @@ def remove_added(path, added, start, end, created):
     return f"removed the eyeshands block from {path}"
 
 
+def cursor_removable(rec):
+    """(doc, servers) read now from the Cursor file when mcpServers.eyeshands still equals what install added."""
+    path = rec["file"]
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        servers = doc.get("mcpServers") or {}
+        entry = servers.get("eyeshands")
+    except (OSError, ValueError, AttributeError):
+        print(f"left {path}: it is missing or not valid JSON")
+        return None
+    if entry is None:
+        return None
+    if entry != rec.get("entry"):
+        print(f"left mcpServers.eyeshands in {path}: it changed after the install")
+        return None
+    return doc, servers
+
+
 def uninstall(opts):
     p = paths()
     if harness_env():
@@ -1356,22 +1375,8 @@ def uninstall(opts):
                 print(f"left the eyeshands table in {rec['file']}: it changed after the install")
                 continue
             steps.append((f"remove the eyeshands table from {rec['file']}", ("codex", rec)))
-        elif c == "cursor" and os.path.exists(rec.get("file", "")):
-            path = rec["file"]
-            try:
-                with open(path) as f:
-                    doc = json.load(f)
-                servers = doc.get("mcpServers") or {}
-                entry = servers.get("eyeshands")
-            except (OSError, ValueError, AttributeError):
-                print(f"left {path}: it is not valid JSON")
-                continue
-            if entry is None:
-                continue
-            if entry != rec.get("entry"):
-                print(f"left mcpServers.eyeshands in {path}: it changed after the install")
-                continue
-            steps.append((f"remove mcpServers.eyeshands from {path}", ("cursor", (path, doc, servers, rec))))
+        elif c == "cursor" and os.path.exists(rec.get("file", "")) and cursor_removable(rec):
+            steps.append((f"remove mcpServers.eyeshands from {rec['file']}", ("cursor", rec)))
     keep = [x for x in (p["access"], p["targets"], p["backups"]) if os.path.exists(x)]
     if opts.purge:
         purge = keep + [x for x in (p["log"], p["shots"]) if os.path.exists(x)]
@@ -1404,9 +1409,12 @@ def uninstall(opts):
         elif kind == "codex":
             print(remove_added(arg["file"], arg.get("added"), TOML_START, TOML_END, arg.get("created", False)))
         elif kind == "cursor":
-            path, doc, servers, rec = arg
+            found = cursor_removable(arg)
+            if not found:
+                continue
+            path, (doc, servers) = arg["file"], found
             del servers["eyeshands"]
-            if rec.get("created") and not servers and set(doc) <= {"mcpServers"}:
+            if arg.get("created") and not servers and set(doc) <= {"mcpServers"}:
                 os.unlink(path)
                 print(f"removed {path} (install created it)")
             else:
