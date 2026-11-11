@@ -115,6 +115,9 @@ test('value: reads live by id; a stale id falls back to dom; ids belong to one o
     `return E.value({ ${T}, id = "f1", dom = "first" }, "looker")`,
     `E.fields({ ${T}, match = { role = "AXButton" } }, "runner"); return E.value({ ${T}, id = "f7" }, "runner").label`,
     `E.forget("runner"); return E.value({ ${T}, id = "f7" }, "runner").reason`,
+    `E.fields({ ${T} }, "runner"); local old = AX.email; AXAPPS[9] = ax(fixture("ax-form.json")); old.dead = true
+     return E.value({ ${T}, id = "f2", dom = "first" }, "runner")`,
+    `return E.value({ ${T}, id = "f2" }, "runner")`,
   ]));
   assert.deepEqual([out[0].ok, out[0].id, out[0].via, out[0].value, out[0].dom, out[0].target], [true, 'f1', 'id', 'Grace', 'first', 'chrome-test'],
     'read live, not from the fields call');
@@ -129,6 +132,9 @@ test('value: reads live by id; a stale id falls back to dom; ids belong to one o
   assert.deepEqual([out[8].ok, out[8].via, out[8].value], [true, 'dom', 'Ada'], 'dom works without a fields call (on the rebuilt page)');
   assert.equal(out[9], 'Submit');
   assert.equal(out[10], 'unknown_id', 'forget (on disarm) drops the ids');
+  assert.deepEqual([out[11].ok, out[11].via, out[11].dom], [true, 'dom', 'first'], 'a stale id with another dom reads that dom');
+  assert.deepEqual([out[12].via, out[12].dom, out[12].label], ['dom', 'email', 'Email'],
+    'the stale id was not rebound to the other control: it still finds its own');
 });
 
 test('walk limits: max_depth 80, max_nodes 8000, time_ms 4000, and truncated', { skip }, () => {

@@ -21,7 +21,7 @@
 --     onscreen [, checked, checkedSource] [, shown] [, expanded] [, subrole, roleDescription] }
 --   rect      [x, y, w, h] in global screen points (origin top left of the main display), as AX
 --             reports them and as mouse events use them;
---   id        valid until this owner's next fields call on that target; a stale id falls back to
+--   id        valid until this owner's next fields call on any target; a stale id falls back to
 --             dom (the HTML id) in value;
 --   checked   for checkboxes and radio buttons, with checkedSource "ax", "pixels" or "unknown":
 --             Chrome leaves AXValue empty for both states, so the pixels of the control decide,
@@ -466,7 +466,7 @@ return function(deps)
       return true
     end)
     if not found then return refuse("not_found", "no control with that HTML id now", { dom = want }) end
-    if hit then hit.el = foundEl end
+    if hit and want == hit.dom then hit.el = foundEl end
     return reply(found, "dom")
   end
 
