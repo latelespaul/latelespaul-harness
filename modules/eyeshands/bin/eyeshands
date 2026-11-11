@@ -1319,15 +1319,20 @@ def uninstall(opts):
         return 1
     m = load_manifest(p)
     clone = m.get("clone")
-    if clone and os.path.realpath(clone) != os.path.realpath(MODULE):
+    moved = bool(clone) and os.path.realpath(clone) != os.path.realpath(MODULE)
+    if moved and os.path.isdir(clone):
         print(f"eyeshands: not uninstalling: the copy in {clone} made this install; "
               f"run {os.path.join(clone, 'bin', 'eyeshands')} uninstall", file=sys.stderr)
         return 1
+    if moved:
+        print(f"The copy in {clone} made this install and is gone; this copy removes what it added.")
     spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
     steps = []
     for key, src in (("spoon", spoon_src), ("cli", cli_src)):
         if is_link_to(p[key], src):
             steps.append((f"remove the link {p[key]}", ("link", p[key])))
+        elif moved and os.path.islink(p[key]) and not os.path.exists(p[key]):
+            steps.append((f"remove the broken link {p[key]} -> {os.readlink(p[key])}", ("link", p[key])))
         elif os.path.lexists(p[key]):
             print(f"Leaving {p[key]}: it is not a link into this clone.")
     init = m.get("init") or {}

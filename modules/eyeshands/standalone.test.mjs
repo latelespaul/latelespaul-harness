@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync,
-  realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+  realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +201,7 @@ test('uninstall from another copy refuses and names the copy that installed', { 
   const manifest = w.h('.config', 'eyeshands', 'install.json');
   const m = JSON.parse(readFileSync(manifest, 'utf8'));
   m.clone = join(w.dir, 'other-clone', 'modules', 'eyeshands');
+  mkdirSync(m.clone, { recursive: true });
   writeFileSync(manifest, JSON.stringify(m, null, 2) + '\n');
   const before = tree(w.home), log = w.claudeLog();
   const u = w.run(['uninstall', '--yes']);
@@ -208,6 +209,49 @@ test('uninstall from another copy refuses and names the copy that installed', { 
   assert.match(u.stderr, new RegExp(`not uninstalling: .*${m.clone.replace(/[.]/g, '\\.')}.*bin/eyeshands uninstall`));
   assert.deepEqual(tree(w.home), before);
   assert.equal(w.claudeLog(), log);
+});
+
+test('uninstall from a new copy goes ahead when the copy that installed is gone', { skip }, () => {
+  const w = world();
+  seed(w);
+  const gone = join(w.dir, 'old-clone', 'modules', 'eyeshands');
+  assert.equal(w.run(['install', '--yes', '--mcp', 'all']).status, 0);
+  const manifest = w.h('.config', 'eyeshands', 'install.json');
+  const m = JSON.parse(readFileSync(manifest, 'utf8'));
+  m.clone = gone;
+  writeFileSync(manifest, JSON.stringify(m, null, 2) + '\n');
+  for (const rel of [['.hammerspoon', 'Spoons', 'EyesHands.spoon'], ['.local', 'bin', 'eyeshands']]) {
+    unlinkSync(w.h(...rel));
+    symlinkSync(join(gone, ...(rel[0] === '.local' ? ['bin', 'eyeshands'] : ['EyesHands.spoon'])), w.h(...rel));
+  }
+  const u = w.run(['uninstall', '--yes']);
+  assert.equal(u.status, 0, u.stdout + u.stderr);
+  assert.match(u.stdout, /made this install and is gone/);
+  assert.match(u.stdout, /removed .*EyesHands\.spoon/);
+  assert.match(w.claudeLog(), /mcp remove --scope user eyeshands\n$/);
+  const after = tree(w.home);
+  assert.equal(after['.hammerspoon/init.lua'], INIT);
+  assert.equal(after['.codex/config.toml'], CODEX);
+  assert.deepEqual(JSON.parse(after['.cursor/mcp.json']), JSON.parse(CURSOR));
+  assert.equal(after['.local'], undefined);
+  assert.equal(after['.hammerspoon/Spoons'], undefined);
+});
+
+test('uninstall from a new copy never removes a link to an existing foreign target', { skip }, () => {
+  const w = world();
+  assert.equal(w.run(['install', '--yes']).status, 0);
+  const manifest = w.h('.config', 'eyeshands', 'install.json');
+  const m = JSON.parse(readFileSync(manifest, 'utf8'));
+  m.clone = join(w.dir, 'old-clone', 'modules', 'eyeshands');
+  writeFileSync(manifest, JSON.stringify(m, null, 2) + '\n');
+  const spoon = w.h('.hammerspoon', 'Spoons', 'EyesHands.spoon'), foreign = join(w.dir, 'foreign.spoon');
+  mkdirSync(foreign);
+  unlinkSync(spoon);
+  symlinkSync(foreign, spoon);
+  const u = w.run(['uninstall', '--yes']);
+  assert.equal(u.status, 0, u.stdout + u.stderr);
+  assert.match(u.stdout, /Leaving .*EyesHands\.spoon: it is not a link into this clone/);
+  assert.equal(readlinkSync(spoon), foreign);
 });
 
 test('uninstall removes a block the person edited (a hold file) by its markers', { skip }, () => {

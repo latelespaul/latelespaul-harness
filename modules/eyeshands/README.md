@@ -289,7 +289,7 @@ WARNING: Web pages and documents can show text that tries to steer the agent. Th
 ```sh
 eyeshands uninstall
 ```
-It prints every change and asks first. Run it from the copy that made the install. Another copy refuses and names that copy. It removes exactly what the install added:
+It prints every change and asks first. Run it from the copy that made the install. Another copy refuses and names that copy. When that copy is gone (you moved or deleted it), any copy can run the uninstall. It also removes the broken links. It removes exactly what the install added:
 - the two links, if they still point into this clone;
 - the marked block in `init.lua` (your own lines stay, also the lines that you added after the install);
 - the agent connections that `install --mcp` added. A connection that you changed after the install stays, and uninstall tells you so;
