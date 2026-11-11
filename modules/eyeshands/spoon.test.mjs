@@ -63,6 +63,7 @@ test('config: defaults, ~ expansion, and a bad key or value fails at start', { s
   assert.equal(d.access_file, '/home/test/.config/eyeshands/access.json');
   assert.equal(d.targets_file, '/home/test/.config/eyeshands/targets.json');
   assert.equal(d.log_file, '/home/test/Library/Logs/eyeshands.log');
+  assert.equal(d.shot_dir, '/home/test/Library/Caches/eyeshands/shots');
   assert.deepEqual(d.stop_hotkey, { mods: ['ctrl', 'alt', 'cmd'], key: 'escape' });
   assert.equal(d.stop_minutes, 30);
   assert.equal(d.consent_minutes, 10);
@@ -301,7 +302,7 @@ test('the Spoon opens its own port, writes no global, never loads hs.ipc, and an
     `return call({ cmd = "arm", args = ${lstr(args)} })`,
     `local r = call({ cmd = "status" }); return { r, string.find(snapshot(r), ${lstr(k)}, 1, true) == nil }`,
     `return call({ cmd = "eh.targets" })`,
-    `return call({ cmd = "eh.eyes.fields", owner = "runner", args = "{}" })`,
+    `return call({ cmd = "eh.hands.click", owner = "runner", args = "{}" })`,
     `return snapshot(jobhunt) .. snapshot(harness) == BEFORE`,
   ]));
   assert.equal(out[0].n, 1);
@@ -327,7 +328,7 @@ test('the Spoon opens its own port, writes no global, never loads hs.ipc, and an
   assert.equal(out[3][0].result.access.owners.runner.armed, true);
   assert.equal(out[3][1], true, 'status never holds the secret');
   assert.deepEqual(out[4].result.targets, [{ name: 'chrome-test', bundle: 'com.google.Chrome', profile: '/tmp/p', running: true, pid: 9 }]);
-  assert.deepEqual(out[5], { ok: false, error: 'unknown command' }, 'no eyes or hands commands yet');
+  assert.deepEqual(out[5], { ok: false, error: 'unknown command' }, 'no hands commands yet');
   assert.equal(out[6], true, 'the Spoon wrote nothing into jobhunt or harness');
   const log = readFileSync(join(dir, 'eyeshands.log'), 'utf8');
   assert.match(log, /arm owner=runner cmd=arm/);

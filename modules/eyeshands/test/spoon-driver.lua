@@ -16,6 +16,10 @@
 --   R                       what the fake hs saw: ports, closed, hotkeys, menus, notes, touched,
 --                           caf (the caffeinate watcher callback), timers
 --   snapshot(t)             a deep text image of a table (to show it did not change)
+--   ax(spec), fixture(name) fake AX elements from a table or a JSON file in test/ (AX[id] names them;
+--                           AXAPPS[pid] is the app element hs.axuielement returns; CLOCK the ms clock)
+--   image(w, h, fn)         a synthetic hs.image; WINDOWS[pid] = { frame, img } the app's front window
+--   eyes(over)              an eyes.lua instance over fake deps (TARGETS, CAPS, WIMG, AXOK, FRONTAPP)
 local here = arg[0]:match("^(.*)/") or "."
 local SPOON = here .. "/../EyesHands.spoon"
 local fakes = dofile(here .. "/../../hammerspoon/test/fakes.lua")
@@ -88,11 +92,115 @@ function targets(text)
   })
 end
 
+-- ---- fake AX trees, windows and images (the eyes) ---------------------------------------------------
+-- ax(spec) builds fake hs.axuielement objects from a table (a decoded JSON fixture): each node has
+-- "role" (AXRole), "rect" [x, y, w, h] (AXPosition and AXSize), "children", any other AX attribute
+-- by name, "_id" (a name for {"$ref": "<id>"} values elsewhere in the tree) and "_cost" (ms that
+-- reading its AXRole takes on CLOCK). Returns the root element; AX[id] is each named element.
+-- Reading any attribute of an element with dead = true fails, as a stale AX element does.
+CLOCK = 0                                -- hs.timer.absoluteTime() in ms
+AX, AXAPPS, AXSET = {}, {}, {}           -- named elements; pid -> app element; attributes set
+function ax(spec)
+  AX = {}
+  local function make(node, parent)
+    local el = { node = node, parent = parent }
+    function el:attributeValue(name)
+      if self.dead then error("invalid element") end
+      local n = self.node
+      if name == "AXRole" then CLOCK = CLOCK + (n._cost or 0); return n.role end
+      if name == "AXChildren" then return self.kids end
+      if name == "AXParent" then return self.parent end
+      if name == "AXPosition" then return n.rect and { x = n.rect[1], y = n.rect[2] } or nil end
+      if name == "AXSize" then return n.rect and { w = n.rect[3], h = n.rect[4] } or nil end
+      local v = n[name]
+      if type(v) == "table" and v["$ref"] then return AX[v["$ref"]] end
+      if type(v) == "table" and v["$refs"] then
+        local out = {}
+        for i, id in ipairs(v["$refs"]) do out[i] = AX[id] end
+        return out
+      end
+      return v
+    end
+    function el:setAttributeValue(name, v) AXSET[#AXSET + 1] = name .. "=" .. tostring(v); return self end
+    function el:setTimeout() return self end
+    function el:isValid() return not self.dead end
+    el.kids = {}
+    for i, c in ipairs(node.children or {}) do el.kids[i] = make(c, el) end
+    if node._id then AX[node._id] = el end
+    return el
+  end
+  return make(spec, nil)
+end
+function fixture(name)
+  local f = assert(io.open(here .. "/" .. name))
+  local text = f:read("a")
+  f:close()
+  return json.decode(text)
+end
+-- image(w, h, fn): a synthetic hs.image of w x h pixels; fn(px, py) -> r, g, b (0-1).
+function image(w, h, fn)
+  local img = { w = w, h = h }
+  function img:size() return { w = self.w, h = self.h } end
+  function img:colorAt(p)
+    local r, g, b = fn(p.x, p.y)
+    return { red = r, green = g, blue = b, alpha = 1 }
+  end
+  function img:saveToFile(path)
+    local out = io.open(path, "w")
+    if not out then return false end
+    out:write("PNG ", self.w, "x", self.h); out:close()
+    return true
+  end
+  function img:setSize(sz) return image(sz.w, sz.h, fn) end
+  return img
+end
+-- WINDOWS[pid] = { frame = {x, y, w, h}, img = image(...) or nil }: the app's front window.
+WINDOWS, SNAPS = {}, 0
+local function fakeWindow(w)
+  local win = {}
+  function win:frame() return { x = w.frame[1], y = w.frame[2], w = w.frame[3], h = w.frame[4] } end
+  function win:isStandard() return true end
+  function win:isVisible() return true end
+  function win:snapshot() SNAPS = SNAPS + 1; return w.img end
+  return win
+end
+-- eyes(): an eyes.lua instance over fake deps, for unit tests. TARGETS[name] is what resolve
+-- returns; CAPS[owner] the owner's capabilities (a set); WIMG[pid] what windowImage returns.
+TARGETS, CAPS, WIMG, AXOK, FRONTAPP, TLIST = {}, {}, {}, true, nil, {}
+IMGREADS = 0
+function eyes(over)
+  local deps = {
+    axTrusted = function() return AXOK end,
+    appElement = function(pid) return AXAPPS[pid] end,
+    resolve = function(name) return TARGETS[name] or { ok = false, reason = "target_not_running", name = name } end,
+    targetsList = function() return { targets = TLIST } end,
+    front = function() return FRONTAPP end,
+    nowMs = function() return CLOCK end,
+    sleepMs = function(ms) CLOCK = CLOCK + ms end,
+    hasCap = function(owner, cap) return (CAPS[owner] or {})[cap] == true end,
+    windowImage = function(pid)
+      IMGREADS = IMGREADS + 1
+      if WIMG[pid] then return WIMG[pid] end
+      return nil, "no_screen_recording"
+    end,
+    windowShot = function(pid, maxPx) return { path = "/shots/x.png", bounds = { 0, 0, 10, 10 }, max_px = maxPx, pid = pid } end,
+  }
+  for k, v in pairs(over or {}) do deps[k] = v end
+  return dofile(SPOON .. "/eyes.lua")(deps)
+end
+
 -- ---- the fake hs ---------------------------------------------------------------------------------
 R = { ports = {}, closed = {}, hotkeys = {}, menus = {}, notes = {}, touched = {}, timers = {} }
 local function sh(cmd) local f = io.popen(cmd); local out = f:read("a"); f:close(); return out end
 local function q(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
-local function app(pid, name) return { pid = function() return pid end, name = function() return name end } end
+local function app(pid, name, bundle)
+  local a = { pid = function() return pid end, name = function() return name end, bundleID = function() return bundle end }
+  local w = WINDOWS[pid] and fakeWindow(WINDOWS[pid])
+  function a:focusedWindow() return w end
+  function a:mainWindow() return w end
+  function a:allWindows() return { w } end
+  return a
+end
 local fakeHs = {
   json = json, hash = { hmacSHA256 = fakes.hmacSHA256 },
   accessibilityState = function() return true end,
@@ -107,7 +215,10 @@ local fakeHs = {
       return t
     end,
     doAfter = function(_, fn) fn(); return { stop = function() end } end,
+    absoluteTime = function() return CLOCK * 1e6 end,
+    usleep = function(us) CLOCK = CLOCK + us / 1000 end,
   },
+  axuielement = { applicationElementForPID = function(pid) return AXAPPS[pid] end },
   caffeinate = {
     sessionProperties = function() return SESSION end,
     watcher = { screensDidSleep = 1, screensDidWake = 2, screensaverDidStart = 3, screensaverDidStop = 4,
@@ -120,7 +231,8 @@ local fakeHs = {
       for _, a in ipairs(APPS[bundle] or {}) do out[#out + 1] = app(a.pid, a.name) end
       return out
     end,
-    frontmostApplication = function() return FRONT and app(FRONT, "front") or nil end,
+    frontmostApplication = function() return FRONT and app(FRONT, "front", FRONTBUNDLE) or nil end,
+    applicationForPID = function(pid) return app(pid, "app") end,
   },
   hotkey = { bind = function(mods, key, fn)
     local hk = { mods = mods, key = key, fn = fn }

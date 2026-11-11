@@ -1,0 +1,47 @@
+{
+  "_comment": "A generic form as Chrome's AX tree shows it: the app element, its front window with a web area, a dialog window and a sheet. Rects are global screen points.",
+  "role": "AXApplication", "AXTitle": "Browser",
+  "AXFocusedWindow": { "$ref": "win" },
+  "AXWindows": { "$refs": ["win", "dlg"] },
+  "AXFocusedUIElement": { "$ref": "email" },
+  "children": [
+    { "_id": "win", "role": "AXWindow", "AXSubrole": "AXStandardWindow", "AXTitle": "Fixture form", "rect": [0, 25, 1280, 775],
+      "children": [
+        { "role": "AXGroup", "rect": [0, 25, 1280, 87], "children": [ { "role": "AXButton", "AXTitle": "Back", "rect": [10, 70, 30, 30] } ] },
+        { "role": "AXGroup", "rect": [0, 112, 1280, 688], "children": [
+          { "_id": "web", "role": "AXWebArea", "AXURL": "http://127.0.0.1:53111/form", "AXTitle": "Fixture form", "rect": [0, 112, 1280, 688],
+            "children": [
+              { "role": "AXHeading", "AXTitle": "Fixture form", "rect": [412, 130, 320, 40],
+                "children": [ { "role": "AXStaticText", "AXValue": "Fixture form", "rect": [412, 130, 320, 40] } ] },
+              { "_id": "lblFirst", "role": "AXGroup", "rect": [412, 176, 320, 20],
+                "children": [ { "role": "AXStaticText", "AXValue": "First  name", "rect": [412, 176, 80, 20] } ] },
+              { "_id": "first", "role": "AXTextField", "AXTitleUIElement": { "$ref": "lblFirst" }, "AXDOMIdentifier": "first",
+                "AXValue": "Ada", "AXEnabled": true, "rect": [412, 200, 320, 32],
+                "children": [ { "role": "AXStaticText", "AXValue": "Ada" } ] },
+              { "_id": "email", "role": "AXTextField", "AXDescription": "Email", "AXPlaceholderValue": "you@example.com",
+                "AXRequired": true, "AXFocused": true, "AXDOMIdentifier": "email", "AXValue": "", "AXSubrole": "AXEmailField",
+                "rect": [412, 388, 320, 32] },
+              { "_id": "terms", "role": "AXCheckBox", "AXTitle": "I agree", "AXValue": "", "AXDOMIdentifier": "terms", "rect": [412, 440, 16, 16] },
+              { "_id": "news", "role": "AXCheckBox", "AXTitle": "Newsletter", "AXValue": 1, "AXDOMIdentifier": "news", "rect": [412, 470, 16, 16] },
+              { "_id": "yes", "role": "AXRadioButton", "AXTitle": "Yes", "AXValue": "", "AXDOMIdentifier": "yes", "rect": [412, 500, 16, 16] },
+              { "role": "AXGroup", "rect": [412, 530, 320, 32], "children": [
+                { "_id": "city", "role": "AXComboBox", "AXTitle": "City", "AXValue": "", "AXExpanded": false, "AXDOMIdentifier": "city",
+                  "AXRoleDescription": "combo box", "rect": [412, 530, 300, 32] },
+                { "role": "AXGroup", "children": [ { "role": "AXStaticText", "AXValue": "Springfield" } ] }
+              ] },
+              { "role": "AXButton", "AXTitle": "Submit", "AXEnabled": false, "AXDOMIdentifier": "submit", "rect": [412, 580, 100, 32],
+                "children": [ { "role": "AXStaticText", "AXValue": "Submit" } ] },
+              { "role": "AXWebArea", "AXTitle": "Embedded frame", "AXURL": "http://127.0.0.1:53111/frame", "rect": [412, 620, 320, 60],
+                "children": [
+                  { "role": "AXStaticText", "AXValue": "Inside the frame" },
+                  { "role": "AXLink", "AXTitle": "Help", "rect": [420, 650, 40, 20] }
+                ] },
+              { "_id": "notes", "role": "AXTextArea", "AXTitle": "Notes", "AXDOMIdentifier": "notes", "AXValue": "", "rect": [412, 900, 320, 80] }
+            ] }
+        ] },
+        { "role": "AXSheet", "AXTitle": "Open", "rect": [300, 60, 600, 400],
+          "children": [ { "role": "AXSheet", "AXDescription": "Go to folder", "rect": [350, 100, 500, 120] } ] }
+      ] },
+    { "_id": "dlg", "role": "AXWindow", "AXSubrole": "AXDialog", "AXTitle": "Confirm", "rect": [500, 300, 300, 150] }
+  ]
+}
