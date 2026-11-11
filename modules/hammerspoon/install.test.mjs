@@ -126,3 +126,25 @@ test('--dry-run never quits or opens anything', () => {
   assert.deepEqual(s.acted(), []);
   assert.match(r.stdout, /would: osascript/);
 });
+
+test('--restart: restarts an unchanged config too, links nothing, and keeps the deferral', () => {
+  const s = sandbox({ status: {} });
+  writeFileSync(join(s.d, 'status.json'), JSON.stringify({ config: s.hash(), awake: { owners: [] } }));
+  let r = s.run('--restart', 'the eyeshands loader is new');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(s.acted(), [QUIT, OPEN]);
+  assert.match(r.stdout, /restarting Hammerspoon: the eyeshands loader is new/);
+  assert.ok(!existsSync(join(s.home, '.hammerspoon', 'init.lua')), '--restart links nothing');
+
+  const t = sandbox({ status: { config: 'x', awake: { owners: ['job'] }, port: { owners: { r: { armed: true } } } } });
+  r = t.run('--restart', 'the eyeshands loader is new', 'modules/eyeshands/install.sh');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(t.acted(), []);
+  assert.match(r.stdout, /restart deferred: the eyeshands loader is new, but awake mode is held by job and armed: r\. Run modules\/eyeshands\/install\.sh again/);
+
+  const u = sandbox({ running: false });
+  r = u.run('--restart');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(u.acted(), [], 'never starts a Hammerspoon that is not running');
+  assert.match(r.stdout, /not running; nothing to restart/);
+});

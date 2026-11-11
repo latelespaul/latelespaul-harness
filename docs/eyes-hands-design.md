@@ -212,10 +212,12 @@ modules/eyeshands/
   README.md            for a friend (install, grants, MCP, limits)
   SETUP.md             harness install, status, rollback
   install.sh           harness module: links Spoon, CLI, loader
+  loader.lua           linked to ~/.hammerspoon/local/eyeshands.lua; starts the Spoon
   claude-notes.md.tmpl appended to CLAUDE.md
   EyesHands.spoon/     the engine (with a copy of port.lua)
   bin/eyeshands        CLI + MCP server (Python 3)
   targets.example.json
+  access.example.json  owners for the one access policy file (decision 9)
   packaging/           DMG build, Homebrew formula template
   test/                fakes, fixtures, unit and live tests
 skills/eyes-hands/SKILL.md  exists; PR 10 extends it

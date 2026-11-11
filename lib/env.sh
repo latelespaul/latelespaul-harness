@@ -7,7 +7,7 @@ HARNESS_DIR=${_harness_lib:h}
 unset _harness_lib
 
 # Values typed as ~/something.
-for _k in PROJECTS_DIR PROFILE_DIR TELEGRAM_WORKDIR FIRSTMATE_DIR HS_ACCESS_FILE; do
+for _k in PROJECTS_DIR PROFILE_DIR TELEGRAM_WORKDIR FIRSTMATE_DIR HS_ACCESS_FILE EYESHANDS_TARGETS_FILE; do
   [[ ${(P)_k} == '~'* ]] && typeset -g $_k="$HOME${${(P)_k}#\~}"
 done
 unset _k
@@ -37,6 +37,7 @@ unset _k
 : ${CLAUDE_P_IGNORE_API_KEY:=0}
 : ${HS_IPC_GENERIC:=1}
 : ${HS_ACCESS_FILE:=$PROFILE_DIR/hammerspoon/access.json}
+: ${EYESHANDS_TARGETS_FILE:=$PROFILE_DIR/eyeshands/targets.json}
 MEMORY_DIRS=${MEMORY_DIRS//\~/$HOME}
 
 # Keys a template may use as __KEY__ (modules add their own).

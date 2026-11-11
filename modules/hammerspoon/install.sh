@@ -5,6 +5,9 @@
 #                         awake mode is held or an owner is armed; see SETUP.md)
 #   install.sh --status   is it running, is the `hs` CLI reachable, are the permissions on? (exit 1 if not)
 #   install.sh --config-hash   the fingerprint init.lua reports as "config" for this harness
+#   install.sh --restart [why] [again]   restart a running Hammerspoon now, whatever its config,
+#                         with the same deferral (other modules use this; `again` is the command
+#                         the deferral message tells the person to run again)
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
 source ${0:A:h:h:h}/lib/common.sh
@@ -64,9 +67,40 @@ case ${1:-install} in
   [[ $j == *'"screen_recording":false'* ]] && { print "Grant Screen Recording: System Settings > Privacy & Security > Screen Recording > Hammerspoon."; exit 1 }
   exit 0 ;;
 --config-hash) config_hash; exit 0 ;;
+--restart) ;;
 install) ;;
-*) print "usage: $0 [--status | --config-hash]"; exit 1 ;;
+*) print "usage: $0 [--status | --config-hash | --restart [why] [again]]"; exit 1 ;;
 esac
+
+# restart_unless_busy <why> <again> <needs lines...>: restart Hammerspoon, or print why not and
+# leave it running while an awake hold or a port arm needs it.
+restart_unless_busy() {
+  local why=$1 again=$2; shift 2
+  local info=("$@") holds arms busy=()
+  holds=(${${(M)info:#hold *}#hold }) arms=(${${(M)info:#arm *}#arm })
+  (( $#holds )) && busy+=("awake mode is held by ${(j:, :)holds}")
+  (( $#arms )) && busy+=("armed: ${(j:, :)arms}")
+  if (( $#busy )); then
+    print -r -- "restart deferred: $why, but ${(j: and :)busy}. Run $again again once they finish."
+    return 0
+  fi
+  print -r -- "restarting Hammerspoon: $why"
+  act osascript -e 'tell application "Hammerspoon" to quit'
+  dry || sleep 2
+  act open -a Hammerspoon
+  print "Hammerspoon restarted with the harness config. Check: $0 --status"
+}
+
+if [[ $1 == --restart ]]; then
+  pgrep -xq Hammerspoon || { print "Hammerspoon is not running; nothing to restart."; exit 0 }
+  if j=$(status_json); then
+    info=("${(@f)$(print -r -- "$j" | needs status)}")
+  else
+    info=("${(@f)$(needs file $HOME/.hammerspoon/harness-awake.json)}")
+  fi
+  restart_unless_busy "${2:-a restart was asked for}" "${3:-$0 --restart}" $info
+  exit 0
+fi
 
 [[ -d $hs_app ]] || { print "Install it first: brew install --cask hammerspoon"; dry || exit 1 }
 ensure_dir $HOME/.hammerspoon
@@ -98,16 +132,4 @@ else
   info=("${(@f)$(needs file $HOME/.hammerspoon/harness-awake.json)}")
   why="Hammerspoon does not answer"
 fi
-holds=(${${(M)info:#hold *}#hold }) arms=(${${(M)info:#arm *}#arm })
-busy=()
-(( $#holds )) && busy+=("awake mode is held by ${(j:, :)holds}")
-(( $#arms )) && busy+=("armed: ${(j:, :)arms}")
-if (( $#busy )); then
-  print -r -- "restart deferred: $why, but ${(j: and :)busy}. Run $0 again once they finish."
-  exit 0
-fi
-print -r -- "restarting Hammerspoon: $why"
-act osascript -e 'tell application "Hammerspoon" to quit'
-dry || sleep 2
-act open -a Hammerspoon
-print "Hammerspoon restarted with the harness config. Check: $0 --status"
+restart_unless_busy "$why" "$0" $info
