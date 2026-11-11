@@ -19,6 +19,15 @@ that the two are the same). Python 3 standard library only.
   eyeshands access list | allow <owner> <cap,cap> [--apps a,b] [...] | deny <owner>
                                      hsx access rules on the Eyes & Hands access policy file
   eyeshands doctor [--fix] [--smoke --owner O]   check the install (part 17)
+  eyeshands install [--mcp claude-code,codex,cursor|all] [--yes] [--dry-run]
+                                     standalone install from a clone (no harness): link the Spoon
+                                     and this CLI, add a marked loader block to ~/.hammerspoon/init.lua
+                                     (after a backup), create a default-deny access file, run the
+                                     doctor; shows every change and asks first; never reloads Hammerspoon
+  eyeshands uninstall [--purge] [--yes] [--dry-run]
+                                     remove exactly what install added (its record:
+                                     ~/.config/eyeshands/install.json); --purge also deletes the
+                                     access and targets files, backups, log and shots
 
 One-shot eyes and hands commands arm the owner with a fresh secret, make one call and disarm. A
 hands command that starts a job waits for the job to end first (a disarm aborts it), then prints
@@ -902,7 +911,9 @@ def doctor(opts, port):
     r.line("PASS", f"python3 {platform.python_version()}")
     where = shutil.which("eyeshands")
     r.line("PASS" if where else "WARN", f"eyeshands on PATH ({where})" if where else "eyeshands is not on PATH",
-           None if where else f"ln -s {os.path.realpath(__file__)} ~/.local/bin/eyeshands")
+           None if where else ("add ~/.local/bin to PATH: echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc"
+                               if os.path.lexists(home(".local", "bin", "eyeshands"))
+                               else "eyeshands install (or: ln -s " + os.path.realpath(__file__) + " ~/.local/bin/eyeshands)"))
     # 11. MCP wiring (report only)
     mcp_report(r)
     # 12. smoke test, after the person says yes
@@ -992,6 +1003,410 @@ def smoke(opts, port, r):
         owner.disarm()
 
 
+# ---------- standalone install and uninstall (parts 16 A and 17) ----------
+# For a clone of this repo on a Mac that does not run the harness. Every change is shown first and
+# needs a yes. Nothing reloads Hammerspoon: the person reloads its config when it suits them, so a
+# running Hammerspoon tool never stops in the middle of its work. A manifest records what install
+# changed, and uninstall removes exactly that.
+MODULE = os.path.dirname(HERE)
+MARK_START = "-- >>> eyeshands: added by `eyeshands install`; `eyeshands uninstall` removes this block"
+MARK_END = "-- <<< eyeshands"
+INIT_BLOCK = MARK_START + """
+do
+  local ok, err = pcall(function() hs.loadSpoon("EyesHands"):start() end)
+  if not ok then print("eyeshands: the Spoon did not start: " .. tostring(err)) end
+end
+""" + MARK_END + "\n"
+TOML_START = "# >>> eyeshands: added by `eyeshands install`; `eyeshands uninstall` removes this block"
+TOML_END = "# <<< eyeshands"
+MCP_OWNERS = {"claude-code": "claude-code", "codex": "codex", "cursor": "cursor"}
+DEFAULT_DENY = {
+    "_comment": "Who may use Eyes & Hands. Default deny: an owner that is not listed and enabled cannot arm. "
+                "Add one with: eyeshands access allow <owner> eyes,hands --apps com.apple.TextEdit. "
+                "Capabilities: eyes (AX reads), shot (screen pixels; only with eyes), hands (posted input). "
+                "apps: the target names and bundle ids the owner may read or drive.",
+    "owners": {},
+}
+
+
+def paths():
+    return {
+        "spoon": home(".hammerspoon", "Spoons", "EyesHands.spoon"),
+        "cli": home(".local", "bin", "eyeshands"),
+        "init": home(".hammerspoon", "init.lua"),
+        "loader": home(".hammerspoon", "local", "eyeshands.lua"),
+        "conf": home(".config", "eyeshands"),
+        "access": home(".config", "eyeshands", "access.json"),
+        "targets": home(".config", "eyeshands", "targets.json"),
+        "manifest": home(".config", "eyeshands", "install.json"),
+        "backups": home(".config", "eyeshands", "backups"),
+        "claude": home(".claude.json"),
+        "codex": home(".codex", "config.toml"),
+        "cursor": home(".cursor", "mcp.json"),
+        "log": home("Library", "Logs", "eyeshands.log"),
+        "shots": home("Library", "Caches", "eyeshands"),
+    }
+
+
+CREATED_DIRS = set()   # folders this run made; the manifest keeps them so uninstall removes them when empty
+
+
+def mkdirs(d, mode=0o755):
+    missing, x = [], d
+    while x and not os.path.isdir(x):
+        missing.append(x)
+        x = os.path.dirname(x)
+    os.makedirs(d, mode=mode, exist_ok=True)
+    CREATED_DIRS.update(missing)
+
+
+def is_link_to(path, src):
+    return os.path.islink(path) and os.path.realpath(path) == os.path.realpath(src)
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def write_text(path, text, mode=None):
+    d = os.path.dirname(path)
+    mkdirs(d)
+    tmp = os.path.join(d, f".{os.path.basename(path)}.eyeshands-{os.getpid()}")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    if mode is not None:
+        os.chmod(tmp, mode)
+    elif os.path.exists(path):
+        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+    os.replace(tmp, path)
+
+
+def backup(p, path, stamp):
+    """Copy path into the backups folder; returns the copy's path."""
+    mkdirs(p["conf"], 0o700)
+    mkdirs(p["backups"], 0o700)
+    dest = os.path.join(p["backups"], f"{os.path.basename(path)}.{stamp}")
+    shutil.copy2(path, dest)
+    return dest
+
+
+def load_manifest(p):
+    try:
+        with open(p["manifest"]) as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_manifest(p, m):
+    mkdirs(p["conf"], 0o700)
+    m["dirs"] = sorted(set(m.get("dirs") or []) | CREATED_DIRS)
+    write_text(p["manifest"], json.dumps(m, indent=2) + "\n", 0o600)
+
+
+def confirm(opts, question):
+    if opts.yes:
+        return True
+    if not sys.stdin.isatty():
+        print("eyeshands: nothing changed: run this in a terminal to answer the question, or add --yes", file=sys.stderr)
+        return False
+    return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+
+
+def mcp_clients(text):
+    if not text:
+        return []
+    names_ = list(MCP_OWNERS) if text == "all" else [c for c in text.split(",") if c]
+    bad = [c for c in names_ if c not in MCP_OWNERS]
+    if bad:
+        usage(f"--mcp takes claude-code, codex, cursor or all (not {','.join(bad)})")
+    return names_
+
+
+def claude_has_server(p):
+    try:
+        with open(p["claude"]) as f:
+            return "eyeshands" in ((json.load(f) or {}).get("mcpServers") or {})
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def standalone_refusal(p):
+    """Why the standalone install must not run here, or None."""
+    if sys.platform != "darwin":
+        return "Eyes & Hands runs only on macOS"
+    if harness_env():
+        return ("this copy runs inside a configured harness (harness.env exists); "
+                "use modules/eyeshands/install.sh, which runs the Spoon inside the harness Hammerspoon")
+    if os.path.lexists(p["loader"]):
+        return f"{p['loader']} exists: the harness module already starts Eyes & Hands on this Mac"
+    if os.path.islink(p["init"]):
+        return (f"{p['init']} is a link to {os.path.realpath(p['init'])}, so another tool owns your Hammerspoon "
+                "config. Add these lines to that config yourself:\n" + INIT_BLOCK)
+    for key, src in (("spoon", os.path.join(MODULE, "EyesHands.spoon")), ("cli", os.path.join(HERE, "eyeshands"))):
+        if os.path.lexists(p[key]) and not is_link_to(p[key], src):
+            other = os.path.realpath(p[key]) if os.path.islink(p[key]) else "not a link"
+            return (f"{p[key]} exists and is not a link into this clone ({other}). "
+                    "Remove it, or run `eyeshands uninstall` from the copy that installed it")
+    return None
+
+
+def install(opts):
+    p = paths()
+    clients = mcp_clients(opts.mcp)
+    why = standalone_refusal(p)
+    if why:
+        print(f"eyeshands: not installing: {why}", file=sys.stderr)
+        return 1
+    spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
+    init_text = read_text(p["init"])
+    steps = []   # (description, action name)
+    if not is_link_to(p["spoon"], spoon_src):
+        steps.append((f"link {p['spoon']} -> {spoon_src}", "spoon"))
+    if not is_link_to(p["cli"], cli_src):
+        steps.append((f"link {p['cli']} -> {cli_src}", "cli"))
+    if init_text is not None and 'loadSpoon("EyesHands")' in init_text:
+        print(f"{p['init']} already loads the Spoon; leaving it as it is.")
+    elif init_text is None:
+        steps.append((f"create {p['init']} with this block:\n{INIT_BLOCK}", "init"))
+    else:
+        steps.append((f"back up {p['init']} to {p['backups']}/, then add this block at its end:\n{INIT_BLOCK}", "init"))
+    if not os.path.exists(p["access"]):
+        steps.append((f"create {p['access']} (default deny: no owner may arm)", "access"))
+    for c in clients:
+        if c == "claude-code":
+            if claude_has_server(p):
+                print("MCP: Claude Code already has an eyeshands server; leaving it.")
+            elif not shutil.which("claude"):
+                print(f"MCP: claude is not on PATH; later run: claude mcp add --scope user eyeshands -- {p['cli']} mcp --owner claude-code")
+            else:
+                steps.append((f"run: claude mcp add --scope user eyeshands -- {p['cli']} mcp --owner claude-code", "claude-code"))
+        elif c == "codex":
+            text = read_text(p["codex"])
+            if text is not None and re.search(r"^\s*\[mcp_servers\.eyeshands\]", text, re.M):
+                print(f"MCP: {p['codex']} already has [mcp_servers.eyeshands]; leaving it.")
+            else:
+                steps.append((("back up and add" if text is not None else "create with") +
+                              f" a marked [mcp_servers.eyeshands] table in {p['codex']} (owner codex)", "codex"))
+        elif c == "cursor":
+            text = read_text(p["cursor"])
+            try:
+                doc = json.loads(text) if text is not None else {}
+            except ValueError:
+                print(f"eyeshands: not installing: {p['cursor']} is not valid JSON; fix it or leave out cursor", file=sys.stderr)
+                return 1
+            if not isinstance(doc, dict) or not isinstance(doc.get("mcpServers", {}), dict):
+                print(f"eyeshands: not installing: {p['cursor']} has no mcpServers object", file=sys.stderr)
+                return 1
+            if "eyeshands" in doc.get("mcpServers", {}):
+                print(f"MCP: {p['cursor']} already has an eyeshands server; leaving it.")
+            else:
+                steps.append((("back up and add" if text is not None else "create with") +
+                              f" mcpServers.eyeshands in {p['cursor']} (owner cursor; the file is written again as 2-space JSON)", "cursor"))
+    if not steps:
+        print("Eyes & Hands is already installed from this clone. Check it: eyeshands doctor")
+        return 0
+    print("eyeshands install will make these changes:")
+    for i, (text, _) in enumerate(steps, 1):
+        print(f"  {i}. {text}")
+    print("It never reloads Hammerspoon and never changes another Hammerspoon file.")
+    if opts.dry_run:
+        print("Dry run: nothing changed.")
+        return 0
+    if not confirm(opts, "Make these changes?"):
+        print("Nothing changed.")
+        return 1
+    m = load_manifest(p)
+    m.update({"version": 1, "clone": MODULE})
+    m.setdefault("links", [])
+    m.setdefault("mcp", {})
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for _, action in steps:
+        if action in ("spoon", "cli"):
+            src = spoon_src if action == "spoon" else cli_src
+            mkdirs(os.path.dirname(p[action]))
+            os.symlink(src, p[action])
+            m["links"] = sorted(set(m["links"]) | {p[action]})
+        elif action == "init":
+            if init_text is None:
+                write_text(p["init"], INIT_BLOCK)
+                m["init"] = {"file": p["init"], "created": True, "added": INIT_BLOCK}
+            else:
+                added = ("" if init_text.endswith("\n") or init_text == "" else "\n") + "\n" + INIT_BLOCK
+                m["init"] = {"file": p["init"], "created": False, "added": added, "backup": backup(p, p["init"], stamp)}
+                write_text(p["init"], init_text + added)
+        elif action == "access":
+            mkdirs(p["conf"], 0o700)
+            write_text(p["access"], json.dumps(DEFAULT_DENY, indent=2) + "\n", 0o600)
+            m["access_created"] = True
+        elif action == "claude-code":
+            rc, out = run(["claude", "mcp", "add", "--scope", "user", "eyeshands", "--", p["cli"], "mcp", "--owner", "claude-code"])
+            if rc == 0:
+                m["mcp"]["claude-code"] = {"command": p["cli"]}
+            else:
+                print(f"MCP: claude mcp add failed ({out.strip()}); run it yourself later.")
+        elif action == "codex":
+            text = read_text(p["codex"])
+            block = f'{TOML_START}\n[mcp_servers.eyeshands]\ncommand = {json.dumps(p["cli"])}\nargs = ["mcp", "--owner", "codex"]\n{TOML_END}\n'
+            rec = {"file": p["codex"], "created": text is None}
+            if text is None:
+                rec["added"] = block
+                write_text(p["codex"], block)
+            else:
+                rec["added"] = ("" if text.endswith("\n") or text == "" else "\n") + "\n" + block
+                rec["backup"] = backup(p, p["codex"], stamp)
+                write_text(p["codex"], text + rec["added"])
+            m["mcp"]["codex"] = rec
+        elif action == "cursor":
+            text = read_text(p["cursor"])
+            doc = json.loads(text) if text is not None else {}
+            entry = {"command": p["cli"], "args": ["mcp", "--owner", "cursor"]}
+            rec = {"file": p["cursor"], "created": text is None, "entry": entry}
+            if text is not None:
+                rec["backup"] = backup(p, p["cursor"], stamp)
+            doc.setdefault("mcpServers", {})["eyeshands"] = entry
+            write_text(p["cursor"], json.dumps(doc, indent=2) + "\n")
+            m["mcp"]["cursor"] = rec
+        save_manifest(p, m)   # after each step, so an uninstall after a crash still finds it
+    print(f"Installed. The record of these changes is {p['manifest']}.")
+    print()
+    print("Next steps:")
+    print("  1. Reload the Hammerspoon config: click the Hammerspoon menu bar icon, then Reload Config.")
+    print("     A reload restarts every Hammerspoon tool, so do it when none is working.")
+    print("  2. Give an agent its rights (default deny), for example:")
+    print("       eyeshands access allow claude-code eyes,hands --apps com.apple.TextEdit")
+    if os.path.dirname(p["cli"]) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(f"  3. {os.path.dirname(p['cli'])} is not on PATH. Add it: echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc")
+    print()
+    print("The doctor checks the install now (some checks pass only after the reload):")
+    doctor(argparse.Namespace(fix=False, smoke=False, owner=None), Port(opts.port, min(opts.timeout, 3.0)))
+    return 0
+
+
+def remove_added(path, added, start, end, created):
+    """Remove the exact text install added (else the marked block); returns what happened."""
+    text = read_text(path)
+    if text is None:
+        return f"{path} is gone already"
+    if added and text.count(added) == 1:
+        text = text.replace(added, "", 1)
+    else:
+        lines = text.splitlines(keepends=True)
+        try:
+            a = next(i for i, l in enumerate(lines) if l.rstrip("\n") == start)
+            b = next(i for i in range(a, len(lines)) if lines[i].rstrip("\n") == end)
+        except StopIteration:
+            return f"{path} has no eyeshands block (already removed)"
+        text = "".join(lines[:a] + lines[b + 1:])
+    if created and text.strip() == "":
+        os.unlink(path)
+        return f"removed {path} (install created it)"
+    write_text(path, text)
+    return f"removed the eyeshands block from {path}"
+
+
+def uninstall(opts):
+    p = paths()
+    if harness_env():
+        print("eyeshands: not uninstalling: this copy runs inside a configured harness; "
+              "use modules/eyeshands/install.sh --uninstall", file=sys.stderr)
+        return 1
+    m = load_manifest(p)
+    spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
+    steps = []
+    for key, src in (("spoon", spoon_src), ("cli", cli_src)):
+        if is_link_to(p[key], src):
+            steps.append((f"remove the link {p[key]}", ("link", p[key])))
+        elif os.path.lexists(p[key]):
+            print(f"Leaving {p[key]}: it is not a link into this clone.")
+    init = m.get("init") or {}
+    text = read_text(p["init"])
+    if not os.path.islink(p["init"]) and text is not None and MARK_START in text:
+        steps.append((f"remove the eyeshands block from {p['init']}", ("init", init)))
+    for c, rec in sorted((m.get("mcp") or {}).items()):
+        if c == "claude-code":
+            if claude_has_server(p):
+                steps.append(("run: claude mcp remove --scope user eyeshands", ("claude-code", rec)))
+        elif c == "codex" and TOML_START in (read_text(rec.get("file", "")) or ""):
+            steps.append((f"remove the eyeshands table from {rec['file']}", ("codex", rec)))
+        elif c == "cursor" and os.path.exists(rec.get("file", "")):
+            steps.append((f"remove mcpServers.eyeshands from {rec.get('file')}", ("cursor", rec)))
+    keep = [x for x in (p["access"], p["targets"], p["backups"]) if os.path.exists(x)]
+    if opts.purge:
+        purge = keep + [x for x in (p["log"], p["shots"]) if os.path.exists(x)]
+        for x in purge:
+            steps.append((f"delete {x}", ("purge", x)))
+    if not steps and (not m or m.get("uninstalled")):
+        print("Eyes & Hands is not installed from this clone: nothing to remove."
+              + (" Kept files stay; --purge deletes them." if keep and not opts.purge else ""))
+        return 0
+    print("eyeshands uninstall will make these changes:")
+    for i, (t, _) in enumerate(steps, 1):
+        print(f"  {i}. {t}")
+    if os.path.exists(p["manifest"]):
+        print(f"  {len(steps) + 1}. delete the install record {p['manifest']}")
+    if opts.dry_run:
+        print("Dry run: nothing changed.")
+        return 0
+    if not confirm(opts, "Make these changes?"):
+        print("Nothing changed.")
+        return 1
+    for _, (kind, arg) in steps:
+        if kind == "link":
+            os.unlink(arg)
+            print(f"removed {arg}")
+        elif kind == "init":
+            print(remove_added(p["init"], arg.get("added"), MARK_START, MARK_END, arg.get("created", False)))
+        elif kind == "claude-code":
+            rc, out = run(["claude", "mcp", "remove", "--scope", "user", "eyeshands"])
+            print("removed the Claude Code MCP server" if rc == 0 else f"claude mcp remove failed ({out.strip()}); run it yourself")
+        elif kind == "codex":
+            print(remove_added(arg["file"], arg.get("added"), TOML_START, TOML_END, arg.get("created", False)))
+        elif kind == "cursor":
+            path = arg.get("file", p["cursor"])
+            try:
+                with open(path) as f:
+                    doc = json.load(f)
+                servers = doc.get("mcpServers") or {}
+            except (OSError, ValueError, AttributeError):
+                print(f"left {path}: it is missing or not valid JSON")
+                continue
+            if servers.get("eyeshands") != arg.get("entry"):
+                print(f"left mcpServers.eyeshands in {path}: it changed after the install")
+                continue
+            del servers["eyeshands"]
+            if arg.get("created") and not servers and set(doc) <= {"mcpServers"}:
+                os.unlink(path)
+                print(f"removed {path} (install created it)")
+            else:
+                write_text(path, json.dumps(doc, indent=2) + "\n")
+                print(f"removed mcpServers.eyeshands from {path}")
+        elif kind == "purge":
+            shutil.rmtree(arg) if os.path.isdir(arg) and not os.path.islink(arg) else os.unlink(arg)
+            print(f"deleted {arg}")
+    if os.path.exists(p["manifest"]):
+        os.unlink(p["manifest"])
+    # Folders that install made, deepest first, when nothing else is in them now.
+    dirs = set(m.get("dirs") or [])
+    for d in sorted(dirs | ({p["conf"]} if opts.purge else set()), key=len, reverse=True):
+        if os.path.isdir(d) and not os.path.islink(d) and not os.listdir(d):
+            os.rmdir(d)
+    # Kept files hold some of those folders: a short record lets a later --purge remove them too.
+    left = sorted(d for d in dirs if os.path.isdir(d))
+    if not opts.purge and left and os.path.isdir(p["conf"]):
+        write_text(p["manifest"], json.dumps({"version": 1, "uninstalled": True, "dirs": left}, indent=2) + "\n", 0o600)
+    if not opts.purge and keep:
+        print("Kept (add --purge to delete): " + ", ".join(keep))
+    print("Reload the Hammerspoon config (menu bar icon, then Reload Config) to stop the Spoon that still runs.")
+    print("Grants stay in System Settings > Privacy & Security, because other Hammerspoon tools may need them.")
+    return 0
+
+
 # ---------- main ----------
 def parser():
     p = argparse.ArgumentParser(prog="eyeshands", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1022,6 +1437,13 @@ def parser():
     d.add_argument("--fix", action="store_true")
     d.add_argument("--smoke", action="store_true")
     d.add_argument("--owner")
+    i = sub.add_parser("install")
+    i.add_argument("--mcp", metavar="CLIENTS", help="also wire the MCP server into claude-code, codex, cursor (comma list) or all")
+    u = sub.add_parser("uninstall")
+    u.add_argument("--purge", action="store_true", help="also delete the access and targets files, backups, log and shots")
+    for q in (i, u):
+        q.add_argument("--yes", action="store_true", help="do not ask (the changes are still printed)")
+        q.add_argument("--dry-run", action="store_true", help="print the changes, make none")
     ac = sub.add_parser("access").add_subparsers(dest="action", required=True)
     for q in (ac.add_parser("list"), ac.add_parser("allow"), ac.add_parser("deny")):
         q.add_argument("--file")
@@ -1055,6 +1477,8 @@ def main():
     if opts.op == "access":
         access(opts)
         return 0
+    if opts.op in ("install", "uninstall"):
+        return install(opts) if opts.op == "install" else uninstall(opts)
     port = Port(opts.port, opts.timeout)
     if opts.op == "doctor":
         return doctor(opts, port)
