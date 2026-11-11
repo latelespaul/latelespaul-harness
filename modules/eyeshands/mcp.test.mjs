@@ -341,6 +341,26 @@ test('wall guard: profiled aliases of one bundle are separate windows; a target 
   } finally { c.kill(); f.stop(); }
 });
 
+test('wall guard: a refusal across spellings names the target that saw the wall (seen_via); eyes_text there lifts it', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  for (const [via, other] of [['com.example.browser', 'chrome-agent'], ['chrome-agent', 'com.example.browser']]) {
+    const f = await fakePort({ job_polls: 1, targets: TARGETS,
+      text_seq: [{ url: A, lines: ['Please verify you are human'] }, { url: A, lines: ['Email'] }] });
+    const c = client(f.name);
+    try {
+      await c.init();
+      assert.deepEqual((await c.call('eyes_text', { target: via })).json.wall, ['human']);
+      const r = await c.call('hands_click', { target: other, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', via);
+      assert.equal(r.json.seen_via, via);
+      assert.match(r.json.hint, /seen_via/);
+      assert.deepEqual((await c.call('eyes_text', { target: r.json.seen_via })).json.wall, []);
+      assert.equal((await c.call('hands_click', { target: other, to: { x: 1, y: 1 } })).isError, false, via);
+      await c.close();
+    } finally { c.kill(); f.stop(); }
+  }
+});
+
 test('wall guard fails closed when the window cannot be told', { skip }, async () => {
   const A = 'https://example.test/apply';
   // a name that is neither a target nor a bundle id, while a wall mark exists

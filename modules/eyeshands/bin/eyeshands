@@ -283,7 +283,7 @@ SERVER_VERSION = "0.1.0"
 SHOT_MAX_PX = 1568       # the long edge of an image that MCP clients take without scaling it again
 SHOT_NAME = re.compile(r"^shot-\d+-[0-9a-f]{4}\.png$")
 WALL_HINT = ("a human check or code wall shows on this page: never solve it; send eyes_shot to the person "
-             "and wait. Hands refuse on this page until a new eyes_text shows no wall")
+             "and wait. Hands refuse on this page until a new eyes_text through the target in seen_via shows no wall")
 
 WALL_UNKNOWN_HINT = ("a wall was seen and this server cannot tell which window this target is (eh.targets failed or "
                      "the name is not a target or bundle id): hands refuse until a new eyes_text through the target "
@@ -518,7 +518,7 @@ class Mcp:
         self.port, self.max_wait = port, max_wait
         self.owner = Owner(port, owner, minutes)
         self.urls = {}      # window -> the url of its latest eyes reply, while any wall mark exists
-        self.walls = {}     # (window, url) -> the walls the latest eyes_text there showed
+        self.walls = {}     # (window, url) -> (the walls the latest eyes_text there showed, the target it went through)
         self.kept = 0       # takeovers in this task, kept until hands_release
         self.seen = 0       # the Spoon's last reported count (it resets when its lease ends)
 
@@ -585,12 +585,13 @@ class Mcp:
         if kind == "input" and self.walls:
             win = self.window(target)
             if win is None or any(w[0] is None for w, _ in self.walls):
-                return {"ok": False, "reason": "wall", "wall": sorted({x for v in self.walls.values() for x in v}),
+                return {"ok": False, "reason": "wall", "wall": sorted({x for v, _ in self.walls.values() for x in v}),
                         "hint": WALL_UNKNOWN_HINT}, None
-            for (w, url), seen in self.walls.items():
+            for (w, url), (seen, via) in self.walls.items():
                 same = w == win or w[0] == win[0] and (w[1] is None or win[1] is None)   # no profile: any process
                 if same and self.urls.get(w) == url:
-                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
+                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "seen_via": via,
+                            "hint": WALL_HINT}, None
         if name == "eyes_shot":
             args = dict(args, max_px=min(args.get("max_px", SHOT_MAX_PX), SHOT_MAX_PX))
         rep = enrich(cmd, self.signed(cmd, args or None))
@@ -607,7 +608,7 @@ class Mcp:
             if name == "eyes_text":
                 key = (win, self.urls.get(win))
                 if walled:
-                    self.walls[key] = res["wall"]
+                    self.walls[key] = (res["wall"], target)
                 else:
                     self.walls.pop(key, None)
                     self.walls = {k: v for k, v in self.walls.items() if k[0] != (None, target)}
