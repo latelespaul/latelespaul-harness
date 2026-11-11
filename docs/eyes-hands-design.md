@@ -348,7 +348,7 @@ Example: `{"ok":false,"reason":"present","human_idle_s":12,"idle_buffer_s":20,"r
 - Moves: a cubic Bézier curve to a centre-biased point in the rect. The duration follows Fitts's law (time grows with distance over target size), clamped to 250-900 ms, with ease-out timing. About one move in five overshoots by 4-25 px and corrects. Every move event carries a non-zero `movementX/Y`.
 - Clicks: settle 40-120 ms, hold 60-140 ms.
 - Typing: one key event per character with its Unicode string, so `ä`, `ß` and `é` work. Gaps are 40-180 ms, longer after a space and after punctuation. Capitals come inside a real Shift press. Over 300 characters, the hands paste through the clipboard and then put the old clipboard back.
-- Keys: one change from job-hunt. Key codes come from `hs.keycodes.map` for the current keyboard layout, not from a fixed US table. Thus `cmd+shift+g` presses G on an AZERTY keyboard too.
+- Keys: one change from job-hunt. Key codes come from `hs.keycodes.map` for the current keyboard layout, not from a fixed US table. Thus `cmd+shift+g` presses G on an AZERTY keyboard too. The planner never guesses a key: on a layout other than US, a character with no key in the map gets key events with only its Unicode string and no key code.
 - Scroll: a few wheel ticks that sum exactly to the requested pixels.
 - The random number generator is SplitMix64 on Lua 5.4 integers. It gives the same sequence as `plan.mjs` for the same seed, so CI compares the two planners with golden vectors.
 
