@@ -1128,12 +1128,13 @@ def mcp_clients(text):
     return names_
 
 
-def claude_has_server(p):
+def claude_server(p):
+    """The user-scope eyeshands server in ~/.claude.json, or None."""
     try:
         with open(p["claude"]) as f:
-            return "eyeshands" in ((json.load(f) or {}).get("mcpServers") or {})
+            return ((json.load(f) or {}).get("mcpServers") or {}).get("eyeshands")
     except (OSError, ValueError, AttributeError):
-        return False
+        return None
 
 
 def standalone_refusal(p):
@@ -1180,7 +1181,7 @@ def install(opts):
         steps.append((f"create {p['access']} (default deny: no owner may arm)", "access"))
     for c in clients:
         if c == "claude-code":
-            if claude_has_server(p):
+            if claude_server(p) is not None:
                 print("MCP: Claude Code already has an eyeshands server; leaving it.")
             elif not shutil.which("claude"):
                 print(f"MCP: claude is not on PATH; later run: claude mcp add --scope user eyeshands -- {p['cli']} mcp --owner claude-code")
@@ -1317,6 +1318,11 @@ def uninstall(opts):
               "use modules/eyeshands/install.sh --uninstall", file=sys.stderr)
         return 1
     m = load_manifest(p)
+    clone = m.get("clone")
+    if clone and os.path.realpath(clone) != os.path.realpath(MODULE):
+        print(f"eyeshands: not uninstalling: the copy in {clone} made this install; "
+              f"run {os.path.join(clone, 'bin', 'eyeshands')} uninstall", file=sys.stderr)
+        return 1
     spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
     steps = []
     for key, src in (("spoon", spoon_src), ("cli", cli_src)):
@@ -1330,9 +1336,20 @@ def uninstall(opts):
         steps.append((f"remove the eyeshands block from {p['init']}", ("init", init)))
     for c, rec in sorted((m.get("mcp") or {}).items()):
         if c == "claude-code":
-            if claude_has_server(p):
-                steps.append(("run: claude mcp remove --scope user eyeshands", ("claude-code", rec)))
-        elif c == "codex" and TOML_START in (read_text(rec.get("file", "")) or ""):
+            server = claude_server(p)
+            if server is None:
+                continue
+            if not isinstance(server, dict) or server.get("command") != rec.get("command"):
+                print("left the Claude Code eyeshands server: it changed after the install")
+                continue
+            steps.append(("run: claude mcp remove --scope user eyeshands", ("claude-code", rec)))
+        elif c == "codex":
+            text = read_text(rec.get("file", ""))
+            if text is None or TOML_START not in text:
+                continue
+            if not rec.get("added") or text.count(rec["added"]) != 1:
+                print(f"left the eyeshands table in {rec['file']}: it changed after the install")
+                continue
             steps.append((f"remove the eyeshands table from {rec['file']}", ("codex", rec)))
         elif c == "cursor" and os.path.exists(rec.get("file", "")):
             steps.append((f"remove mcpServers.eyeshands from {rec.get('file')}", ("cursor", rec)))

@@ -289,10 +289,10 @@ WARNING: Web pages and documents can show text that tries to steer the agent. Th
 ```sh
 eyeshands uninstall
 ```
-It prints every change and asks first. It removes exactly what the install added:
+It prints every change and asks first. Run it from the copy that made the install. Another copy refuses and names that copy. It removes exactly what the install added:
 - the two links, if they still point into this clone;
 - the marked block in `init.lua` (your own lines stay, also the lines that you added after the install);
-- the agent connections that `install --mcp` added, unless you changed them since;
+- the agent connections that `install --mcp` added. A connection that you changed after the install stays, and uninstall tells you so;
 - the folders that the install made, when they are empty.
 
 It keeps the access file, the targets file and the backups. Add `--purge` to delete them too, with the log and the screenshot folder. Then reload the Hammerspoon config, so the Spoon that still runs stops.
@@ -306,6 +306,8 @@ You can use the Spoon without the install:
 2. Add `hs.loadSpoon("EyesHands"):start()` to your `~/.hammerspoon/init.lua`.
 3. Reload the config.
 4. Link the CLI: `ln -s ~/agent-harness/modules/eyeshands/bin/eyeshands ~/.local/bin/eyeshands`.
+
+A zipped Spoon comes with the release build later. Until then, copy it from a clone.
 
 A copy of the Spoon does not update with `git pull`. The CLI needs the clone, because it loads `hsx` from the same folder.
 

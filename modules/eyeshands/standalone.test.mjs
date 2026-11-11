@@ -30,7 +30,7 @@ function world() {
   writeFileSync(join(bin, 'claude'), `#!/bin/sh
 echo "$*" >> '${join(dir, 'claude.log')}'
 case "$2" in
-  add) printf '{"mcpServers":{"eyeshands":{"type":"stdio"}}}' > "$HOME/.claude.json" ;;
+  add) printf '{"mcpServers":{"eyeshands":{"type":"stdio","command":"%s","args":["mcp","--owner","claude-code"]}}}' "$7" > "$HOME/.claude.json" ;;
   remove) printf '{"mcpServers":{}}' > "$HOME/.claude.json" ;;
 esac
 `);
@@ -174,6 +174,40 @@ test('uninstall keeps what the person changed after the install', { skip }, () =
   assert.equal(readFileSync(f, 'utf8'), `-- top\n${INIT}-- bottom\n`);
   assert.match(u.stdout, /left mcpServers\.eyeshands .*changed after the install/);
   assert.ok(JSON.parse(readFileSync(w.h('.cursor', 'mcp.json'), 'utf8')).mcpServers.eyeshands);
+});
+
+test('uninstall keeps a Claude Code server and a Codex table changed after the install', { skip }, () => {
+  const w = world();
+  seed(w);
+  assert.equal(w.run(['install', '--yes', '--mcp', 'claude-code,codex']).status, 0);
+  writeFileSync(w.h('.claude.json'), '{"mcpServers":{"eyeshands":{"type":"stdio","command":"/elsewhere/eyeshands","args":[]}}}');
+  const codexFile = w.h('.codex', 'config.toml');
+  writeFileSync(codexFile, readFileSync(codexFile, 'utf8').replace('"--owner", "codex"', '"--owner", "codex-2"'));
+  const claudeJson = readFileSync(w.h('.claude.json'), 'utf8'), codex = readFileSync(codexFile, 'utf8');
+  const u = w.run(['uninstall', '--yes']);
+  assert.equal(u.status, 0, u.stdout + u.stderr);
+  assert.match(u.stdout, /left the Claude Code eyeshands server: it changed after the install/);
+  assert.match(u.stdout, /left the eyeshands table in .*config\.toml: it changed after the install/);
+  assert.doesNotMatch(w.claudeLog(), /mcp remove/);
+  assert.equal(readFileSync(w.h('.claude.json'), 'utf8'), claudeJson);
+  assert.equal(readFileSync(codexFile, 'utf8'), codex);
+  assert.equal(readFileSync(w.h('.hammerspoon', 'init.lua'), 'utf8'), INIT, 'the rest is still removed');
+});
+
+test('uninstall from another copy refuses and names the copy that installed', { skip }, () => {
+  const w = world();
+  seed(w);
+  assert.equal(w.run(['install', '--yes', '--mcp', 'all']).status, 0);
+  const manifest = w.h('.config', 'eyeshands', 'install.json');
+  const m = JSON.parse(readFileSync(manifest, 'utf8'));
+  m.clone = join(w.dir, 'other-clone', 'modules', 'eyeshands');
+  writeFileSync(manifest, JSON.stringify(m, null, 2) + '\n');
+  const before = tree(w.home), log = w.claudeLog();
+  const u = w.run(['uninstall', '--yes']);
+  assert.equal(u.status, 1);
+  assert.match(u.stderr, new RegExp(`not uninstalling: .*${m.clone.replace(/[.]/g, '\\.')}.*bin/eyeshands uninstall`));
+  assert.deepEqual(tree(w.home), before);
+  assert.equal(w.claudeLog(), log);
 });
 
 test('uninstall removes a block the person edited (a hold file) by its markers', { skip }, () => {
