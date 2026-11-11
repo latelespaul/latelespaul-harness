@@ -53,11 +53,11 @@ test('the vendored EyesHands.spoon/port.lua equals the harness port.lua', () => 
 });
 
 test('config: defaults, ~ expansion, and a bad key or value fails at start', { skip }, () => {
-  const [d, mine, typo, badBuf, badKey, noKey, badPort] = drive([
+  const [d, mine, typo, badBuf, badKey, noKey, badPort, tags] = drive([
     'return config(nil)', 'return config({ idle_buffer_s = 45, stop_hotkey = false, menubar = false, detectors = {"otherdriver"} })',
     'return select(2, config({ idle_bufer_s = 30 }))', 'return select(2, config({ idle_buffer_s = 0 }))',
     'return select(2, config({ stop_hotkey = { mods = {"hyper"}, key = "x" } }))', 'return select(2, config({ access_file = "relative.json" }))',
-    'return select(2, config({ port = "bad name" }))']);
+    'return select(2, config({ port = "bad name" }))', 'return select(2, config({ machine_tags = { 0x1234 } }))']);
   assert.equal(d.idle_buffer_s, 20);
   assert.equal(d.port, 'eyeshands');
   assert.equal(d.access_file, '/home/test/.config/eyeshands/access.json');
@@ -75,6 +75,7 @@ test('config: defaults, ~ expansion, and a bad key or value fails at start', { s
   assert.match(badKey, /^stop_hotkey: mods are/);
   assert.match(noKey, /^access_file: must be an absolute path/);
   assert.match(badPort, /^port:/);
+  assert.equal(tags, 'unknown config key machine_tags');
 });
 
 test('guard order: stop switch, foreign hands, lease, session, present, takeover, focus', { skip }, () => {
@@ -154,6 +155,8 @@ test('present rule with the tap: known machine tags are not a person, any other 
     'T = T + 5; return G.noteEvent(0)',
     'return G.check()',
     'T = T + 20; return G.check() == nil',
+    'return G.noteEvent(0x1234)',
+    'return G.check()',
     'G.noteEvent(0x99); G.tap(false); IDLE = 400; return G.check() == nil',
   ]));
   assert.equal(out[0], true, 'the tap starts from the hardware idle time');
@@ -164,7 +167,9 @@ test('present rule with the tap: known machine tags are not a person, any other 
   assert.equal(out[5].reason, 'present');
   assert.equal(out[5].human_idle_s, 0);
   assert.equal(out[6], true, 'after the idle buffer the person counts as gone');
-  assert.equal(out[7], true, 'without the tap the hardware idle time decides');
+  assert.equal(out[7], true, 'an unknown tag is a person');
+  assert.equal(out[8].reason, 'present');
+  assert.equal(out[9], true, 'without the tap the hardware idle time decides');
 });
 
 test('foreign hands detectors read jobhunt, the harness port and configured globals, and change nothing', { skip }, () => {
