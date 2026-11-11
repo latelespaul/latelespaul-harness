@@ -285,6 +285,10 @@ SHOT_NAME = re.compile(r"^shot-\d+-[0-9a-f]{4}\.png$")
 WALL_HINT = ("a human check or code wall shows on this page: never solve it; send eyes_shot to the person "
              "and wait. Hands refuse on this page until a new eyes_text shows no wall")
 
+WALL_UNKNOWN_HINT = ("a wall was seen and this server cannot tell which window this target is (eh.targets failed or "
+                     "the name is not a target or bundle id): hands refuse until a new eyes_text through the target "
+                     "that showed it shows no wall; never solve a wall, send eyes_shot to the person")
+
 TARGET = {"type": "string", "pattern": NAME.pattern,
           "description": "a target name from eyes_targets, or a bundle id such as com.apple.TextEdit"}
 RECT = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4,
@@ -513,9 +517,8 @@ class Mcp:
     def __init__(self, port, owner, minutes, max_wait):
         self.port, self.max_wait = port, max_wait
         self.owner = Owner(port, owner, minutes)
-        self.urls = {}      # target -> the url of its latest eyes reply
-        self.walls = {}     # (target, url) -> the walls the latest eyes_text there showed
-        self.bundles = {}   # target name -> bundle id, so every spelling of one app shares its wall marks
+        self.urls = {}      # window -> the url of its latest eyes reply, while any wall mark exists
+        self.walls = {}     # (window, url) -> the walls the latest eyes_text there showed
         self.kept = 0       # takeovers in this task, kept until hands_release
         self.seen = 0       # the Spoon's last reported count (it resets when its lease ends)
 
@@ -543,13 +546,20 @@ class Mcp:
         if self.kept >= 3:
             res["stop_rule"] = "3 or more interruptions on this task: stop and tell the person you will go on later"
 
-    def target_bundles(self):
-        rep = self.port.unsigned("eh.targets")
+    def window(self, target):
+        """One key for every spelling of one window: (bundle, profile) of an alias, (bundle id, None) of a bare
+        bundle id; None when it cannot be told (eh.targets fails, or a name that is neither)."""
+        try:
+            rep = self.port.unsigned("eh.targets")
+        except Failed:
+            return None
         rows = rep.get("result", {}).get("targets") if rep.get("ok") is True and isinstance(rep.get("result"), dict) else None
         if not isinstance(rows, list):
-            return self.bundles
-        return {r["name"]: r["bundle"] for r in rows
-                if isinstance(r, dict) and isinstance(r.get("name"), str) and isinstance(r.get("bundle"), str)}
+            return None
+        for r in rows:
+            if isinstance(r, dict) and r.get("name") == target:
+                return (r["bundle"], r.get("profile")) if isinstance(r.get("bundle"), str) else None
+        return (target, None) if "." in target else None
 
     # ---- tools ----
     def tool(self, name, args):
@@ -572,11 +582,15 @@ class Mcp:
             self.kept = self.seen = 0
             return {"ok": True, "released": released}, None
         target = args.get("target")
-        if kind == "input":
-            app = self.bundles.get(target, target)
-            for (n, url), seen in self.walls.items():
-                if self.urls.get(n) == url and self.bundles.get(n, n) == app:
-                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
+        if kind == "input" and self.walls:
+            win = self.window(target)
+            if win is None or any(w[0] is None for w, _ in self.walls):
+                return {"ok": False, "reason": "wall", "wall": sorted({x for v in self.walls.values() for x in v}),
+                        "hint": WALL_UNKNOWN_HINT}, None
+            url = self.urls.get(win)
+            seen = self.walls.get((win, url))
+            if seen:
+                return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
         if name == "eyes_shot":
             args = dict(args, max_px=min(args.get("max_px", SHOT_MAX_PX), SHOT_MAX_PX))
         rep = enrich(cmd, self.signed(cmd, args or None))
@@ -585,16 +599,18 @@ class Mcp:
         res = result_of(rep)
         if not isinstance(res, dict):
             return res, None
-        if kind in ("eyes", "shot") and res.get("ok") is not False and target:
+        walled = name == "eyes_text" and res.get("wall")
+        if kind in ("eyes", "shot") and res.get("ok") is not False and target and (self.walls or walled):
+            win = self.window(target) or (None, target)
             if isinstance(res.get("url"), str):
-                self.urls[target] = res["url"]
+                self.urls[win] = res["url"]
             if name == "eyes_text":
-                key = (target, res.get("url") if isinstance(res.get("url"), str) else self.urls.get(target))
-                if res.get("wall"):
+                key = (win, self.urls.get(win))
+                if walled:
                     self.walls[key] = res["wall"]
-                    self.bundles = self.target_bundles()
                 else:
                     self.walls.pop(key, None)
+                    self.walls = {k: v for k, v in self.walls.items() if k[0] != (None, target)}
         if kind in ("input", "hands"):
             if res.get("state") == "interrupted" and "interrupts" not in res:
                 st = result_of(self.signed("eh.hands.status", None))
