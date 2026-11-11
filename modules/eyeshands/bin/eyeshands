@@ -409,7 +409,14 @@ TOOLS = {
                       "Ends the task: releases the hands lease and disarms this owner (a running job stops), and resets "
                       "the kept interrupt count. The next call arms again."),
 }
-TOOL_ANNOTATIONS = {"unsigned": True, "eyes": True, "shot": True}   # read-only kinds
+READ_ONLY = {"unsigned", "eyes", "shot"}
+
+
+def annotations(name, kind):
+    acts = kind == "input" or name in ("hands_focus", "hands_resume")   # real input on the target window
+    return {"readOnlyHint": kind in READ_ONLY or name == "hands_status", "destructiveHint": acts, "openWorldHint": acts}
+
+
 INSTRUCTIONS = ("Eyes & Hands: eyes_* read a Mac app's screen (Accessibility and window pixels); hands_* post real mouse "
                 "and keyboard input. The person always wins: on present or interrupted, wait; after 3 interruptions on "
                 "one task, stop and say you will go on later. Never solve a human check or code wall: send eyes_shot to "
@@ -508,6 +515,7 @@ class Mcp:
         self.owner = Owner(port, owner, minutes)
         self.urls = {}      # target -> the url of its latest eyes reply
         self.walls = {}     # (target, url) -> the walls the latest eyes_text there showed
+        self.bundles = {}   # target name -> bundle id, so every spelling of one app shares its wall marks
         self.kept = 0       # takeovers in this task, kept until hands_release
         self.seen = 0       # the Spoon's last reported count (it resets when its lease ends)
 
@@ -535,6 +543,14 @@ class Mcp:
         if self.kept >= 3:
             res["stop_rule"] = "3 or more interruptions on this task: stop and tell the person you will go on later"
 
+    def target_bundles(self):
+        rep = self.port.unsigned("eh.targets")
+        rows = rep.get("result", {}).get("targets") if rep.get("ok") is True and isinstance(rep.get("result"), dict) else None
+        if not isinstance(rows, list):
+            return self.bundles
+        return {r["name"]: r["bundle"] for r in rows
+                if isinstance(r, dict) and isinstance(r.get("name"), str) and isinstance(r.get("bundle"), str)}
+
     # ---- tools ----
     def tool(self, name, args):
         cmd, kind, schema, _ = TOOLS[name]
@@ -557,10 +573,10 @@ class Mcp:
             return {"ok": True, "released": released}, None
         target = args.get("target")
         if kind == "input":
-            url = self.urls.get(target)
-            seen = self.walls.get((target, url))
-            if seen:
-                return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
+            app = self.bundles.get(target, target)
+            for (n, url), seen in self.walls.items():
+                if self.urls.get(n) == url and self.bundles.get(n, n) == app:
+                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
         if name == "eyes_shot":
             args = dict(args, max_px=min(args.get("max_px", SHOT_MAX_PX), SHOT_MAX_PX))
         rep = enrich(cmd, self.signed(cmd, args or None))
@@ -576,6 +592,7 @@ class Mcp:
                 key = (target, res.get("url") if isinstance(res.get("url"), str) else self.urls.get(target))
                 if res.get("wall"):
                     self.walls[key] = res["wall"]
+                    self.bundles = self.target_bundles()
                 else:
                     self.walls.pop(key, None)
         if kind in ("input", "hands"):
@@ -633,7 +650,7 @@ class Mcp:
         if method == "tools/list":
             return reply({"tools": [
                 {"name": n, "description": d, "inputSchema": s,
-                 "annotations": {"readOnlyHint": k in TOOL_ANNOTATIONS, "destructiveHint": False, "openWorldHint": False}}
+                 "annotations": annotations(n, k)}
                 for n, (_, k, s, d) in TOOLS.items()]})
         if method == "tools/call":
             if params.get("name") not in TOOLS:

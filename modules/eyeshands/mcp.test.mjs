@@ -113,8 +113,17 @@ test('initialize and tools/list answer at once with 22 tools, each with a JSON S
       for (const k of ['oneOf', 'anyOf', 'allOf']) assert.ok(!(k in t.inputSchema), `${t.name}: no top-level ${k}`);
       const needsTarget = !['eyes_status', 'eyes_targets', 'eyes_frontmost', 'hands_status', 'hands_resume', 'hands_abort', 'hands_release'].includes(t.name);
       assert.equal((t.inputSchema.required || []).includes('target'), needsTarget, `${t.name} target`);
-      assert.equal(t.annotations.readOnlyHint, t.name.startsWith('eyes_'), `${t.name} readOnlyHint`);
     }
+    // Hints per tool: eyes and hands_status only read; the tools that act on the target window are destructive.
+    const acts = ['hands_move', 'hands_click', 'hands_type', 'hands_key', 'hands_scroll', 'hands_drag', 'hands_focus', 'hands_resume'];
+    const hints = Object.fromEntries(result.tools.map(t => [t.name, t.annotations]));
+    for (const n of [...EYES, 'hands_status']) assert.equal(hints[n].readOnlyHint, true, `${n} readOnlyHint`);
+    for (const n of acts) {
+      assert.equal(hints[n].readOnlyHint, false, `${n} readOnlyHint`);
+      assert.equal(hints[n].destructiveHint, true, `${n} destructiveHint`);
+      assert.equal(hints[n].openWorldHint, true, `${n} openWorldHint`);
+    }
+    for (const n of ['hands_abort', 'hands_release']) assert.equal(hints[n].readOnlyHint, false, `${n} readOnlyHint`);
     // Guard rules are in the descriptions.
     const d = Object.fromEntries(result.tools.map(t => [t.name, t.description]));
     for (const n of ['hands_move', 'hands_click', 'hands_type', 'hands_key', 'hands_scroll', 'hands_drag']) {
@@ -261,6 +270,35 @@ test('wall guard: after eyes_text shows a wall, hands on that URL refuse until a
     assert.equal((await c.call('hands_key', { target: 'chrome-test', combo: 'enter' })).json.reason, 'wall');
     assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, []);
     assert.equal((await c.call('hands_key', { target: 'chrome-test', combo: 'enter' })).isError, false);
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+});
+
+test('wall guard: a wall seen through one spelling of a window refuses hands through another', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  const f = await fakePort({ job_polls: 1,
+    targets: { file: '/tmp/targets.json', state: 'ok', targets: [
+      { name: 'chrome-test', bundle: 'com.example.browser', running: true },
+      { name: 'notes-test', bundle: 'com.example.notes', running: true }] },
+    text_seq: [{ url: A, lines: ['Please verify you are human'] }, { url: A, lines: ['Email'] }] });
+  const c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, ['human']);
+    const before = cmds(f.log()).length;
+    for (const target of ['com.example.browser', 'chrome-test']) {
+      const r = await c.call('hands_click', { target, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', target);
+      assert.equal(r.json.url, A, target);
+    }
+    assert.equal(cmds(f.log()).length, before, 'the refused hands reached no port');
+    // another app is not walled, under its name or its bundle id
+    for (const target of ['notes-test', 'com.example.notes']) {
+      assert.equal((await c.call('hands_click', { target, to: { x: 1, y: 1 } })).isError, false, target);
+    }
+    // a new eyes_text with no wall lifts the mark for every spelling
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, []);
+    assert.equal((await c.call('hands_click', { target: 'com.example.browser', to: { x: 1, y: 1 } })).isError, false);
     await c.close();
   } finally { c.kill(); f.stop(); }
 });
