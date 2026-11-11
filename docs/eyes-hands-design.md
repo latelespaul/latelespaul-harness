@@ -318,7 +318,7 @@ Hands post real mouse and keyboard events with human timing. Every hands command
 | `hands_scroll` | `eh.hands.scroll` | `target`, `dy`, optional `dx`, `at` | Wheel ticks that speed up, then slow down |
 | `hands_drag` | `eh.hands.drag` | `target`, `from`, `to` | Press at `from`, a dragged path, release at `to` |
 | (CLI and job-hunt only) | `eh.hands.play` | `target`, `events[]` | Plays a pre-planned event list (the `jobhunt.lua` format) |
-| `hands_status` | `eh.hands.status` | none | `lease`, `busy`, `interrupted`, `interrupts`, `pos`, `watch`, `awake` |
+| `hands_status` | `eh.hands.status` | none | `lease`, `mine`, `busy`, `interrupted`, `interrupts`, `pos`, `watch`, `awake` |
 | `hands_resume` | `eh.hands.resume` | none | Clears a takeover, only when the present rule passes |
 | `hands_abort` | `eh.hands.abort` | none | Stops the running job |
 | `hands_release` | `disarm` (built in) | none | Ends the owner's arm and hands lease |
@@ -709,7 +709,7 @@ On macOS 15 and later, macOS asks again about Screen Recording about once a mont
 | `planner` tests (Lua through `node --test`, as PR #16 does) | Path bounds, Fitts durations, monotone ease-out, end point in the rect, centre bias, overshoot rate, click hold, typing gaps, the 300-character paste rule, combos, scroll totals, seed replay, golden vectors from `plan.mjs` |
 | Spoon tests under fake `hs` | Guard order; present rule with known and unknown tags; foreign hands detectors (fake `jobhunt` and `harness` tables); lease; stop switch; takeover and resume; target resolution from fake `ps` output; field records from a JSON AX tree fixture; stale id fallback; pixel decisions on synthetic images |
 | Port integration | The Spoon's commands through a real `port.lua` instance: capabilities `eyes`, `shot` and `hands`; targets as `apps`; owner passed to commands |
-| CLI and MCP (Python `unittest`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by PR #16's `test/fake-port.py` |
+| CLI and MCP (`cli.test.mjs` through `node --test`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by `modules/eyeshands/test/fake-eh-port.py` |
 | Vendored copies | `EyesHands.spoon/port.lua` and the bundled `hsx` equal the harness files |
 | Packaging | DMG build with `hdiutil` (contents only); `brew audit --strict` and `brew install --build-from-source` on the formula in a local tap |
 | Docs | `ste-check` on the README; a scan for home paths, e-mail addresses and host names |

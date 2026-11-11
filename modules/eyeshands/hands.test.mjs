@@ -366,3 +366,75 @@ test('hands in awake away mode: refused only when the harness cannot take our ta
   assert.equal(out[1], 'running', 'with addEventTag our events count as machine input');
   assert.equal(out[2], 'awake_away');
 });
+
+test('takeover: an untagged zero-delta move and an untagged move at our last posted point both count', { skip }, () => {
+  const p = prelude();
+  const text = j({ target: 'textedit', text: 'Hello there, friend' });
+  const out = ok(drive([
+    p.lua,
+    `JOB = hc("runner", "eh.hands.type", ${text}).job; run(300); human("mouseMoved", nil, nil, 0, 0); run(4)
+     return { hc("runner", "eh.hands.job", hs.json.encode({ id = JOB })).state, SPOONOBJ:status().hands.interrupted }`,
+    `T = T + 21; hc("runner", "eh.hands.resume"); POSTED = {}
+     JOB = hc("runner", "eh.hands.move", ${j({ target: 'textedit', to: { x: 500, y: 400 } })}).job; run(100)
+     local e = POSTED[#POSTED]; human("mouseMoved", e.x, e.y, 0, 0); run(4)
+     return { #POSTED > 0, hc("runner", "eh.hands.job", hs.json.encode({ id = JOB })).state, hc("runner", "eh.hands.status").interrupts }`,
+  ]));
+  assert.deepEqual(out[1], ['interrupted', true]);
+  assert.deepEqual(out[2], [true, 'interrupted', 2], 'the second takeover in the same lease');
+});
+
+test('play: a point off the target windows is refused as focus with its event index; nothing posts', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `WINS[7] = { { 0, 0, 800, 600 } }
+     return { hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'move', x: 300, y: 300 }, { t: 10, type: 'down', x: 900, y: 100 }, { t: 90, type: 'up', x: 900, y: 100 }] })}), #POSTED, tapsOn() }`,
+  ]));
+  assert.equal(out[1][0].reason, 'focus');
+  assert.equal(out[1][0].event, 2);
+  assert.deepEqual(out[1][0].at, [900, 100]);
+  assert.deepEqual(out[1].slice(1), [0, 0]);
+});
+
+test('an unbalanced play that ends done still lets go of the button and the keys', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `JOB = hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'flagsDown', key: 55, flags: 0x100000 }, { t: 5, type: 'down', x: 300, y: 300, clicks: 1 }] })}).job; run(100)
+     return { hc("runner", "eh.hands.job", hs.json.encode({ id = JOB })).state, kinds(), tagged() }`,
+  ]));
+  assert.equal(out[1][0], 'done');
+  assert.deepEqual(out[1][1], ['flagsChanged', 'leftMouseDown', 'leftMouseUp', 'flagsChanged']);
+  assert.equal(out[1][2], 4);
+});
+
+test('a harness without addEventTag that goes away when we take the awake hold: refused, nothing posts', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `SPOONOBJ._s.tagRegistered = false; MODE = "present"
+     harness.awakeInfo = function() return { mode = MODE } end
+     harness.awake = function(on) MODE = on and "away" or "present"; return "{}" end
+     local r = hc("runner", "eh.hands.click", ${j({ target: 'textedit', to: { rect: RECT } })}); run(3000)
+     return { r.reason, #POSTED, SPOONOBJ:status().hands.busy, SPOONOBJ:status().hands.lease, tapsOn(), MODE }`,
+  ]));
+  assert.deepEqual(out[1], ['awake_away', 0, false, false, 0, 'present'], 'the lease this call took ends: tap off, hold released');
+});
+
+test('play: a scroll is refused as focus when the cursor it scrolls at is off the target windows', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `WINS[7] = { { 0, 0, 800, 600 } }; MOUSE = { x = 900, y = 100 }
+     return { hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'scroll', dy: 400 }] })}), #POSTED }`,
+    `return { hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'move', x: 300, y: 300 }, { t: 5, type: 'scroll', dy: 40 }] })}).state, #POSTED > 0 }`,
+    `MOUSE = { x = 300, y = 300 }; run(3000)
+     return hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'scroll', dy: 40 }, { t: 5, type: 'move', x: 900, y: 100 }] })}).event`,
+  ]));
+  assert.equal(out[1][0].reason, 'focus');
+  assert.equal(out[1][0].event, 1);
+  assert.deepEqual(out[1][0].at, [900, 100]);
+  assert.equal(out[1][1], 0);
+  assert.deepEqual(out[2], ['running', true], 'a scroll after a move on the window plays');
+  assert.equal(out[3], 2);
+});
