@@ -587,10 +587,10 @@ class Mcp:
             if win is None or any(w[0] is None for w, _ in self.walls):
                 return {"ok": False, "reason": "wall", "wall": sorted({x for v in self.walls.values() for x in v}),
                         "hint": WALL_UNKNOWN_HINT}, None
-            url = self.urls.get(win)
-            seen = self.walls.get((win, url))
-            if seen:
-                return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
+            for (w, url), seen in self.walls.items():
+                same = w == win or w[0] == win[0] and (w[1] is None or win[1] is None)   # no profile: any process
+                if same and self.urls.get(w) == url:
+                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
         if name == "eyes_shot":
             args = dict(args, max_px=min(args.get("max_px", SHOT_MAX_PX), SHOT_MAX_PX))
         rep = enrich(cmd, self.signed(cmd, args or None))
