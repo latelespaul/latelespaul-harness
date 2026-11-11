@@ -250,7 +250,8 @@ local Layout = {}
 Layout.__index = Layout
 
 --- A keyboard layout from a character -> key code map (hs.keycodes.map for the current layout; its
---- numeric and named entries are ignored). Letters also get their capitals on Shift. `name` is the
+--- numeric and named entries are ignored; read with rawget, since hs.keycodes.map answers any key
+--- through an __index fallback, map["H"] = 4). Letters also get their capitals on Shift. `name` is the
 --- layout name (hs.keycodes.currentLayout()); without it, the map is the US layout when every
 --- US_MAP entry has the same code in it. Only the US layout ("U.S." or "ABC") gets the US shifted
 --- symbols; other layouts get no key for a symbol their map does not have.
@@ -261,7 +262,7 @@ function P.keys(map, name)
   if name == nil then
     us = true
     for c, code in pairs(P.US_MAP) do
-      if map[c] ~= code then us = false; break end
+      if rawget(map, c) ~= code then us = false; break end
     end
   end
   local chars = {}
@@ -269,13 +270,14 @@ function P.keys(map, name)
     if isChar(c) and math.type(code) == "integer" then
       chars[c] = { code, false }
       local up = c:upper()
-      if up ~= c and map[up] == nil then chars[up] = { code, true } end
+      if up ~= c and rawget(map, up) == nil then chars[up] = { code, true } end
     end
   end
   for c, code in pairs(FIXED) do chars[c] = { code, false } end
   if us then
     for sym, base in pairs(P.US_SHIFTED) do
-      if chars[sym] == nil and map[base] ~= nil then chars[sym] = { map[base], true } end
+      local code = rawget(map, base)
+      if chars[sym] == nil and code ~= nil then chars[sym] = { code, true } end
     end
   end
   return setmetatable({ map = map, chars = chars, us = us }, Layout)

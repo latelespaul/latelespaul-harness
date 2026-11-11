@@ -345,6 +345,23 @@ test('only the US layout gets the US shifted symbols; other layouts never guess 
   assert.deepEqual([usUnmapped, gbUnmapped], [[[0x6f22, 0, 0]], [[0x6f22, false, 0]]], 'US keeps code 0, others none');
 });
 
+test('a map with an __index fallback (like hs.keycodes.map) still gives capitals their Shift key', { skip }, () => {
+  const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
+    9: 25, 7: 26, '-': 27, 8: 28, 0: 29, ']': 30, '[': 33, "'": 39, ';': 41, '\\': 42, ',': 43, '/': 44, '.': 47, '`': 50 };
+  // hs.keycodes.map answers map["H"] with 4 through its metatable, though rawget(map, "H") is nil.
+  const fallback = `setmetatable(${lua(US)}, { __index = function(t, k)
+    return type(k) == "string" and rawget(t, k:lower()) or nil end })`;
+  const cps = [0x48, 0x68, 0x41, 0x40, 0x21];
+  const [plain, named, typed] = drive([`return keyfor(${lua(cps)}, ${fallback})`,
+    `return keyfor(${lua(cps)}, ${fallback}, "U.S.")`, `return plan("type", { text = "Hi" }, 1, nil, ${fallback})`]);
+  const want = [[0x48, 4, 1], [0x68, 4, 0], [0x41, 0, 1], [0x40, 19, 1], [0x21, 18, 1]];
+  assert.deepEqual(plain, want);
+  assert.deepEqual(named, want);
+  assert.deepEqual(typed.events.map(e => [e.type, e.key, e.flags]).slice(0, 4),
+    [['flagsDown', 56, 0x20000], ['keyDown', 4, 0x20000], ['keyUp', 4, 0x20000], ['flagsUp', 56, 0]]);
+});
+
 test('scroll ticks sum exactly to the request, speed up then slow down', { skip }, () => {
   const g = scenarios(7);
   const cases = Array.from({ length: 300 }, (_, i) => ['scroll',
