@@ -8,8 +8,8 @@
 #   awake status                               JSON: is it on, who holds it
 # The command always runs, even when Hammerspoon does not answer (a warning goes to stderr).
 # While it runs, `run` checks its hold every AWAKE_RECHECK_SECS (default 60) seconds. A hold that
-# Hammerspoon lost (it restarted or reloaded) is taken again; a hold that ended on purpose after
-# `run` took it (a person at the Mac, a lock, an `awake off`, the deadline) stays ended. While
+# Hammerspoon lost (it restarted or reloaded, or a person or a lock suspended it) is taken again;
+# a hold that ended on purpose after `run` took it (an `awake off`, the deadline) stays ended. While
 # Hammerspoon does not answer, `caffeinate -d -i -u -w <this pid>` keeps the display awake instead
 # (no dim and no lock on touch; it ends with this process). AWAKE_CAFFEINATE=0 turns that fallback off.
 export PATH=$PATH:/opt/homebrew/bin:/usr/local/bin   # callers (and tests) may put their own hs first
@@ -81,7 +81,8 @@ keeper() {
     fi
     fallback off
     [[ $st =~ $own ]] && { held=1; continue }
-    # Ended after `run` held it (a person, a lock, an `awake off`): leave it ended.
+    # Ended after `run` held it (an `awake off`, the deadline): leave it ended. A suspended hold
+    # has no end record, so it is asked for again (refused while the screen is locked).
     if (( held )); then
       for re in $mine $ended; do [[ $st =~ $re && ! $match[1] < $started ]] && break 2; done
     fi

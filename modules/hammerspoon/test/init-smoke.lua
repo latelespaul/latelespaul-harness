@@ -20,9 +20,12 @@ hs.configdir = arg[1]
 hs.processInfo = { version = "test" }
 hs.accessibilityState = function() return true end
 hs.screenRecordingState = function() return true end
-hs.caffeinate.sessionProperties = function() return {} end
+-- LOCKED=1: the screen is locked at load. SMOKE.watchers keeps the lock watchers' callbacks.
+hs.caffeinate.sessionProperties = function() return { CGSSessionScreenIsLocked = os.getenv("LOCKED") == "1" } end
 hs.caffeinate.set = function(what, on) R.caffeinate[what] = on end
-hs.caffeinate.watcher = { new = function() return { start = function() end } end, screensDidLock = 1 }
+R.watchers = {}
+hs.caffeinate.watcher = { new = function(fn) R.watchers[#R.watchers + 1] = fn; return { start = function() end } end,
+  screensDidLock = 1, screensDidUnlock = 2 }
 hs.application.frontmostApplication = function() return nil end
 hs.settings = { get = function() return nil end, set = function() end, clear = function() end }
 hs.host.idleTime = function() return 0 end
@@ -60,7 +63,7 @@ hs.eventtap = { event = { types = T, properties = P }, new = function(_, fn)
   R.taps[#R.taps + 1] = tap
   return tap
 end }
-SMOKE = { taps = R.taps, locked = 0 }
+SMOKE = { taps = R.taps, watchers = R.watchers, locked = 0 }
 function SMOKE.event(kind, tag)
   return { getType = function() return T[kind] end,
     getProperty = function(_, p) if p == P.eventSourceUserData then return tag or 0 end; return 50 end }
