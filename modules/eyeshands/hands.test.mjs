@@ -3,14 +3,16 @@
 // fake hs (test/spoon-driver.lua): the guard order before a job, jobs on the 4 ms timer, the 250 ms
 // re-checks, the takeover tap (it only reads) and resume, the lease (one owner, 2 idle minutes,
 // disarm), a held button, held keys and the clipboard on abort and unload, the awake hold (harness
-// with the caller's pid, released with lock=true; standalone hs.caffeinate), and the Eyes & Hands tag
-// on every posted event. "Posted" here means the fake hs.eventtap recorded it; nothing reaches a Mac.
+// with the caller's pid, released with lock=true; standalone hs.caffeinate), the hold file (a real
+// file and real pids: it refuses eyes and hands and ends a running job; the lease takes the driver
+// lock in it and removes only its own entry), and the Eyes & Hands tag on every
+// posted event. "Posted" here means the fake hs.eventtap recorded it; nothing reaches a Mac.
 // Needs Lua 5.4 (LUA=..., `lua5.4`, `lua`, or Homebrew's lua@5.4); the tests skip without it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,6 +250,182 @@ test('the 250 ms re-checks end a job as focus or locked; the stop switch aborts 
   assert.deepEqual(out[3][0], { lease: false, busy: false, interrupted: false, watch: 'off', awake: false });
   assert.equal(out[3][1], false, 'the stop switch disarmed the owner');
   assert.deepEqual(out[4], [2, false, true, 0], 'the lease ended: hold released with lock=true, tap off');
+});
+
+test('the hold file: a hold refuses hands before any input, a hold that appears ends a running job, status shows it', { skip }, () => {
+  const lock = join(mkdtempSync(join(tmpdir(), 'eh-hold-')), 'driver.lock');
+  const p = prelude({ extra: `, hold_file = ${lstr(lock)}` });
+  const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;   // gone once spawnSync returns
+  const ms = s => (1800000000 + s) * 1000;                    // the driver's clock T, in ms
+  const manual = until => ({ pid: 0, who: 'captain', since: ms(-60), manual: true, until });
+  const click = j({ target: 'textedit', to: { rect: RECT } });
+  const text = j({ target: 'textedit', text: 'a slow sentence to type out' });
+  const out = ok(drive([
+    p.lua,
+    `HP = ${lstr(lock)}
+     function put(text) local f = assert(io.open(HP, "w")); f:write(text); f:close() end
+     return call({ cmd = "status" }).result.hold`,
+    `put(${j(manual(ms(600)))}); local r = hc("runner", "eh.hands.click", ${click})
+     return { r, #POSTED, SPOONOBJ._s.hands.info().lease, call({ cmd = "status" }).result.hold }`,
+    `put(${j({ pid: process.pid, who: 'night run', since: ms(-5) })}); return hc("runner", "eh.hands.focus", ${j({ target: 'textedit' })})`,
+    `put(${j({ pid: dead, who: 'refill', since: ms(0), borrowed: manual(ms(600)) })}); local r = hc("runner", "eh.hands.click", ${click})
+     return { r.reason, r.kind, r.who }`,
+    `put("{not json"); return hc("runner", "eh.hands.click", ${click}).kind`,
+    `os.remove(HP); os.execute("mkdir " .. HP); local r = hc("runner", "eh.hands.click", ${click}); os.execute("rmdir " .. HP)
+     return { r.reason, r.kind, #POSTED }`,
+    `put(${j({ pid: dead, who: 'refill', since: ms(0), borrowed: manual(ms(-10)) })}); local r = hc("runner", "eh.hands.click", ${click})
+     run(3000); return { r.state, hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state, #POSTED > 10 }`,
+    `os.remove(HP); local r = hc("runner", "eh.hands.type", ${text}); JOB = r.job; run(100); local n = #POSTED
+     put(${j(manual(ms(600)))}); run(260); local n2 = #POSTED; run(2000)
+     return { r.state, n2 > n, #POSTED == n2, hc("runner", "eh.hands.job", hs.json.encode({ id = JOB })) }`,
+    `return { SPOONOBJ._s.hands.info().busy, hc("runner", "eh.hands.click", ${click}).reason }`,
+  ]));
+  assert.deepEqual(out[1], { configured: true, file: lock, held: false, kind: 'missing' }, 'no file is free');
+  const [refused, posted, lease, status] = out[2];
+  assert.equal(refused.reason, 'held');
+  assert.equal(refused.kind, 'manual');
+  assert.equal(refused.who, 'captain');
+  assert.equal(refused.until, '2027-01-15T08:10:00Z');
+  assert.equal(refused.retry_after_s, 600);
+  assert.equal(posted, 0, 'nothing posted');
+  assert.equal(lease, false, 'no lease taken');
+  assert.equal(status.held, true);
+  assert.equal(status.kind, 'manual');
+  assert.equal(out[3].reason, 'held', 'focus is refused too');
+  assert.equal(out[3].kind, 'pid');
+  assert.equal(out[3].pid, process.pid);
+  assert.deepEqual(out[4], ['held', 'borrowed', 'captain'], 'a dead borrower falls back to the manual hold');
+  assert.equal(out[5], 'malformed');
+  assert.deepEqual(out[6], ['held', 'unreadable', 0]);
+  assert.deepEqual(out[7], ['running', 'done', true], 'a dead borrower of an expired hold: hands run');
+  const [state, postedBefore, stopped, job] = out[8];
+  assert.equal(state, 'running');
+  assert.ok(postedBefore, 'the job posted before the hold appeared');
+  assert.ok(stopped, 'nothing posts after the hold appears');
+  assert.equal(job.state, 'held');
+  assert.equal(job.reason, 'held');
+  assert.equal(job.who, 'captain');
+  assert.equal(job.kind, 'manual');
+  assert.deepEqual(out[9], [false, 'held']);
+});
+
+test('the driver lock: the lease takes it when free or stale, a live holder refuses, the caller itself is exempt, only ours is removed', { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eh-lock-'));
+  const lock = join(dir, 'driver.lock');
+  const p = prelude({ extra: `, hold_file = ${lstr(lock)}` });
+  const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;
+  const click = j({ target: 'textedit', to: { rect: RECT } });
+  const text = j({ target: 'textedit', text: 'a slow sentence to type out' });
+  const ours = { pid: 4242, who: 'eyeshands-runner' };
+  const out = ok(drive([
+    p.lua,
+    `HP = ${lstr(lock)}
+     function put(text) local f = assert(io.open(HP, "w")); f:write(text); f:close() end
+     function raw() local f = io.open(HP); if not f then return false end; local t = f:read("a"); f:close(); return t end
+     function get() local t = raw(); return t and hs.json.decode(t) end
+     function manual(dt) return hs.json.encode({ pid = 0, who = "captain", since = 1, manual = true, ["until"] = math.floor((T + dt) * 1000) }) end
+     function done() run(3000); T = T + 121; sweep(); return raw() end
+     return true`,
+    `local r = hc("runner", "eh.hands.click", ${click}); return { r.state, get(), done() }`,
+    `put(${j({ pid: dead, who: 'refill', since: 5 })}); local r = hc("runner", "eh.hands.click", ${click}); return { r.state, get(), done() }`,
+    `put(manual(-10)); local r = hc("runner", "eh.hands.click", ${click}); return { r.state, get(), done() }`,
+    `put(${j({ pid: dead, who: 'eyeshands-runner', since: 5 })}); local r = hc("runner", "eh.hands.click", ${click}); return { r.state, get(), done() }`,
+    `put(${j({ pid: process.pid, who: 'night run', since: 5 })}); local before, n = raw(), #POSTED
+     local r = hc("runner", "eh.hands.click", ${click}); return { r.reason, r.kind, r.hint, raw() == before, #POSTED == n, SPOONOBJ._s.hands.info().lease }`,
+    `put(manual(600)); local before = raw()
+     return { hc("runner", "eh.hands.focus", ${j({ target: 'textedit' })}).reason, hc("looker", "eh.eyes.frontmost").reason,
+       hc("looker", "eh.eyes.value", ${j({ target: 'textedit', id: 'f1' })}).kind, hc("runner", "eh.eyes.text", ${j({ target: "textedit" })}).reason,
+       call({ cmd = "status" }).ok, call({ cmd = "eh.targets" }).ok, raw() == before }`,
+    `os.remove(HP); local r = hc("runner", "eh.hands.type", ${text}); run(100); local mid = get()
+     put(manual(600)); local before = raw(); run(300); local st = hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state
+     hc("runner", "eh.hands.abort"); local a = raw() == before; T = T + 121; sweep()
+     return { mid.who, st, a, raw() == before }`,
+    `os.remove(HP); hc("runner", "eh.hands.click", ${click}); run(3000); local mine = get().who
+     put(${j({ pid: process.pid, who: 'night run', since: 5 })}); local before = raw(); T = T + 121; sweep(); return { mine, raw() == before }`,
+    `os.remove(HP); local r = hc("runner", "eh.hands.type", ${text}); run(100); local mine = get().who
+     hc("runner", "eh.hands.abort"); local afterAbort = raw(); local again = hc("runner", "eh.hands.click", ${click}); local retaken = get().who
+     run(3000); call({ cmd = "stop" }); return { mine, afterAbort, again.state, retaken, raw() }`,
+    `arm("runner", 4242); os.remove(HP); local exec, probes = os.execute, 0
+     os.execute = function(c) if tostring(c):find("/bin/ps -p", 1, true) then probes = probes + 1 end; return exec(c) end
+     local r = hc("runner", "eh.hands.type", ${text}); local mine = get().who; run(2500)
+     local st = hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state; os.execute = exec; T = T + 121; sweep(); hc("runner", "disarm")
+     return { mine, st, probes }`,
+    `arm("runner", ${process.pid}); put(${j({ pid: process.pid, who: 'job-hunt run', since: 5 })}); local before = raw()
+     local r = hc("runner", "eh.hands.click", ${click}); run(3000)
+     local e = hc("runner", "eh.eyes.frontmost"); T = T + 121; sweep()
+     return { r.state, hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state, e.reason or "ok", raw() == before }`,
+  ]));
+  const since = 1800000000 * 1000;
+  assert.deepEqual(out[2], ['running', { ...ours, since }, false], 'no file: the lease writes our entry; its end removes it');
+  assert.equal(out[3][0], 'running');
+  assert.deepEqual({ pid: out[3][1].pid, who: out[3][1].who }, ours, 'a dead pid is stale: replaced by our entry');
+  assert.equal(out[3][2], false);
+  assert.deepEqual({ pid: out[4][1].pid, who: out[4][1].who }, ours, 'an expired manual hold is stale');
+  assert.equal(out[4][2], false);
+  assert.deepEqual({ pid: out[5][1].pid, who: out[5][1].who }, ours, 'a crash (our entry with a dead pid) is stale');
+  assert.equal(out[5][0], 'running');
+  assert.deepEqual(out[6], ['held', 'pid', 'another driver holds the desktop lock; wait, never force', true, true, false],
+    'a live foreign holder refuses; its file does not change; no lease, nothing posted');
+  assert.deepEqual(out[7], ['held', 'held', 'manual', 'held', true, true, true],
+    'a manual hold refuses focus and every eyes command; status and eh.targets still answer; the file does not change');
+  assert.deepEqual(out[8], ['eyeshands-runner', 'held', true, true], 'abort and the lease end leave a manual hold untouched');
+  assert.deepEqual(out[9], ['eyeshands-runner', true], 'the lease end leaves a foreign holder untouched');
+  assert.deepEqual(out[10], ['eyeshands-runner', false, 'running', 'eyeshands-runner', false],
+    'abort removes our entry, the next job takes it again, the stop switch removes it');
+  assert.equal(out[11][0], 'eyeshands-runner');
+  assert.notEqual(out[11][1], 'held', 'our own entry never ends our job');
+  assert.equal(out[11][2], 0, 'a job holding our own lock entry makes no pid check');
+  assert.deepEqual(out[12], ['running', 'done', 'ok', true], 'the caller itself holds the lock: no refusal and no write');
+  assert.deepEqual(readdirSync(dir), ['driver.lock'], 'no temp or stale file is left');
+});
+
+// job-hunt's driver lock rule (src/control.mjs, restated here so CI needs no job-hunt checkout):
+// a manual hold counts until `until`; a borrowed hold counts while its pid lives, else its manual hold;
+// any other holder counts while its pid lives. Anything that does not count is stale and replaceable.
+function jobHuntHeld(lock, now = Date.now()) {
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  if (lock.manual) return now < lock.until;
+  if (lock.pid && alive(lock.pid)) return true;
+  return lock.borrowed ? jobHuntHeld(lock.borrowed, now) : false;
+}
+
+test('job-hunt interop: our entry has the control.mjs shape and blocks job-hunt; crashed, it is stale; stop answers while held', { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eh-interop-'));
+  const lock = join(dir, 'driver.lock');
+  const p = prelude({ extra: `, hold_file = ${lstr(lock)}` });
+  const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;
+  const click = j({ target: 'textedit', to: { rect: RECT } });
+  const text = j({ target: 'textedit', text: 'a slow sentence to type out' });
+  const now = 1800000000 * 1000;   // the driver's clock T, in ms
+  const manual = { pid: 0, who: 'captain', since: now - 60000, manual: true, until: now + 600000 };
+  const out = ok(drive([
+    p.lua,
+    `HP = ${lstr(lock)}
+     function put(text) local f = assert(io.open(HP, "w")); f:write(text); f:close() end
+     function raw() local f = io.open(HP); if not f then return false end; local t = f:read("a"); f:close(); return t end
+     return true`,
+    // The lease of a live caller (this node process) writes our entry while its job runs.
+    `hc("runner", "disarm"); arm("runner", ${process.pid}); local r = hc("runner", "eh.hands.type", ${text}); run(100); local mine = raw()
+     hc("runner", "eh.hands.abort"); T = T + 121; sweep(); return { r.state, mine, raw() }`,
+    // A borrowed hold from job-hunt (a dead borrower of a live manual hold) refuses eyes and hands.
+    `put(${j({ pid: dead, who: 'refill', since: now, borrowed: manual })}); local before, n = raw(), #POSTED
+     local h, e = hc("runner", "eh.hands.click", ${click}), hc("runner", "eh.eyes.frontmost")
+     local s = call({ cmd = "stop" }); local st = call({ cmd = "status" }).result.hold
+     return { h.reason, h.kind, h.who, e.reason, #POSTED - n, s.ok, st.held, raw() == before }`,
+  ]));
+  const [state, mine, afterEnd] = out[2];
+  assert.equal(state, 'running');
+  const entry = JSON.parse(mine);
+  assert.deepEqual(Object.keys(entry).sort(), ['pid', 'since', 'who'], 'exactly the control.mjs {pid, who, since} shape');
+  assert.equal(entry.pid, process.pid);
+  assert.equal(entry.who, 'eyeshands-runner');
+  assert.ok(Number.isInteger(entry.since), 'since is epoch ms');
+  assert.equal(jobHuntHeld(entry, now), true, 'job-hunt sees our live entry as held and does not start');
+  assert.equal(jobHuntHeld({ ...entry, pid: dead }, now), false, 'our entry after a crash (dead pid) is stale to job-hunt');
+  assert.equal(afterEnd, false, 'the lease end removes our entry');
+  assert.deepEqual(out[3], ['held', 'borrowed', 'captain', 'held', 0, true, true, true],
+    'a borrowed manual hold refuses hands and eyes, nothing posts, stop and status still answer, the file does not change');
+  assert.equal(jobHuntHeld(JSON.parse(readFileSync(lock, 'utf8')), now), true, 'job-hunt agrees the borrowed hold is held');
 });
 
 test('lease: one owner at a time; it ends after 2 idle minutes or on disarm, with the awake hold', { skip }, () => {

@@ -135,9 +135,10 @@ test('initialize and tools/list answer at once with 22 tools, each with a JSON S
     // Guard rules are in the descriptions.
     const d = Object.fromEntries(result.tools.map(t => [t.name, t.description]));
     for (const n of ['hands_move', 'hands_click', 'hands_type', 'hands_key', 'hands_scroll', 'hands_drag']) {
-      for (const want of [/present/, /interrupted/, /foreign_hands/, /lease_held/, /wall/, /locked/, /hands capability/]) assert.match(d[n], want, n);
+      for (const want of [/present/, /interrupted/, /foreign_hands/, /lease_held/, /held =/, /wall/, /locked/, /hands capability/]) assert.match(d[n], want, n);
     }
     assert.match(d.eyes_fields, /eyes capability/);
+    for (const n of ['eyes_fields', 'eyes_value', 'eyes_text', 'eyes_focused', 'eyes_dialog', 'eyes_tree']) assert.match(d[n], /held = .*eyes refuse too/, n);
     assert.match(d.eyes_shot, /shot capabilities/);
     assert.match(d.eyes_shot, /1568/);
     assert.match(d.hands_status, /until hands_release/);
