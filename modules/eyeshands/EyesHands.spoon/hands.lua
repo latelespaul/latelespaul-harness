@@ -32,7 +32,9 @@
 --
 -- Lease. One owner at a time holds the cursor. An owner takes the lease with its first hands job
 -- (or focus) that passes the guards; it ends on hands_release (disarm), on any disarm, on unload,
--- or after 2 minutes with no hands call and no job. While a lease exists:
+-- or after 2 minutes with no hands call and no job. With a hold file set, each job and focus also
+-- takes the driver lock (guards.holdTake) and refuses `held` when it cannot; the lock is removed at
+-- the lease's end, on abort and on the stop switch (the next job takes it again). While a lease exists:
 --   - the takeover tap runs: it only reads (it never changes, delays or drops an event); any event
 --     without EVENT_TAG ends the job and refuses hands until resume; each event also feeds the
 --     present rule's clock (guards.noteEvent), where known machine tags are not a person;
@@ -210,7 +212,7 @@ return function(deps)
     local t = deps.nowMs() - j.t0
     if t - j.lastCheck >= CHECK_MS then
       j.lastCheck = t
-      local h = G.holdCheck()
+      local h = G.holdCheck(lease and lease.pid)
       if h then return finish(j, "held", { kind = h.kind, who = h.who, since = h.since, ["until"] = h["until"] }) end
       local r = G.sessionCheck()
       if r then return finish(j, "locked", { why = r.why or r.reason }) end
@@ -286,6 +288,7 @@ return function(deps)
     if not l then return false end
     if job then finish(job, "aborted", { why = reason }) end
     lease = nil
+    G.holdDrop()
     if tap then pcall(function() tap:stop() end); tap = nil end
     G.tap(false)
     takeover, interrupts = nil, 0
@@ -293,7 +296,10 @@ return function(deps)
     log(string.format("lease-end owner=%s reason=%s", clean(l.owner), clean(reason)))
     return true
   end
+  -- Takes the driver lock (guards.lua, when a hold file is set) and the lease: nil, or the refusal.
   local function takeLease(caller)
+    local r = G.holdTake(caller.pid, "eyeshands-" .. tostring(caller.owner))
+    if r then return r end
     if lease then lease.lastUse = deps.now(); return end
     lease = { owner = caller.owner, pid = caller.pid, lastUse = deps.now(), since = deps.now() }
     G.tap(true)
@@ -336,7 +342,7 @@ return function(deps)
     local t = deps.resolve(a.target)
     if not t.ok then return nil, t end
     local okF, front = pcall(deps.frontPid)
-    local r = G.check({ owner = caller.owner, targetPid = t.pid, frontPid = okF and front or nil,
+    local r = G.check({ owner = caller.owner, pid = caller.pid, targetPid = t.pid, frontPid = okF and front or nil,
       lease = leaseCheck, takeover = takeoverCheck })
     if r then return nil, r end
     return t
@@ -540,8 +546,9 @@ return function(deps)
     if not ok then return refuse("failed", "could not plan the " .. kind) end
     if not events then return why end
     local fresh = lease == nil
-    takeLease(caller)
-    local r = G.sessionCheck()
+    local r = takeLease(caller)
+    if r then return r end
+    r = G.sessionCheck()
     if r then
       if fresh then endLease(r.reason) end
       return r
@@ -566,9 +573,9 @@ return function(deps)
     local t = deps.resolve(a.target)
     if not t.ok then return t end
     -- Guards 1-7: focus is what fixes guard 8.
-    local r = G.check({ owner = caller.owner, lease = leaseCheck, takeover = takeoverCheck })
+    local r = G.check({ owner = caller.owner, pid = caller.pid, lease = leaseCheck, takeover = takeoverCheck })
+      or takeLease(caller)
     if r then return r end
-    takeLease(caller)
     local ok, res = pcall(deps.activate, t.pid)
     if not ok or res == false then return refuse("failed", "could not bring the target to the front", { pid = t.pid }) end
     return { ok = true, focused = true, target = t.name, pid = t.pid }
@@ -608,6 +615,7 @@ return function(deps)
     if job and job.owner == caller.owner then
       local j = job
       finish(j, "aborted")
+      G.holdDrop()
       return report(j)
     end
     return { ok = true, aborted = false }
@@ -621,6 +629,7 @@ return function(deps)
   end
   function H.abortAll(reason)
     if job then finish(job, "aborted", { why = reason }) end
+    G.holdDrop()
   end
   function H.unload()
     endLease("unloaded")

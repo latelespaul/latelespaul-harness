@@ -258,11 +258,11 @@ test('doctor: the hold file line says free, held (by whom, until when) or unread
   assert.equal(holdLines(null), 'fails 0\n');
   assert.equal(holdLines({ configured: true, file, held: false, kind: 'missing' }), `PASS  hold file ${file}: free (no file)\nfails 0\n`);
   assert.equal(holdLines({ configured: true, file, held: true, kind: 'manual', who: 'captain', since: '2027-01-15T07:59:00Z', until: '2027-01-15T08:10:00Z' }),
-    `WARN  hold file ${file}: held (manual hold by captain, since 2027-01-15T07:59:00Z, until 2027-01-15T08:10:00Z); hands are refused until it ends\nfails 0\n`);
-  assert.match(holdLines({ configured: true, file, held: true, kind: 'pid', pid: 4242, who: 'night run' }), /WARN  hold file .*: held \(pid 4242 \(night run\)\); hands/);
+    `WARN  hold file ${file}: held (manual hold by captain, since 2027-01-15T07:59:00Z, until 2027-01-15T08:10:00Z); eyes and hands are refused until it ends\nfails 0\n`);
+  assert.match(holdLines({ configured: true, file, held: true, kind: 'pid', pid: 4242, who: 'night run' }), /WARN  hold file .*: held \(pid 4242 \(night run\)\); eyes and hands/);
   assert.match(holdLines({ configured: true, file, held: true, kind: 'borrowed', who: 'captain' }), /held \(borrowed manual hold by captain\);/);
   const bad = holdLines({ configured: true, file, held: true, kind: 'malformed' });
-  assert.match(bad, /^FAIL  hold file \/locks\/driver\.lock: malformed, so it counts as held and hands are refused\n      fix: /);
+  assert.match(bad, /^FAIL  hold file \/locks\/driver\.lock: malformed, so it counts as held and eyes and hands are refused\n      fix: /);
   assert.match(bad, /fails 1\n$/);
 });
 

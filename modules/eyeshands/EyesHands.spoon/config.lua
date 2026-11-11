@@ -77,9 +77,9 @@ local KEYS = {
   log_file = { "~/Library/Logs/eyeshands.log", path },
   -- Window shots (eh.eyes.shot): a private folder (mode 700); the reader deletes each file.
   shot_dir = { "~/Library/Caches/eyeshands/shots", path },
-  -- A JSON driver lock file that another tool writes (a manual hold, or a live driver's pid; rules
-  -- in guards.lua). While it is held, hands are refused with `held` and a running job ends. nil or
-  -- false: off.
+  -- A JSON driver lock file shared with other tools (a manual hold, or a live driver's pid; rules
+  -- in guards.lua). While it is held, eyes and hands are refused with `held` and a running job
+  -- ends; the hands lease takes the lock in it. nil or false: off (no read, no write).
   hold_file = { nil, optPath },
   -- Present rule: hands start only after this many seconds with no human input.
   idle_buffer_s = { 20, int(1, 3600) },

@@ -32,7 +32,9 @@
 ---                and the args.target in the owner's apps) guards, a plan, then a job, see hands.lua
 ---   eh.hands.job, .status, .resume, .abort  (signed; capability hands) the caller's jobs and lease
 ---   hands_release is the built-in disarm: it ends the owner's arm and its hands lease.
---- Eyes only read. Only the hands post input, every event with EVENT_TAG.
+--- Eyes only read. Only the hands post input, every event with EVENT_TAG. With cfg.hold_file set,
+--- every eyes and hands command refuses `held` while the hold file is held (guards.lua), and the
+--- hands lease takes the driver lock in it; status, eh.targets and stop never check it.
 local obj = {}
 obj.__index = obj
 
@@ -69,6 +71,18 @@ local function readHold(path)
   if not ok or (text == nil and err ~= nil) then return nil, "unreadable" end   -- a folder, say
   return text or ""                  -- nil with no error: an empty file
 end
+local function q(p) return "'" .. tostring(p):gsub("'", "'\\''") .. "'" end
+-- The driver lock's writes (guards.holdTake): a temp file, a hard link that fails when the target
+-- exists (an exclusive create), a rename aside, a remove.
+local function writeHold(path, text)
+  local f = io.open(path, "w")
+  if not f then return false end
+  local ok = f:write(text) ~= nil
+  return f:close() == true and ok
+end
+local function linkHold(from, to) return os.execute("/bin/ln " .. q(from) .. " " .. q(to) .. " 2>/dev/null") == true end
+local function moveHold(from, to) return os.rename(from, to) == true end
+local function removeHold(path) os.remove(path) end
 local function readFile(path)
   local f = io.open(path)
   if not f then return nil end
@@ -136,6 +150,7 @@ function obj:start(user)
     idleBuffer = cfg.idle_buffer_s, stopMinutes = cfg.stop_minutes, consentMinutes = cfg.consent_minutes,
     detectors = cfg.detectors,
     holdFile = cfg.hold_file or nil, readHold = readHold, pidAlive = pidExists,
+    writeHold = writeHold, linkHold = linkHold, moveHold = moveHold, removeHold = removeHold,
     ownTag = obj.EVENT_TAG,
     tagRegistered = function() return s.tagRegistered == true end,
   })
@@ -326,15 +341,20 @@ function obj:start(user)
 
   -- The eyes, signed. The port checks the capability and that args.target is in the owner's apps;
   -- pixels and shot are registered under shot and check eyes here (a command has one capability).
+  -- Every eyes command reads the live desktop, so a held hold file refuses it (guards.holdCheck).
   local function target(a) return type(a) == "table" and a.target or nil end
   local function args(a) return type(a) == "table" and a or {} end
   for _, name in ipairs({ "fields", "value", "text", "focused", "dialog", "tree" }) do
-    s.core.register("eh.eyes." .. name, function(a, caller) return s.eyes[name](args(a), caller.owner) end,
-      { cap = "eyes", app = target })
+    s.core.register("eh.eyes." .. name, function(a, caller)
+      return s.guards.holdCheck(caller.pid) or s.eyes[name](args(a), caller.owner)
+    end, { cap = "eyes", app = target })
   end
-  s.core.register("eh.eyes.frontmost", function() return s.eyes.frontmost() end, { cap = "eyes" })
+  s.core.register("eh.eyes.frontmost", function(_, caller) return s.guards.holdCheck(caller.pid) or s.eyes.frontmost() end,
+    { cap = "eyes" })
   for _, name in ipairs({ "pixels", "shot" }) do
     s.core.register("eh.eyes." .. name, function(a, caller)
+      local held = s.guards.holdCheck(caller.pid)
+      if held then return held end
       if not hasCap(caller.owner, "eyes") then
         s.log(string.format("%s deny owner=%s cmd=eh.eyes.%s reason=capability?eyes?not?granted", stamp(), clean(caller.owner), name))
         return { ok = false, reason = "capability", hint = "eh.eyes." .. name .. " needs the eyes and shot capabilities" }

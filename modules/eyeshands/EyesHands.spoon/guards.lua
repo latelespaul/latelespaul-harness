@@ -12,10 +12,10 @@
 --   8. focus         the target is frontmost
 -- A refusal is { ok=false, reason=, hint=, ... } with the reasons of the design's part 9.
 -- During a job, hands.lua repeats checks 2 (G.holdCheck), 5 (G.sessionCheck) and 8 every 250 ms;
--- hands_resume needs check 6 (G.presentCheck).
+-- hands_resume needs check 6 (G.presentCheck). The eyes commands (init.lua) run check 2 too.
 --
--- The hold file (part 10), read only: a JSON driver lock that another tool writes; this file never
--- writes, moves or deletes it. It is held when:
+-- The hold file (part 10): a JSON driver lock shared with other tools (job-hunt's driver.lock). It
+-- is held when:
 --   - it holds a manual hold {pid: 0, who, since, manual: true, until} and now < until (no `until`,
 --     or one that does not parse, counts as held: the safe side);
 --   - it names a pid that is alive ({pid, who, since}, or a bare pid as the whole file);
@@ -23,7 +23,13 @@
 --     borrowed manual hold is held by the first rule;
 --   - it cannot be read, is not JSON, or has neither a pid nor manual: true (the safe side).
 -- No file means free. `since` and `until` are epoch milliseconds (seconds below 1e11) or ISO 8601.
--- Eyes never come here: they post no input, so they work while a person is present.
+-- A live pid that is the caller's own armed pid, or the one in the entry this Spoon wrote, is not
+-- held for that check (the caller holds the lock itself).
+-- The hands lease takes the lock (G.holdTake): {pid: <the caller's armed pid>, who: "eyeshands-
+-- <owner>", since: <epoch ms>}, written to a temp file and hard-linked into place (the link fails
+-- when the file exists), only when there is no file or its holder is stale (moved aside first to
+-- <file>.stale-<pid>-<n>). G.holdDrop removes the file only while it still holds that exact entry;
+-- a manual, borrowed or foreign hold is never touched. A crash leaves a dead pid: stale.
 --
 -- Foreign hands, read only (part 11): never a call that changes another driver's state, and never
 -- a write to its table:
@@ -33,6 +39,8 @@
 --
 -- deps: now() -> seconds, idleTime() -> seconds since the last hardware input,
 --       holdFile (path or nil = off), readHold(path) -> text, or nil and "missing" | "unreadable",
+--       writeHold(path, text) -> bool, linkHold(from, to) -> bool (fails when `to` exists),
+--       moveHold(from, to) -> bool, removeHold(path),
 --       pidAlive(pid) -> whether a process with that pid exists,
 --       session() -> { locked, on_console, display_asleep, screensaver },
 --       global(name) -> rawget(_G, name), json (decode for a status() that returns JSON text),
@@ -138,38 +146,110 @@ return function(deps)
     info.held, info.kind = false, "free"
     return info
   end
-  -- What the hold file says now: { configured = false }, or { configured, file, held, kind, who,
-  -- since, until, pid, retry_after_s } (kind: missing, manual, pid, borrowed, unreadable, malformed,
-  -- free).
-  function G.holdInfo()
-    local file = deps.holdFile
-    if not file then return { configured = false } end
-    local ok, text, why = pcall(deps.readHold, file)
-    local h
-    if not ok then h = { held = true, kind = "unreadable" }
-    elseif text == nil then h = why == "missing" and { held = false, kind = "missing" } or { held = true, kind = "unreadable" }
-    elseif #text > HOLD_MAX then h = { held = true, kind = "malformed" }
-    elseif text:match("^%s*%d+%s*$") then h = holder({ pid = math.tointeger(tonumber(text)) })
-    else
-      local okJ, j = pcall(json.decode, text)
-      h = holder(okJ and j or nil)
-    end
-    local out = { configured = true, file = file, held = h.held == true, kind = h.kind, who = h.who, pid = h.pid,
+  -- The state of the hold file's text (nil and why when there is none).
+  local function holdState(text, why)
+    if text == nil then return why == "missing" and { held = false, kind = "missing" } or { held = true, kind = "unreadable" } end
+    if #text > HOLD_MAX then return { held = true, kind = "malformed" } end
+    if text:match("^%s*%d+%s*$") then return holder({ pid = math.tointeger(tonumber(text)) }) end
+    local okJ, j = pcall(json.decode, text)
+    return holder(okJ and j or nil)
+  end
+  local function readState(path)
+    local ok, text, why = pcall(deps.readHold, path)
+    if not ok then return { held = true, kind = "unreadable" } end
+    return holdState(text, why)
+  end
+  local function report(h)
+    local out = { configured = true, file = deps.holdFile, held = h.held == true, kind = h.kind, who = h.who, pid = h.pid,
       since = h.since and stamp(h.since) or nil, ["until"] = h.untilAt and stamp(h.untilAt) or nil }
     if out.held then
       out.retry_after_s = h.kind ~= "pid" and h.untilAt and math.max(1, ceil(h.untilAt - now())) or FOREIGN_RETRY
     end
     return out
   end
-  -- nil when the hold file is off or free, else the `held` refusal.
-  function G.holdCheck()
-    local h = G.holdInfo()
-    if not h.held then return nil end
+  local mine = nil                   -- { pid, who, since } the entry this Spoon wrote
+  local function refusal(h)
+    local hint = (h.kind == "unreadable" or h.kind == "malformed")
+      and "the hold file cannot be read; it counts as held until it is fixed or removed; do offline work only"
+      or h.kind == "pid" and "another driver holds the desktop lock; wait, never force"
+      or "the person holds the desktop; do offline work only until the hold ends; never force"
     return { ok = false, reason = "held", kind = h.kind, who = h.who, pid = h.pid, since = h.since, ["until"] = h["until"],
-      retry_after_s = h.retry_after_s,
-      hint = (h.kind == "unreadable" or h.kind == "malformed")
-        and "the hold file cannot be read; it counts as held until it is fixed or removed; do offline work only"
-        or "the person holds the desktop; do offline work only until the hold ends; never force" }
+      retry_after_s = h.retry_after_s, hint = hint }
+  end
+  local function exempt(h, selfPid)
+    return h.kind == "pid" and h.pid ~= nil and (h.pid == selfPid or (mine ~= nil and h.pid == mine.pid))
+  end
+  -- What the hold file says now: { configured = false }, or { configured, file, held, kind, who,
+  -- since, until, pid, retry_after_s } (kind: missing, manual, pid, borrowed, unreadable, malformed,
+  -- free).
+  function G.holdInfo()
+    if not deps.holdFile then return { configured = false } end
+    return report(readState(deps.holdFile))
+  end
+  -- nil when the hold file is off or free, or held by selfPid (the caller's armed pid), else the
+  -- `held` refusal.
+  function G.holdCheck(selfPid)
+    local h = G.holdInfo()
+    if not h.held or exempt(h, selfPid) then return nil end
+    return refusal(h)
+  end
+
+  local function isMine(path, e)
+    local ok, text = pcall(deps.readHold, path)
+    if not ok or type(text) ~= "string" then return false end
+    local okJ, j = pcall(json.decode, text)
+    return okJ and type(j) == "table" and j.pid == e.pid and j.who == e.who and j.since == e.since
+  end
+  local function cannot(hint) return { ok = false, reason = "held", kind = "unwritable", retry_after_s = FOREIGN_RETRY, hint = hint } end
+  -- Takes the driver lock for pid (the caller's armed pid) as `who`: nil when it is taken, is ours
+  -- already, is held by pid itself, or no hold file is set; else the `held` refusal.
+  function G.holdTake(pid, who)
+    local file = deps.holdFile
+    if not file then return nil end
+    if mine and isMine(file, mine) then return nil end
+    mine = nil
+    pid = math.tointeger(tonumber(pid))
+    if not pid or pid <= 0 then return cannot("arm with a pid (hsx arm passes the runner's) so the driver lock can name it") end
+    local e = { pid = pid, who = tostring(who), since = math.floor(now() * 1000) }
+    local body, tmp = json.encode(e), file .. ".take-" .. pid
+    for i = 0, 2 do
+      local okW, wrote = pcall(deps.writeHold, tmp, body)
+      local okL, linked = false, false
+      if okW and wrote then okL, linked = pcall(deps.linkHold, tmp, file) end
+      pcall(deps.removeHold, tmp)
+      if not (okW and wrote) then return cannot("the hold file cannot be written; fix its folder") end
+      if okL and linked then
+        if isMine(file, e) then mine = e; return nil end
+        break
+      end
+      local h = readState(file)
+      if h.held then
+        if exempt(report(h), pid) then return nil end
+        return refusal(report(h))
+      end
+      if h.kind ~= "missing" then
+        local aside = file .. ".stale-" .. pid .. "-" .. i
+        local okM, moved = pcall(deps.moveHold, file, aside)
+        if okM and moved then
+          local m = readState(aside)
+          if m.held then
+            pcall(deps.moveHold, aside, file)
+            return refusal(report(m))
+          end
+          pcall(deps.removeHold, aside)
+        end
+      end
+    end
+    local h = report(readState(file))
+    if not h.held then return cannot("could not take the driver lock; try again") end
+    if exempt(h, pid) then return nil end
+    return refusal(h)
+  end
+  -- Removes the driver lock while it still holds the entry this Spoon wrote; never another one.
+  function G.holdDrop()
+    local e = mine
+    mine = nil
+    if e and deps.holdFile and isMine(deps.holdFile, e) then pcall(deps.removeHold, deps.holdFile) end
   end
 
   -- ---- 3. foreign hands -------------------------------------------------------------------------
@@ -282,7 +362,7 @@ return function(deps)
   G.sessionCheck, G.presentCheck = sessionRefusal, presentRefusal
 
   -- ---- the order --------------------------------------------------------------------------------
-  -- ctx: { owner, targetPid, frontPid, lease = fn(owner) -> refusal|nil, takeover = fn() -> refusal|nil }
+  -- ctx: { owner, pid (the caller's armed pid), targetPid, frontPid, lease = fn(owner) -> refusal|nil, takeover = fn() -> refusal|nil }
   -- Returns nil when hands may start, else the first refusal.
   function G.check(ctx)
     ctx = ctx or {}
@@ -291,7 +371,7 @@ return function(deps)
       return { ok = false, reason = "stopped", by = st.by, ["until"] = st["until"], retry_after_s = st.retry_after_s,
         hint = "the person pressed the stop switch; stop and report" }
     end
-    local held = G.holdCheck()
+    local held = G.holdCheck(ctx.pid)
     if held then return held end
     local by = G.foreign()
     if #by > 0 then
