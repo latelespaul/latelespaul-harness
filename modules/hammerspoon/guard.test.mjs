@@ -88,6 +88,15 @@ test('a hold that a person at the Mac or a lock ended stays ended until the owne
   }
 });
 
+test('a hold suspended by a person or a lock (no end record) refuses calls while locked, then works after the unlock', { skip }, () => {
+  const [, refused, afterTick, back, alerts] = drive([ARM, 'suspendAll(); return call("hands.click")',
+    'guard.tick({}); return owners()', 'LOCKED = false; return call("hands.click")', 'return #ALERTS']);
+  assert.deepEqual(refused, { ok: false, error: 'no awake hold (screen already locked)' });
+  assert.deepEqual(list(afterTick), [], 'nothing can be held on a locked screen');
+  assert.equal(back.ok, true, 'not stopped: the hold comes back once the screen is unlocked');
+  assert.equal(alerts, 1, 'only the first "took a hold" alert');
+});
+
 test('a disarm (signed, or the arm expiring) releases the guard hold with a lock', { skip }, () => {
   const [, signed, , expired, last] = drive([ARM, 'call("disarm"); return owners()',
     'T = T + 700; ' + ARM.slice(7), 'T = T + 3601; port.sweep(); return owners()', 'return AWAKE[#AWAKE]']);

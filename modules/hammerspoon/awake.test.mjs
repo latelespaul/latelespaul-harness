@@ -144,6 +144,13 @@ test('run does not take back its own hold after `awake off` while another owner 
   assert.equal(s.lines().filter(l => l.includes('awakeInfo')).length, 1, 'and it stopped checking');
 });
 
+test('a hold suspended by a person or a lock is not an end: run asks for it again', () => {
+  const s = sandbox('{"on":true}', FAST);
+  writeFileSync(join(s.d, 'status.json'), '{"ended":{},"on":false,"owners":{},"suspended":{"night":{"reason":"person at the Mac","since":"2999-01-01T00:00:00Z"}}}');
+  assert.equal(s.run('run', 'night', '--', 'sleep', '1').status, 0);
+  assert.ok(s.ons().length >= 2);
+});
+
 test('another owner ending does not count as this run ending: the hold is taken again', () => {
   const s = sandbox('{"on":true}', FAST);
   writeFileSync(join(s.d, 'status.json'), '{"on":true,"owners":["other"],"ended":{"nightly":{"reason":"nightly released","at":"2999-01-01T00:00:00Z"}}}');
@@ -219,7 +226,8 @@ const names = v => (Array.isArray(v) ? v : Object.keys(v));   // the stub JSON w
 
 // Loads init.lua (stub hs) with `holds` (text, or an object saved as this boot's) in the holds
 // file; then runs `then` (Lua) and returns what init-smoke.lua reported plus the file afterwards.
-function load(holds, then) {
+// extraEnv goes to init-smoke.lua (LOCKED=1: the screen is locked at load).
+function load(holds, then, extraEnv = {}) {
   const d = mkdtempSync(join(tmpdir(), 'awake-restore-'));
   const cfg = join(d, 'config');
   mkdirSync(join(cfg, 'local'), { recursive: true });
@@ -229,7 +237,7 @@ function load(holds, then) {
   if (holds !== undefined) writeFileSync(file, typeof holds === 'string' ? holds : JSON.stringify({ boot: BOOT, holds }));
   const envFile = join(d, 'harness.env');
   writeFileSync(envFile, `HS_ACCESS_FILE="${join(d, 'access.json')}"\n`);
-  const env = { ...process.env, HOME: d, HARNESS_ENV: envFile, ...(then ? { SMOKE_THEN: then } : {}) };
+  const env = { ...process.env, HOME: d, HARNESS_ENV: envFile, ...(then ? { SMOKE_THEN: then } : {}), ...extraEnv };
   const r = spawnSync(LUA, [here('./test/init-smoke.lua'), cfg, 'awake'], { encoding: 'utf8', env });
   assert.equal(r.status, 0, r.stderr);
   const saved = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
@@ -362,4 +370,91 @@ test('addEventTag refuses bad tags and accepts a tag again', { skip: skipLua }, 
   assert.deepEqual(r.base, [false, 'event tag is harness.EVENT_TAG, which always counts']);
   assert.equal(r.removeBad[0], false);
   assert.deepEqual(r.add, [true, true, true]);
+});
+
+// ---------- init.lua: a person or a lock suspends live holds; the unlock takes them back ----------
+// AWAY_KEY with two holds: `job` tied to a live pid, `nopid` with none.
+const AWAY_TWO = pid => `hs.host.idleTime = function() return 600 end
+  harness.awake(true, {owner="job", minutes=10, pid=${pid}})
+  harness.awake(true, {owner="nopid", minutes=10})
+  local t0 = os.time(); hs.timer.secondsSinceEpoch = function() return t0 + 10 end
+  SMOKE.taps[#SMOKE.taps].fn(SMOKE.event("keyDown", 0))
+  hs.timer.secondsSinceEpoch = os.time
+  local locked = true
+  hs.caffeinate.sessionProperties = function() return { CGSSessionScreenIsLocked = locked } end`;
+
+test('a person in away mode still locks, but a hold whose pid runs is suspended, not ended', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  try {
+    const out = load(undefined, `${AWAY_TWO(live.pid)}
+      local mid = harness.awakeInfo()
+      local early = harness.resumeHolds()   -- still locked: nothing comes back
+      locked = false
+      local resumed = harness.resumeHolds()
+      return hs.json.encode({ mid = mid, early = early, resumed = resumed, locked = SMOKE.locked })`);
+    const r = JSON.parse(out.result);
+    assert.equal(r.locked, 1, 'the lock on touch stays');
+    assert.equal(r.mid.on, false);
+    assert.deepEqual(names(r.mid.owners), []);
+    assert.equal(r.mid.suspended.job.reason, 'person at the Mac');
+    assert.equal(r.mid.ended.nopid.reason, 'person at the Mac', 'a hold without a pid ends as before');
+    assert.equal(r.mid.ended.job, undefined);
+    assert.equal(r.mid.last_end, undefined, 'a suspension is not an end on purpose');
+    assert.equal(r.early, false);
+    assert.equal(r.resumed, true);
+    assert.deepEqual(out.after.owners, ['job'], 'the unlock takes the live hold back');
+    assert.equal(out.after.mode, 'present', 'in present mode: the person who unlocked is at the Mac');
+    assert.equal(out.after.suspended, undefined);
+    assert.equal(out.saved.holds.job.pid, live.pid);
+    assert.equal(out.saved.holds.job.suspended, undefined);
+  } finally { live.kill(); }
+});
+
+test('a suspended hold whose pid exited during the lock ends at the unlock', { skip: skipLua }, () => {
+  // The job is started (and killed) from Lua, detached, so it is reaped at once and not left a zombie.
+  const out = load(undefined, `local pid = tonumber(io.popen("sleep 30 >/dev/null 2>&1 & echo $!"):read("l"))
+    ${AWAY_TWO('pid')}
+    local mid = harness.awakeInfo()
+    os.execute("kill " .. pid .. "; sleep 0.3")
+    locked = false
+    harness.resumeHolds()
+    return hs.json.encode(mid)`);
+  assert.equal(JSON.parse(out.result).suspended.job.reason, 'person at the Mac');
+  assert.deepEqual(names(out.after.owners), []);
+  assert.equal(out.after.ended.job.reason, 'job process gone');
+  assert.deepEqual(out.saved.holds, {});
+});
+
+test('a lock from outside suspends live holds too; awake off drops a suspended hold', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  try {
+    const out = load(undefined, `harness.awake(true, {owner="job", minutes=10, pid=${live.pid}})
+      local w = SMOKE.watchers[#SMOKE.watchers]; w(hs.caffeinate.watcher.screensDidLock)
+      local mid = harness.awakeInfo()
+      local f = io.open(hs.configdir .. "/harness-awake.json"); local saved = f:read("a"); f:close()
+      harness.awake(false, {owner="job", reason="job released"})
+      return hs.json.encode({ mid = mid, saved = hs.json.decode(saved), resumed = harness.resumeHolds() })`);
+    const r = JSON.parse(out.result);
+    assert.equal(r.mid.suspended.job.reason, 'screen locked');
+    assert.equal(r.saved.holds.job.suspended, true, 'the file keeps it, marked suspended');
+    assert.equal(r.resumed, false);
+    assert.deepEqual(names(out.after.owners), []);
+    assert.equal(out.after.suspended, undefined);
+    assert.equal(out.after.ended.job.reason, 'job released');
+    assert.deepEqual(out.saved.holds, {});
+  } finally { live.kill(); }
+});
+
+test('a reload while the screen is locked keeps live holds suspended for the unlock', { skip: skipLua }, () => {
+  const live = spawn('sleep', ['30']);
+  const t = now() + 600;
+  try {
+    const out = load({ job: { pid: live.pid, until: t, dim: true, suspended: true }, nopid: { until: t } },
+      'hs.caffeinate.sessionProperties = function() return {} end; harness.resumeHolds(); return ""', { LOCKED: '1' });
+    assert.deepEqual(names(out.loaded.owners), []);
+    assert.equal(out.loaded.suspended.job.reason, 'screen locked');
+    assert.match(out.log, /hold nopid not restored \(screen locked\)/);
+    assert.deepEqual(out.after.owners, ['job']);
+    assert.equal(out.saved.holds.job.until, t, 'the same deadline');
+  } finally { live.kill(); }
 });

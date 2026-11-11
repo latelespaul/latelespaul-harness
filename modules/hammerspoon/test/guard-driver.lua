@@ -2,7 +2,7 @@
 -- wired the way init.lua wires them, over a fake awake mode. Reads one Lua chunk per stdin line
 -- and prints its return value as JSON (or "ERROR ..."). The chunk sees:
 --   port, guard, T (clock), LOCKED (awake refuses while true), HOLDS (owner -> opts), AWAKE (calls),
---   ENDED (owner -> end record), endAll(reason), ALERTS, LOG, KEY (an armed secret),
+--   ENDED (owner -> end record), endAll(reason), suspendAll(), ALERTS, LOG, KEY (an armed secret),
 --   call(cmd, args) (a signed call as runner)
 local here = arg[0]:match("^(.*)/") or "."
 local fakes = dofile(here .. "/fakes.lua")
@@ -19,6 +19,10 @@ end
 function endAll(reason)
   for o in pairs(HOLDS) do ENDED[o] = { reason = reason } end
   HOLDS = {}
+end
+-- Like stopAll for a hold whose pid still runs: it is suspended (no end record) and the lock is on.
+function suspendAll()
+  HOLDS, LOCKED = {}, true
 end
 -- Like harness.awake: refuses on a locked screen, otherwise holds or releases the owner.
 local function awake(on, opts)
