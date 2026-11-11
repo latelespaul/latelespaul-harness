@@ -89,6 +89,15 @@ Rules for each step:
 
 If the expected change didn't happen, don't repeat the action blindly. Look again, find why, and fix the cause.
 
+**Web form caveats** (seen on real job-application forms):
+- **Read the whole form first.** List every field on the page, including required (*) custom dropdowns, before you fill. A plan made from the job post alone misses fields, and a skipped required field blocks Submit.
+- **Choose from the real options.** Searchable dropdowns accept only their own list. Open the dropdown, read the options, and pick the best match from a list of allowed aliases (for example "University of Pune" or "Savitribai Phule Pune University"). Typing a value that is not in the list gives "No options".
+- **Close browser popups before the next click.** Press Esc after typing. The browser's own autofill popup can sit under the next field, and a click on it can open the browser's settings in a new tab.
+- **Check the tab before each step.** Confirm that the front tab's URL is the task's page. Close any tab that the run opened by mistake.
+- **Success can appear on the same URL.** Some forms show a "Success" banner without changing the URL. Read the visible text and the screenshot before you mark a submit as failed, so you never apply twice.
+- **Dead pages are not hand-offs.** "Page not found" or "no longer accepting" means the task is closed. Do not send it to the user.
+- **Embedded forms.** A company page can wrap a hosted form that the eyes cannot read. Open the hosted form's own URL instead.
+
 ## 3. When the user touches the mouse or keyboard
 
 Their input always wins. Any untagged mouse move, click, key or scroll stops the hands at once, and every hands call is refused until resumed.
