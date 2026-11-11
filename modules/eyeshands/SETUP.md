@@ -36,7 +36,7 @@ The loader starts the Spoon with three harness values:
 
 **The one restart.** A running Hammerspoon loads the loader only when it starts. So the first install restarts Hammerspoon once, through `modules/hammerspoon/install.sh --restart`. That restart has the hammerspoon module's deferral:
 - It never restarts while a job holds awake mode or a harness port owner has an arm. It prints `restart deferred: ...` with their names.
-- Before that, this install also defers while an Eyes & Hands owner has an arm, a hands job runs, or an owner holds the hands lease.
+- Before that, this install also defers while an Eyes & Hands owner has an arm, a hands job runs, or an owner holds the hands lease. It also defers while the person's stop switch (ctrl+alt+cmd+escape) is on, because a restart clears it.
 - When Hammerspoon does not run, nothing restarts. The Spoon starts with Hammerspoon.
 - When the Spoon already runs, nothing restarts. After a Spoon update, run `install.sh --restart` to load the new code, with the same deferral.
 
