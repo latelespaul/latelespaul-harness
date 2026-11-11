@@ -20,6 +20,15 @@
 --                           AXAPPS[pid] is the app element hs.axuielement returns; CLOCK the ms clock)
 --   image(w, h, fn)         a synthetic hs.image; WINDOWS[pid] = { frame, img } the app's front window
 --   eyes(over)              an eyes.lua instance over fake deps (TARGETS, CAPS, WIMG, AXOK, FRONTAPP)
+--   POSTED                  every event the fake hs.eventtap posted: {type, x, y, key, flags, chars,
+--                           tag (its eventSourceUserData), dx, dy, clicks}
+--   TAPS                    every event tap made: {types, fn, on}; human(kind, x, y, dx, dy, tag)
+--                           sends one event to each running tap (tag nil = a person)
+--   PB                      the fake clipboard {data, change}; MOUSE the cursor {x, y}
+--   WINS[pid]               the visible window frames hands see ({ {x, y, w, h} }, default a big one)
+--   ACTIVATED               pids that hs.application...:activate() was called for
+--   CAF                     hs.caffeinate.set calls ("displayIdle=true")
+--   run(ms)                 advances CLOCK in 4 ms steps, firing each running 4 ms timer
 local here = arg[0]:match("^(.*)/") or "."
 local SPOON = here .. "/../EyesHands.spoon"
 local fakes = dofile(here .. "/../../hammerspoon/test/fakes.lua")
@@ -198,9 +207,73 @@ local function app(pid, name, bundle)
   local w = WINDOWS[pid] and fakeWindow(WINDOWS[pid])
   function a:focusedWindow() return w end
   function a:mainWindow() return w end
-  function a:allWindows() return { w } end
+  function a:allWindows()
+    if WINS[pid] or not w then
+      local out = {}
+      for _, f in ipairs(WINS[pid] or { { 0, 0, 3000, 2000 } }) do out[#out + 1] = fakeWindow({ frame = f }) end
+      return out
+    end
+    return { w }
+  end
+  function a:activate() ACTIVATED[#ACTIVATED + 1] = pid; FRONT = pid; return true end
   return a
 end
+-- ---- fake input (the hands): nothing reaches the real screen ------------------------------------
+POSTED, TAPS, ACTIVATED, CAF = {}, {}, {}, {}
+PB = { data = { ["public.utf8-plain-text"] = "old clip" }, change = 1 }
+MOUSE = { x = 100, y = 100 }
+WINS = {}
+local TYPES = { mouseMoved = 5, leftMouseDown = 1, leftMouseUp = 2, rightMouseDown = 3, rightMouseUp = 4,
+  leftMouseDragged = 6, rightMouseDragged = 7, keyDown = 10, keyUp = 11, flagsChanged = 12, scrollWheel = 22,
+  otherMouseDown = 25, otherMouseUp = 26, otherMouseDragged = 27 }
+local TYPENAME = {}
+for k, v in pairs(TYPES) do TYPENAME[v] = k end
+local PROPS = { eventSourceUserData = 42, mouseEventDeltaX = 4, mouseEventDeltaY = 5, mouseEventClickState = 1 }
+local function newEvent(rec)
+  local ev = { rec = rec, props = {} }
+  function ev:setProperty(k, v) self.props[k] = v; return self end
+  function ev:getProperty(k) return self.props[k] or 0 end
+  function ev:setUnicodeString(s) self.rec.chars = s; return self end
+  function ev:setFlags(f) local t = {}; for k in pairs(f) do t[#t + 1] = k end; table.sort(t); self.rec.flags = table.concat(t, "+"); return self end
+  function ev:getType() return TYPES[self.rec.type] end
+  function ev:location() return { x = self.rec.x or MOUSE.x, y = self.rec.y or MOUSE.y } end
+  function ev:post()
+    local r = self.rec
+    r.tag = self.props[PROPS.eventSourceUserData]
+    r.dx, r.dy = r.dx or self.props[PROPS.mouseEventDeltaX], r.dy or self.props[PROPS.mouseEventDeltaY]
+    r.clicks = self.props[PROPS.mouseEventClickState]
+    if r.x then MOUSE = { x = r.x, y = r.y } end
+    POSTED[#POSTED + 1] = r
+    -- A posted event also reaches every running tap, as on a real Mac.
+    for _, t in ipairs(TAPS) do if t.on then t.fn(self) end end
+  end
+  return ev
+end
+local fakeEvent = {
+  types = TYPES, properties = PROPS,
+  newMouseEvent = function(t, p) return newEvent({ type = TYPENAME[t], x = p.x, y = p.y }) end,
+  newKeyEvent = function(_, key, down)
+    local isMod = key == 55 or key == 56 or key == 58 or key == 59
+    return newEvent({ type = isMod and "flagsChanged" or (down and "keyDown" or "keyUp"), key = key, down = down })
+  end,
+  newScrollEvent = function(o) return newEvent({ type = "scrollWheel", dx = o[1], dy = o[2] }) end,
+}
+-- human(kind, x, y, dx, dy, tag): one event from someone else (a person when tag is nil).
+function human(kind, x, y, dx, dy, tag)
+  local ev = newEvent({ type = kind or "mouseMoved", x = x or MOUSE.x + 6, y = y or MOUSE.y + 4 })
+  ev.props[PROPS.mouseEventDeltaX], ev.props[PROPS.mouseEventDeltaY] = dx or 6, dy or 4
+  if tag then ev.props[PROPS.eventSourceUserData] = tag end
+  local passed = {}
+  for _, t in ipairs(TAPS) do if t.on then passed[#passed + 1] = t.fn(ev) end end
+  return passed
+end
+function run(ms)
+  for _ = 1, math.ceil(ms / 4) do
+    CLOCK = CLOCK + 4
+    for _, t in ipairs(R.timers) do if t.on and t.secs == 0.004 then t.fn() end end
+  end
+end
+
 local fakeHs = {
   json = json, hash = { hmacSHA256 = fakes.hmacSHA256 },
   accessibilityState = function() return true end,
@@ -216,11 +289,19 @@ local fakeHs = {
     end,
     doAfter = function(_, fn) fn(); return { stop = function() end } end,
     absoluteTime = function() return CLOCK * 1e6 end,
+    new = function(secs, fn)
+      local t = { secs = secs, fn = fn, on = false }
+      function t:start() self.on = true; return self end
+      function t:stop() self.on = false end
+      R.timers[#R.timers + 1] = t
+      return t
+    end,
     usleep = function(us) CLOCK = CLOCK + us / 1000 end,
   },
   axuielement = { applicationElementForPID = function(pid) return AXAPPS[pid] end },
   caffeinate = {
     sessionProperties = function() return SESSION end,
+    set = function(k, v) CAF[#CAF + 1] = k .. "=" .. tostring(v) end,
     watcher = { screensDidSleep = 1, screensDidWake = 2, screensaverDidStart = 3, screensaverDidStop = 4,
       screensDidLock = 5, screensDidUnlock = 6,
       new = function(fn) R.caf = fn; return { start = function(self) return self end, stop = function() R.cafStopped = true end } end },
@@ -248,6 +329,26 @@ local fakeHs = {
     R.menus[#R.menus + 1] = m
     return m
   end },
+  eventtap = {
+    event = fakeEvent,
+    new = function(types, fn)
+      local t = { types = types, fn = fn, on = false }
+      function t:start() self.on = true; return self end
+      function t:stop() self.on = false end
+      function t:isEnabled() return self.on end
+      TAPS[#TAPS + 1] = t
+      return t
+    end,
+  },
+  pasteboard = {
+    readAllData = function() local c = {}; for k, v in pairs(PB.data) do c[k] = v end; return c end,
+    writeAllData = function(d) PB.data = d; PB.change = PB.change + 1; return true end,
+    setContents = function(s) PB.data = { ["public.utf8-plain-text"] = s }; PB.change = PB.change + 1; return true end,
+    clearContents = function() PB.data = {}; PB.change = PB.change + 1 end,
+    changeCount = function() return PB.change end,
+  },
+  mouse = { absolutePosition = function() return { x = MOUSE.x, y = MOUSE.y } end },
+  keycodes = { map = dofile(SPOON .. "/planner.lua").US_MAP, currentLayout = function() return "U.S." end },
   notify = { new = function(t) return { send = function() R.notes[#R.notes + 1] = t.informativeText end } end },
   pathwatcher = { new = function(dir, fn)
     R.watched, R.watch = dir, fn

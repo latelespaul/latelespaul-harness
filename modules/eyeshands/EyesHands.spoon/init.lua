@@ -2,9 +2,9 @@
 ---
 --- Eyes & Hands: lets an AI agent read the screen ("eyes") and drive the mouse and keyboard
 --- ("hands") of a Mac app, through one authenticated port, while the person always wins.
---- Design: docs/eyes-hands-design.md in the harness repo. So far (part 19, PRs 5 and 6): its own
---- port, config, targets, `status`, `eh.targets`, `stop`, the guards, and the eyes (eyes.lua). The
---- hands commands come in the next PR.
+--- Design: docs/eyes-hands-design.md in the harness repo. So far (part 19, PRs 5-7): its own
+--- port, config, targets, `status`, `eh.targets`, `stop`, the guards, the eyes (eyes.lua) and the
+--- hands (hands.lua).
 ---
 --- Load and start it (it writes no global; hs.loadSpoon keeps it in spoon.EyesHands):
 ---   hs.loadSpoon("EyesHands"):start({ access_file = "~/.config/eyeshands/access.json" })
@@ -28,7 +28,11 @@
 ---   eh.eyes.frontmost  (signed; capability eyes) the front app and the targets it matches
 ---   eh.eyes.pixels, .shot  (signed; capabilities eyes and shot, and the target) the target
 ---                window's own pixels; a shot goes to cfg.shot_dir (mode 700)
---- Eyes only read: no command here posts input or moves the cursor.
+---   eh.hands.focus, .move, .click, .type, .key, .scroll, .drag, .play  (signed; capability hands
+---                and the args.target in the owner's apps) guards, a plan, then a job, see hands.lua
+---   eh.hands.job, .status, .resume, .abort  (signed; capability hands) the caller's jobs and lease
+---   hands_release is the built-in disarm: it ends the owner's arm and its hands lease.
+--- Eyes only read. Only the hands post input, every event with EVENT_TAG.
 local obj = {}
 obj.__index = obj
 
@@ -156,8 +160,11 @@ function obj:start(user)
     pidAlive = pidAlive,
     log = s.log,
     alert = s.alert,
-    -- An owner's field ids (AX elements) end with its arm.
-    disarmed = function(owner) if s.eyes then s.eyes.forget(owner) end end,
+    -- An owner's field ids (AX elements) and its hands lease end with its arm.
+    disarmed = function(owner, reason)
+      if s.eyes then s.eyes.forget(owner) end
+      if s.hands then s.hands.release(owner, reason) end
+    end,
   })
   self._s = s
 
@@ -229,6 +236,46 @@ function obj:start(user)
     end,
   })
 
+  -- The hands: planned, tagged input from a 4 ms timer; the takeover tap and the awake hold
+  -- while a lease exists.
+  local P = part("planner")
+  s.hands = part("hands")({
+    tag = obj.EVENT_TAG,
+    planner = P,
+    guards = s.guards,
+    now = hs.timer.secondsSinceEpoch,
+    nowMs = function() return hs.timer.absoluteTime() / 1e6 end,
+    seed = function() return math.tointeger(hs.timer.absoluteTime() // 1) or os.time() end,
+    layout = function() return P.keys(hs.keycodes.map, hs.keycodes.currentLayout()) end,
+    resolve = s.targets.resolve,
+    frontPid = function()
+      local a = hs.application.frontmostApplication()
+      return a and a:pid() or nil
+    end,
+    windows = function(pid)
+      local app = hs.application.applicationForPID(pid)
+      local out = {}
+      for _, w in ipairs(app and app:allWindows() or {}) do
+        if w:isVisible() then local f = w:frame(); out[#out + 1] = { f.x, f.y, f.w, f.h } end
+      end
+      return out
+    end,
+    field = function(a, owner) return s.eyes.value(a, owner) end,
+    activate = function(pid)
+      local app = hs.application.applicationForPID(pid)
+      return app ~= nil and app:activate(true) ~= false
+    end,
+    event = hs.eventtap.event,
+    newTap = function(types, fn) return hs.eventtap.new(types, fn) end,
+    every = function(secs, fn) return hs.timer.new(secs, fn, true):start() end,
+    pasteboard = hs.pasteboard,
+    mousePos = function() return hs.mouse.absolutePosition() end,
+    global = function(name) return rawget(_G, name) end,
+    caffeinate = function(on) hs.caffeinate.set("displayIdle", on == true) end,
+    log = s.log,
+  })
+  s.timers[#s.timers + 1] = hs.timer.doEvery(5, s.hands.sweep)   -- 2 idle minutes end a lease
+
   -- The access policy file: missing = nothing may arm; invalid = every authenticated call denied,
   -- with an alert. Edits apply within a second (folder watch) or 5 s (poll), and are announced.
   local accessFile, seen = cfg.access_file, nil
@@ -284,6 +331,15 @@ function obj:start(user)
     end, { cap = "shot", app = target })
   end
 
+  -- The hands, signed, capability hands. The commands that drive a target name it in args.target.
+  for _, name in ipairs({ "focus", "move", "click", "type", "key", "scroll", "drag", "play" }) do
+    s.core.register("eh.hands." .. name, function(a, caller) return s.hands[name](args(a), caller) end,
+      { cap = "hands", app = target })
+  end
+  for _, name in ipairs({ "job", "status", "resume", "abort" }) do
+    s.core.register("eh.hands." .. name, function(a, caller) return s.hands[name](args(a), caller) end, { cap = "hands" })
+  end
+
   -- hs.libipc is the message-port part of hs.ipc without the generic "Hammerspoon" port that
   -- loading hs.ipc opens; this Spoon never loads hs.ipc.
   local okLib, ipc = pcall(require, "hs.libipc")
@@ -320,6 +376,8 @@ function obj:stop()
   local s = self._s
   if not s then return self end
   self._s = nil
+  -- A held button or key is released and the clipboard put back before anything else closes.
+  pcall(s.hands.unload)
   for name, o in pairs(s.core.policyInfo().owners) do if o.armed then s.core.disarm(name, "unloaded") end end
   if s.port then pcall(function() s.port:delete() end) end
   for _, t in ipairs(s.timers) do pcall(function() t:stop() end) end
@@ -351,7 +409,7 @@ function obj:status()
     present = s.guards.presentInfo(),
     idle_buffer_s = s.cfg.idle_buffer_s,
     access = s.core.policyInfo(),
-    hands = { lease = false, busy = false },
+    hands = s.hands.info(),
     foreign = s.guards.foreign(),
     stop = s.guards.stopInfo(),
     targets = s.targets.fileState(),
@@ -365,7 +423,7 @@ end
 function obj:stopAgents(by, hold)
   local s = self._s
   if not s then return { stopped = false, error = "not started" } end
-  -- (The hands PR aborts the running job here, before the disarm.)
+  s.hands.abortAll("stop switch")
   local disarmed = {}
   for name, o in pairs(s.core.policyInfo().owners) do
     if o.armed and s.core.disarm(name, "stop switch") then disarmed[#disarmed + 1] = name end
@@ -395,12 +453,12 @@ function obj:consent(minutes)
   return self
 end
 
--- The menu bar: its state (idle, eyes active, stopped) and items. Hands active comes with the
--- hands PR.
+-- The menu bar: its state (idle, eyes active, hands active, stopped) and items.
 function obj:_menuState()
   local s = self._s
   if not s then return "off" end
   if s.guards.stopInfo().stopped then return "stopped" end
+  if s.hands.info().lease then return "hands" end
   for _, o in pairs(s.core.policyInfo().owners) do if o.armed then return "eyes" end end
   return "idle"
 end
