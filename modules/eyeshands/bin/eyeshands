@@ -325,11 +325,12 @@ SHOT_RULE = " Needs the eyes and shot capabilities (screen pixels) and the targe
 HANDS_RULE = (" Hands post real mouse and keyboard input, so the person always wins. Refusals (reason, then what to "
               "do): present = a person used the Mac within the idle buffer (default 20 s): ask them or wait "
               "retry_after_s; interrupted = the person took over: wait until they leave, then hands_resume; "
-              "foreign_hands or lease_held = another driver or owner has the cursor: wait, never force; focus = the "
+              "foreign_hands or lease_held = another driver or owner has the cursor: wait, never force; held = the "
+              "hold file says the person holds the desktop: do offline work only, wait retry_after_s; focus = the "
               "target is not frontmost: hands_focus; offscreen = scroll by the given dy; wall = eyes_text showed a "
               "human check or code on this page: send eyes_shot to the person; locked or stopped = stop and report, "
               "never retry in a loop. Needs the hands capability and the target in this owner's apps. Waits for the "
-              "job and returns its final state: done, interrupted, focus, locked, failed or aborted.")
+              "job and returns its final state: done, interrupted, focus, locked, held, failed or aborted.")
 LEASE_RULE = " Needs the hands capability."
 
 # name -> (port command, kind, input schema, description). kind: unsigned (no arm), eyes, shot,
