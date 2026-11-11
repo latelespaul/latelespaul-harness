@@ -345,6 +345,11 @@ test('the driver lock: the lease takes it when free or stale, a live holder refu
     `os.remove(HP); local r = hc("runner", "eh.hands.type", ${text}); run(100); local mine = get().who
      hc("runner", "eh.hands.abort"); local afterAbort = raw(); local again = hc("runner", "eh.hands.click", ${click}); local retaken = get().who
      run(3000); call({ cmd = "stop" }); return { mine, afterAbort, again.state, retaken, raw() }`,
+    `arm("runner", 4242); os.remove(HP); local exec, probes = os.execute, 0
+     os.execute = function(c) if tostring(c):find("/bin/ps -p", 1, true) then probes = probes + 1 end; return exec(c) end
+     local r = hc("runner", "eh.hands.type", ${text}); local mine = get().who; run(2500)
+     local st = hc("runner", "eh.hands.job", hs.json.encode({ id = r.job })).state; os.execute = exec; T = T + 121; sweep(); hc("runner", "disarm")
+     return { mine, st, probes }`,
     `arm("runner", ${process.pid}); put(${j({ pid: process.pid, who: 'job-hunt run', since: 5 })}); local before = raw()
      local r = hc("runner", "eh.hands.click", ${click}); run(3000)
      local e = hc("runner", "eh.eyes.frontmost"); T = T + 121; sweep()
@@ -367,7 +372,10 @@ test('the driver lock: the lease takes it when free or stale, a live holder refu
   assert.deepEqual(out[9], ['eyeshands-runner', true], 'the lease end leaves a foreign holder untouched');
   assert.deepEqual(out[10], ['eyeshands-runner', false, 'running', 'eyeshands-runner', false],
     'abort removes our entry, the next job takes it again, the stop switch removes it');
-  assert.deepEqual(out[11], ['running', 'done', 'ok', true], 'the caller itself holds the lock: no refusal and no write');
+  assert.equal(out[11][0], 'eyeshands-runner');
+  assert.notEqual(out[11][1], 'held', 'our own entry never ends our job');
+  assert.equal(out[11][2], 0, 'a job holding our own lock entry makes no pid check');
+  assert.deepEqual(out[12], ['running', 'done', 'ok', true], 'the caller itself holds the lock: no refusal and no write');
   assert.deepEqual(readdirSync(dir), ['driver.lock'], 'no temp or stale file is left');
 });
 

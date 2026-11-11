@@ -23,8 +23,8 @@
 --     borrowed manual hold is held by the first rule;
 --   - it cannot be read, is not JSON, or has neither a pid nor manual: true (the safe side).
 -- No file means free. `since` and `until` are epoch milliseconds (seconds below 1e11) or ISO 8601.
--- A live pid that is the caller's own armed pid, or the one in the entry this Spoon wrote, is not
--- held for that check (the caller holds the lock itself).
+-- A pid that is the caller's own armed pid, or the one in the entry this Spoon wrote, is not held
+-- for that check (the caller holds the lock itself), and is never probed for liveness.
 -- The hands lease takes the lock (G.holdTake): {pid: <the caller's armed pid>, who: "eyeshands-
 -- <owner>", since: <epoch ms>}, written to a temp file and hard-linked into place (the link fails
 -- when the file exists), only when there is no file or its holder is stale (moved aside first to
@@ -108,6 +108,7 @@ return function(deps)
     end
     return days(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec + (frac and tonumber("0" .. frac) or 0) - off
   end
+  local mine = nil                   -- { pid, who, since } the entry this Spoon wrote
   local pidSeen = {}                 -- pid -> { alive, at }
   local function alive(pid)
     local c = pidSeen[pid]
@@ -126,7 +127,7 @@ return function(deps)
   end
   -- The state of one decoded holder: { held, kind, who, since, untilAt, pid } (kind: manual, pid,
   -- borrowed, malformed, or free).
-  local function holder(j, inner)
+  local function holder(j, inner, me)
     if type(j) ~= "table" then return { held = true, kind = "malformed" } end
     local pid, okPid = pidOf(j.pid)
     if not okPid or (j.manual ~= nil and type(j.manual) ~= "boolean") then return { held = true, kind = "malformed" } end
@@ -135,10 +136,10 @@ return function(deps)
       info.untilAt = epoch(j["until"])
       if not info.untilAt or now() < info.untilAt then info.held, info.kind = true, "manual"; return info end
     end
-    if pid and pid > 0 and alive(pid) then info.held, info.kind = true, "pid"; return info end
+    if pid and pid > 0 and (pid == me or (mine ~= nil and pid == mine.pid) or alive(pid)) then info.held, info.kind = true, "pid"; return info end
     if j.borrowed ~= nil then
       if inner or type(j.borrowed) ~= "table" or j.borrowed.manual ~= true then return { held = true, kind = "malformed" } end
-      local b = holder(j.borrowed, true)
+      local b = holder(j.borrowed, true, me)
       if b.held then b.kind = b.kind == "manual" and "borrowed" or b.kind end
       return b
     end
@@ -147,17 +148,17 @@ return function(deps)
     return info
   end
   -- The state of the hold file's text (nil and why when there is none).
-  local function holdState(text, why)
+  local function holdState(text, why, me)
     if text == nil then return why == "missing" and { held = false, kind = "missing" } or { held = true, kind = "unreadable" } end
     if #text > HOLD_MAX then return { held = true, kind = "malformed" } end
-    if text:match("^%s*%d+%s*$") then return holder({ pid = math.tointeger(tonumber(text)) }) end
+    if text:match("^%s*%d+%s*$") then return holder({ pid = math.tointeger(tonumber(text)) }, false, me) end
     local okJ, j = pcall(json.decode, text)
-    return holder(okJ and j or nil)
+    return holder(okJ and j or nil, false, me)
   end
-  local function readState(path)
+  local function readState(path, me)
     local ok, text, why = pcall(deps.readHold, path)
     if not ok then return { held = true, kind = "unreadable" } end
-    return holdState(text, why)
+    return holdState(text, why, me)
   end
   local function report(h)
     local out = { configured = true, file = deps.holdFile, held = h.held == true, kind = h.kind, who = h.who, pid = h.pid,
@@ -167,7 +168,6 @@ return function(deps)
     end
     return out
   end
-  local mine = nil                   -- { pid, who, since } the entry this Spoon wrote
   local function refusal(h)
     local hint = (h.kind == "unreadable" or h.kind == "malformed")
       and "the hold file cannot be read; it counts as held until it is fixed or removed; do offline work only"
@@ -182,14 +182,14 @@ return function(deps)
   -- What the hold file says now: { configured = false }, or { configured, file, held, kind, who,
   -- since, until, pid, retry_after_s } (kind: missing, manual, pid, borrowed, unreadable, malformed,
   -- free).
-  function G.holdInfo()
+  function G.holdInfo(me)
     if not deps.holdFile then return { configured = false } end
-    return report(readState(deps.holdFile))
+    return report(readState(deps.holdFile, me))
   end
   -- nil when the hold file is off or free, or held by selfPid (the caller's armed pid), else the
   -- `held` refusal.
   function G.holdCheck(selfPid)
-    local h = G.holdInfo()
+    local h = G.holdInfo(selfPid)
     if not h.held or exempt(h, selfPid) then return nil end
     return refusal(h)
   end
@@ -222,7 +222,7 @@ return function(deps)
         if isMine(file, e) then mine = e; return nil end
         break
       end
-      local h = readState(file)
+      local h = readState(file, pid)
       if h.held then
         if exempt(report(h), pid) then return nil end
         return refusal(report(h))
@@ -240,7 +240,7 @@ return function(deps)
         end
       end
     end
-    local h = report(readState(file))
+    local h = report(readState(file, pid))
     if not h.held then return cannot("could not take the driver lock; try again") end
     if exempt(h, pid) then return nil end
     return refusal(h)
