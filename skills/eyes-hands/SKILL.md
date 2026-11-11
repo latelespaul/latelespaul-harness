@@ -86,7 +86,7 @@ Use the MCP tools when your agent has them. Use the CLI when the agent can only 
 | Check | `eyes_value`, `eyes_focused`, `eyes_text` | `eyeshands eyes value --owner O --target T '{"id":"f3"}'` |
 | Resume after a pause | `hands_resume` | In `eyeshands session` only: `{"cmd":"hands.resume"}`. A one-shot call needs no resume |
 | Interruption count | `hands_status` (`interrupts`) | In `eyeshands session` only: `{"cmd":"hands.status"}`. One-shot: count each `interrupted` state yourself |
-| Stop a running job | `hands_abort` | `eyeshands hands abort --owner O` |
+| Stop a running job | `hands_abort` | In `eyeshands session` only: `{"cmd":"hands.abort"}`. One-shot: interrupt the running command, or wait for `--max-wait`, or run `eyeshands stop` |
 | End the task | `hands_release` | (a one-shot CLI call disarms by itself) |
 | Stop every agent now | (none) | `eyeshands stop` |
 
