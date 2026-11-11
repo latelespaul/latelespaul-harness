@@ -318,7 +318,7 @@ Hands post real mouse and keyboard events with human timing. Every hands command
 | `hands_scroll` | `eh.hands.scroll` | `target`, `dy`, optional `dx`, `at` | Wheel ticks that speed up, then slow down |
 | `hands_drag` | `eh.hands.drag` | `target`, `from`, `to` | Press at `from`, a dragged path, release at `to` |
 | (CLI and job-hunt only) | `eh.hands.play` | `target`, `events[]` | Plays a pre-planned event list (the `jobhunt.lua` format) |
-| `hands_status` | `eh.hands.status` | none | `lease`, `busy`, `interrupted`, `interrupts`, `pos`, `watch`, `awake` |
+| `hands_status` | `eh.hands.status` | none | `lease`, `mine`, `busy`, `interrupted`, `interrupts`, `pos`, `watch`, `awake` |
 | `hands_resume` | `eh.hands.resume` | none | Clears a takeover, only when the present rule passes |
 | `hands_abort` | `eh.hands.abort` | none | Stops the running job |
 | `hands_release` | `disarm` (built in) | none | Ends the owner's arm and hands lease |
