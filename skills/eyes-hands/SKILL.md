@@ -102,6 +102,7 @@ Other MCP clients use the same command and arguments over stdio. If the client d
 - A field `id` stays valid until the next `eyes_fields`. After the page changes, call `eyes_fields` again.
 - `eyes_shot` returns the image to an MCP client. In the CLI it returns a PNG `path`.
 - The MCP server arms the owner on the first call and disarms when the agent closes it. Call `hands_release` when the task ends.
+- The MCP server marks the tools that post input as destructive. Your MCP client can ask the user to approve them. The eyes tools only read the screen.
 
 **CLI rules**
 - A one-shot `eyes` or `hands` command arms, makes one call, and disarms. A hands command waits for its job (at most `--max-wait` seconds, default 900).
@@ -215,7 +216,7 @@ A refused call returns `ok: false`, a `reason` and a `hint`. Read the reason and
 | `focus` | The target is not the front window, or the point is not on it | `hands_focus`, then look again |
 | `offscreen` | The rect is outside the viewport | `hands_scroll` by the suggested `dy` |
 | `not_on_target` | A pixel point or rect is outside the target window | Use a point inside the window |
-| `wall` (MCP only) | `eyes_text` showed a wall on this page | Section 4: hand off with `eyes_shot` |
+| `wall` (MCP only) | `eyes_text` showed a wall on this page | Section 4: hand off with `eyes_shot`. Later, call `eyes_text` on the target in `seen_via` to clear it |
 | `locked` | The screen is locked or asleep, or the session is not on the console | Stop and report. Never retry in a loop |
 | `stopped` | The person pressed the stop switch | Stop and report |
 | `awake_away` | The harness's away mode cannot tell Eyes & Hands input from a person | Wait `retry_after_s`; update the harness |
@@ -227,7 +228,7 @@ A refused call returns `ok: false`, a `reason` and a `hint`. Read the reason and
 ## 4. Hand off to the user
 
 Stop and ask, with a screenshot (`eyes_shot`), for:
-- **Walls and CAPTCHA:** when `eyes_text` shows a `wall` (`human`, `hcaptcha`, `recaptcha`, `captcha`, `otp`, `unusual`), stop the hands on that page. Never solve a CAPTCHA, never call a solver service, never guess. Send the user the screenshot, and keep it under 10 MB for a chat app. Act on their answer with the hands, or let them solve it. The MCP server refuses hands on that page until a new `eyes_text` shows no wall. The CLI does not, so keep that rule yourself.
+- **Walls and CAPTCHA:** when `eyes_text` shows a `wall` (`human`, `hcaptcha`, `recaptcha`, `captcha`, `otp`, `unusual`), stop the hands on that page. Never solve a CAPTCHA, never call a solver service, never guess. Send the user the screenshot, and keep it under 10 MB for a chat app. Act on their answer with the hands, or let them solve it. The MCP server refuses hands on that page until a new `eyes_text` shows no wall. Call it on the target that the refusal names in `seen_via`. The CLI does not refuse, so keep that rule yourself.
 - **OTP and passwords:** the user types them. Never paste a password: a clipboard manager can record it.
 - **Real decisions:** purchases, sends, deletes, anything outward-facing the user hasn't approved, and facts that no source has (age, salary).
 - **A final submit:** a person approves it, unless the task says otherwise. Show the filled form with `eyes_shot` before a submit, a payment or a message to a real person.
