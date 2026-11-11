@@ -1,0 +1,7 @@
+Eyes & Hands: licence pending
+
+TODO(licence): the maintainer has not chosen a licence for Eyes & Hands yet (design part 20, decision 3).
+Until a licence exists, ask the maintainer before you reuse, change or share this code.
+You may use this disk image to install Eyes & Hands on your own Mac.
+
+Hammerspoon has its own licence (MIT): see Hammerspoon-LICENSE.txt.

@@ -679,15 +679,16 @@ EyesHands.dmg
 1. The friend opens the DMG and drags Hammerspoon to Applications.
 2. The friend opens Hammerspoon. macOS asks once whether to open an app from the Internet. Apple notarized the app, so macOS allows it.
 3. The friend double-clicks `EyesHands.spoon`. Hammerspoon copies it to `~/.hammerspoon/Spoons/`.
-4. The friend pastes one line into the Hammerspoon console: `hs.loadSpoon("EyesHands"):setup()`.
-5. `setup()` shows each change and asks first. It backs up `~/.hammerspoon/init.lua` and adds a marked loader block. It writes the `eyeshands` CLI to `~/.local/bin`, creates a default-deny access file and runs the doctor.
+4. The friend runs one line in Terminal: `python3 ~/.hammerspoon/Spoons/EyesHands.spoon/bin/eyeshands install`. The Spoon carries the CLI and `hsx` in its `bin` folder.
+5. The install is the standalone install of option A (PR 13), run from the Spoon's copy. It shows each change and asks first. It backs up `~/.hammerspoon/init.lua` and adds a marked loader block. It writes `~/.local/bin/eyeshands`, a small script that runs the Spoon's CLI. It creates a default-deny access file and runs the doctor. It does not link the Spoon, because Hammerspoon put it in place.
 
 Notes on the DMG:
 - The build checks the bundled Hammerspoon with `codesign --verify --deep --strict` and `spctl -a -vv` (expects "Notarized Developer ID" and the Hammerspoon team id). The build fails on any mismatch, so the DMG never ships a changed copy.
 - Hammerspoon is MIT-licensed, so the DMG may include it with its licence. The app bundle keeps its own notices. Hammerspoon updates itself after install.
 - The DMG holds no unsigned app, installer or `.command` script. macOS 15 removed the Control-click override. Thus such an app or installer needs "Open Anyway" in System Settings → Privacy & Security, and a quarantined `.command` script does not start at all.
-- `setup()` writes the CLI as new files, so the files carry no quarantine flag. That result is the same as an install from `git` or Homebrew. The README says so.
+- The install writes `~/.local/bin/eyeshands` as a new file, so it carries no quarantine flag, and `python3` reads the Spoon's copy as data. That result is the same as an install from `git` or Homebrew. The README says so.
 - To verify in the DMG PR: an unsigned DMG mounts without a block on current macOS. Gatekeeper checks only an app inside, when it opens.
+- The build: `modules/eyeshands/packaging/build-dmg.sh`. It downloads the pinned Hammerspoon release, checks its SHA-256 and the signature, and stages the layout above. Then it writes `dist/EyesHands.dmg`, `dist/EyesHands.spoon.zip` (option H) and `dist/SHA256SUMS`. It mounts the new image read-only at a temporary folder and checks it again. The `package` workflow runs it on each push and keeps both files as workflow artifacts. It publishes no release and uses no signing secret.
 
 **The Developer ID decision (for the maintainer).**
 - Cost: the Apple Developer Program costs USD 99 per year (the published price; check Apple's site before you buy).

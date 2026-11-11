@@ -22,3 +22,6 @@ __pycache__/
 .lavish/
 .claude/worktrees/
 .claude/settings.local.json
+
+# Eyes & Hands disk image build output (modules/eyeshands/packaging/build-dmg.sh)
+/dist/

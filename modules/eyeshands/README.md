@@ -7,7 +7,7 @@ This page is for a person who does not run the rest of this repository. Inside t
 ## Short answer
 
 1. Install Hammerspoon, a free macOS app, and give it Accessibility and Screen Recording once.
-2. Clone this repository and run `eyeshands install`. It shows each change and asks first.
+2. Clone this repository, or open the disk image (DMG), then run `eyeshands install`. It shows each change and asks first.
 3. Reload the Hammerspoon config, run `eyeshands doctor`, then allow one agent in the access file.
 4. Connect the agent through MCP (Model Context Protocol) or let it run the `eyeshands` command.
 
@@ -42,6 +42,25 @@ The agent never gets a general way into Hammerspoon. It talks to the Spoon throu
    v
  the app or browser window you allowed
 ```
+
+## Install from the disk image
+
+The disk image `EyesHands.dmg` holds the official Hammerspoon app (not changed), the Spoon, this page and the licences. The build makes it with `modules/eyeshands/packaging/build-dmg.sh`. The automatic build on GitHub keeps a copy with each workflow run, as an artifact.
+
+1. Open `EyesHands.dmg`. Drag Hammerspoon to the Applications folder. If you have Hammerspoon already, skip this step.
+2. Open Hammerspoon from Applications. macOS asks once whether to open an app from the Internet. Apple notarized the app, so click Open.
+3. In the disk image, double-click `EyesHands.spoon`. Hammerspoon copies it to `~/.hammerspoon/Spoons/`.
+4. In Terminal, run the install from the copied Spoon:
+   ```sh
+   python3 ~/.hammerspoon/Spoons/EyesHands.spoon/bin/eyeshands install
+   ```
+5. Continue at step 4 of "Install, step by step" below. Those steps reload the config, give the grants and allow an agent.
+
+This install is the same as the install from a clone, with two differences:
+- The Spoon stays where Hammerspoon put it, so the install does not link it.
+- `~/.local/bin/eyeshands` is a new small script that runs the Spoon's copy of the CLI. A new file has no quarantine flag (the macOS mark on downloaded files), so it starts from Terminal with no prompt.
+
+The disk image holds no app of its own, no installer and no `.command` script. macOS asks only about Hammerspoon. To update, open a newer disk image and double-click its `EyesHands.spoon`. Hammerspoon replaces the old Spoon.
 
 ## Install, step by step
 
@@ -283,6 +302,7 @@ WARNING: Web pages and documents can show text that tries to steer the agent. Th
 - `eyeshands doctor` says the port does not answer: reload the Hammerspoon config, then look at the Hammerspoon console for "eyeshands".
 - The install says a path "is not a link into this clone": another copy installed it. Run `eyeshands uninstall` from that copy first.
 - The install says this copy "runs inside a configured harness": use `modules/eyeshands/install.sh` instead (see `SETUP.md`).
+- The install says this copy runs "not from the installed Spoon": you started the CLI inside the disk image. Double-click `EyesHands.spoon` first, then run the copy in `~/.hammerspoon/Spoons/`.
 
 ## Uninstall
 
@@ -290,10 +310,12 @@ WARNING: Web pages and documents can show text that tries to steer the agent. Th
 eyeshands uninstall
 ```
 It prints every change and asks first. Run it from the copy that made the install. Another copy refuses and names that copy. When that copy is gone (you moved or deleted it), any copy can run the uninstall. It also removes the broken links. It removes exactly what the install added:
-- the two links, if they still point into this clone;
+- the two links, if they still point into this clone (after a disk image install: the `~/.local/bin/eyeshands` script);
 - the marked block in `init.lua` (your own lines stay, also the lines that you added after the install);
 - the agent connections that `install --mcp` added. A connection that you changed after the install stays, and uninstall tells you so;
 - the folders that the install made, when they are empty.
+
+After a disk image install, the uninstall leaves the Spoon in `~/.hammerspoon/Spoons/`, because Hammerspoon put it there. Delete that folder yourself after the reload.
 
 It keeps the access file, the targets file and the backups. Add `--purge` to delete them too, with the log and the screenshot folder. Then reload the Hammerspoon config, so the Spoon that still runs stops.
 
@@ -307,9 +329,9 @@ You can use the Spoon without the install:
 3. Reload the config.
 4. Link the CLI: `ln -s ~/agent-harness/modules/eyeshands/bin/eyeshands ~/.local/bin/eyeshands`.
 
-A zipped Spoon comes with the release build later. Until then, copy it from a clone.
+The build also makes `EyesHands.spoon.zip`, next to the disk image. Unzip it and double-click `EyesHands.spoon`, so Hammerspoon installs it. That Spoon carries the CLI and `hsx` in its `bin` folder. Run the install from it, as for the disk image, or link `~/.hammerspoon/Spoons/EyesHands.spoon/bin/eyeshands` yourself.
 
-A copy of the Spoon does not update with `git pull`. The CLI needs the clone, because it loads `hsx` from the same folder.
+A copy of the Spoon does not update with `git pull`. The CLI of a clone needs the clone, because it loads `hsx` from the same folder.
 
 ## What to do next
 
@@ -320,4 +342,4 @@ A copy of the Spoon does not update with `git pull`. The CLI needs the clone, be
 
 ## Licence
 
-TODO(licence): the maintainer has not chosen a licence yet, so this repository has no LICENSE file. Until one exists, ask the maintainer before you reuse this code. Hammerspoon itself has the MIT (Massachusetts Institute of Technology) licence.
+TODO(licence): the maintainer has not chosen a licence yet, so this repository has no LICENSE file. Until one exists, ask the maintainer before you reuse this code. Hammerspoon itself has the MIT (Massachusetts Institute of Technology) licence. The disk image has a `Licenses` folder with both texts.

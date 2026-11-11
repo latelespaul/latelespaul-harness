@@ -23,7 +23,9 @@ that the two are the same). Python 3 standard library only.
                                      standalone install from a clone (no harness): link the Spoon
                                      and this CLI, add a marked loader block to ~/.hammerspoon/init.lua
                                      (after a backup), create a default-deny access file, run the
-                                     doctor; shows every change and asks first; never reloads Hammerspoon
+                                     doctor; shows every change and asks first; never reloads Hammerspoon.
+                                     From the copy inside an installed Spoon (the DMG or the Spoon zip):
+                                     ~/.local/bin/eyeshands is a new small script that runs this file
   eyeshands uninstall [--purge] [--yes] [--dry-run]
                                      remove exactly what install added (its record:
                                      ~/.config/eyeshands/install.json); --purge also deletes the
@@ -47,7 +49,10 @@ sys.dont_write_bytecode = True   # loading hsx must not leave a __pycache__ next
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 HARNESS_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
-HSX_PATHS = (os.path.join(HARNESS_ROOT, "modules", "hammerspoon", "hsx"), os.path.join(HERE, "hsx"))
+# The DMG and the Spoon zip carry this CLI inside the Spoon (EyesHands.spoon/bin/); that copy uses only its own hsx.
+BUNDLED = os.path.basename(os.path.dirname(HERE)) == "EyesHands.spoon"
+HSX_PATHS = ((os.path.join(HERE, "hsx"),) if BUNDLED else
+             (os.path.join(HARNESS_ROOT, "modules", "hammerspoon", "hsx"), os.path.join(HERE, "hsx")))
 
 
 def load_hsx():
@@ -1008,7 +1013,9 @@ def smoke(opts, port, r):
 # needs a yes. Nothing reloads Hammerspoon: the person reloads its config when it suits them, so a
 # running Hammerspoon tool never stops in the middle of its work. A manifest records what install
 # changed, and uninstall removes exactly that.
-MODULE = os.path.dirname(HERE)
+MODULE = os.path.dirname(HERE)   # the clone's modules/eyeshands, or the Spoon itself when BUNDLED
+SPOON_SRC = MODULE if BUNDLED else os.path.join(MODULE, "EyesHands.spoon")
+CLI_SRC = os.path.join(HERE, "eyeshands")
 MARK_START = "-- >>> eyeshands: added by `eyeshands install`; `eyeshands uninstall` removes this block"
 MARK_END = "-- <<< eyeshands"
 INIT_BLOCK = MARK_START + """
@@ -1137,6 +1144,21 @@ def claude_server(p):
         return None
 
 
+def cli_wrapper():
+    """The script that a bundled install writes to ~/.local/bin/eyeshands. It is a new file, so it carries no
+    quarantine flag from the disk image, and python3 reads the Spoon's copy as data (part 16)."""
+    import shlex
+    return ("#!/bin/sh\n# eyeshands: written by `eyeshands install`; `eyeshands uninstall` removes it\n"
+            f"exec /usr/bin/env python3 {shlex.quote(CLI_SRC)} \"$@\"\n")
+
+
+def cli_installed(p):
+    """True when ~/.local/bin/eyeshands already runs this copy: a link to it, or (bundled) its wrapper."""
+    if BUNDLED:
+        return not os.path.islink(p["cli"]) and read_text(p["cli"]) == cli_wrapper()
+    return is_link_to(p["cli"], CLI_SRC)
+
+
 def standalone_refusal(p):
     """Why the standalone install must not run here, or None."""
     if sys.platform != "darwin":
@@ -1149,7 +1171,15 @@ def standalone_refusal(p):
     if os.path.islink(p["init"]):
         return (f"{p['init']} is a link to {os.path.realpath(p['init'])}, so another tool owns your Hammerspoon "
                 "config. Add these lines to that config yourself:\n" + INIT_BLOCK)
-    for key, src in (("spoon", os.path.join(MODULE, "EyesHands.spoon")), ("cli", os.path.join(HERE, "eyeshands"))):
+    if BUNDLED and os.path.realpath(p["spoon"]) != os.path.realpath(SPOON_SRC):
+        return (f"this copy runs from {SPOON_SRC}, not from the installed Spoon. Double-click EyesHands.spoon, so "
+                f"Hammerspoon copies it to {p['spoon']}, then run: python3 {os.path.join(p['spoon'], 'bin', 'eyeshands')} install")
+    if BUNDLED and os.path.lexists(p["cli"]) and not cli_installed(p):
+        return (f"{p['cli']} exists and is not the script that this install writes. "
+                "Remove it, or run `eyeshands uninstall` from the copy that installed it")
+    for key, src in (("spoon", SPOON_SRC), ("cli", CLI_SRC)):
+        if BUNDLED:
+            break   # Hammerspoon put the Spoon in place, and the CLI is a script, not a link (checked above)
         if os.path.lexists(p[key]) and not is_link_to(p[key], src):
             other = os.path.realpath(p[key]) if os.path.islink(p[key]) else "not a link"
             return (f"{p[key]} exists and is not a link into this clone ({other}). "
@@ -1164,13 +1194,14 @@ def install(opts):
     if why:
         print(f"eyeshands: not installing: {why}", file=sys.stderr)
         return 1
-    spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
+    spoon_src, cli_src = SPOON_SRC, CLI_SRC
     init_text = read_text(p["init"])
     steps = []   # (description, action name)
-    if not is_link_to(p["spoon"], spoon_src):
+    if not BUNDLED and not is_link_to(p["spoon"], spoon_src):
         steps.append((f"link {p['spoon']} -> {spoon_src}", "spoon"))
-    if not is_link_to(p["cli"], cli_src):
-        steps.append((f"link {p['cli']} -> {cli_src}", "cli"))
+    if not cli_installed(p):
+        steps.append((f"write {p['cli']}, a small script that runs {cli_src}" if BUNDLED else
+                      f"link {p['cli']} -> {cli_src}", "cli"))
     if init_text is not None and 'loadSpoon("EyesHands")' in init_text:
         print(f"{p['init']} already loads the Spoon; leaving it as it is.")
     elif init_text is None:
@@ -1210,7 +1241,7 @@ def install(opts):
                 steps.append((("back up and add" if text is not None else "create with") +
                               f" mcpServers.eyeshands in {p['cursor']} (owner cursor; the file is written again as 2-space JSON)", "cursor"))
     if not steps:
-        print("Eyes & Hands is already installed from this clone. Check it: eyeshands doctor")
+        print("Eyes & Hands is already installed from this " + ("Spoon" if BUNDLED else "clone") + ". Check it: eyeshands doctor")
         return 0
     print("eyeshands install will make these changes:")
     for i, (text, _) in enumerate(steps, 1):
@@ -1228,7 +1259,10 @@ def install(opts):
     m.setdefault("mcp", {})
     stamp = time.strftime("%Y%m%d-%H%M%S")
     for _, action in steps:
-        if action in ("spoon", "cli"):
+        if action == "cli" and BUNDLED:
+            write_text(p["cli"], cli_wrapper(), 0o755)
+            m["cli_script"] = p["cli"]
+        elif action in ("spoon", "cli"):
             src = spoon_src if action == "spoon" else cli_src
             mkdirs(os.path.dirname(p[action]))
             os.symlink(src, p[action])
@@ -1345,10 +1379,17 @@ def uninstall(opts):
         return 1
     if moved:
         print(f"The copy in {clone} made this install and is gone; this copy removes what it added.")
-    spoon_src, cli_src = os.path.join(MODULE, "EyesHands.spoon"), os.path.join(HERE, "eyeshands")
+    spoon_src, cli_src = SPOON_SRC, CLI_SRC
     steps = []
     for key, src in (("spoon", spoon_src), ("cli", cli_src)):
-        if is_link_to(p[key], src):
+        if BUNDLED and key == "spoon":
+            print(f"Leaving {p[key]}: Hammerspoon installed it. Delete it yourself after the reload if you want it gone.")
+        elif BUNDLED:
+            if m.get("cli_script") == p[key] and cli_installed(p):
+                steps.append((f"remove the script {p[key]}", ("link", p[key])))
+            elif os.path.lexists(p[key]):
+                print(f"Leaving {p[key]}: it is not the script that this install wrote.")
+        elif is_link_to(p[key], src):
             steps.append((f"remove the link {p[key]}", ("link", p[key])))
         elif moved and os.path.islink(p[key]) and not os.path.exists(p[key]):
             steps.append((f"remove the broken link {p[key]} -> {os.readlink(p[key])}", ("link", p[key])))
