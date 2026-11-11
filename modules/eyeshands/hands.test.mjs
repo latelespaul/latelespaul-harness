@@ -379,6 +379,55 @@ test('the driver lock: the lease takes it when free or stale, a live holder refu
   assert.deepEqual(readdirSync(dir), ['driver.lock'], 'no temp or stale file is left');
 });
 
+// job-hunt's driver lock rule (src/control.mjs, restated here so CI needs no job-hunt checkout):
+// a manual hold counts until `until`; a borrowed hold counts while its pid lives, else its manual hold;
+// any other holder counts while its pid lives. Anything that does not count is stale and replaceable.
+function jobHuntHeld(lock, now = Date.now()) {
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  if (lock.manual) return now < lock.until;
+  if (lock.pid && alive(lock.pid)) return true;
+  return lock.borrowed ? jobHuntHeld(lock.borrowed, now) : false;
+}
+
+test('job-hunt interop: our entry has the control.mjs shape and blocks job-hunt; crashed, it is stale; stop answers while held', { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eh-interop-'));
+  const lock = join(dir, 'driver.lock');
+  const p = prelude({ extra: `, hold_file = ${lstr(lock)}` });
+  const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;
+  const click = j({ target: 'textedit', to: { rect: RECT } });
+  const text = j({ target: 'textedit', text: 'a slow sentence to type out' });
+  const now = 1800000000 * 1000;   // the driver's clock T, in ms
+  const manual = { pid: 0, who: 'captain', since: now - 60000, manual: true, until: now + 600000 };
+  const out = ok(drive([
+    p.lua,
+    `HP = ${lstr(lock)}
+     function put(text) local f = assert(io.open(HP, "w")); f:write(text); f:close() end
+     function raw() local f = io.open(HP); if not f then return false end; local t = f:read("a"); f:close(); return t end
+     return true`,
+    // The lease of a live caller (this node process) writes our entry while its job runs.
+    `hc("runner", "disarm"); arm("runner", ${process.pid}); local r = hc("runner", "eh.hands.type", ${text}); run(100); local mine = raw()
+     hc("runner", "eh.hands.abort"); T = T + 121; sweep(); return { r.state, mine, raw() }`,
+    // A borrowed hold from job-hunt (a dead borrower of a live manual hold) refuses eyes and hands.
+    `put(${j({ pid: dead, who: 'refill', since: now, borrowed: manual })}); local before, n = raw(), #POSTED
+     local h, e = hc("runner", "eh.hands.click", ${click}), hc("runner", "eh.eyes.frontmost")
+     local s = call({ cmd = "stop" }); local st = call({ cmd = "status" }).result.hold
+     return { h.reason, h.kind, h.who, e.reason, #POSTED - n, s.ok, st.held, raw() == before }`,
+  ]));
+  const [state, mine, afterEnd] = out[2];
+  assert.equal(state, 'running');
+  const entry = JSON.parse(mine);
+  assert.deepEqual(Object.keys(entry).sort(), ['pid', 'since', 'who'], 'exactly the control.mjs {pid, who, since} shape');
+  assert.equal(entry.pid, process.pid);
+  assert.equal(entry.who, 'eyeshands-runner');
+  assert.ok(Number.isInteger(entry.since), 'since is epoch ms');
+  assert.equal(jobHuntHeld(entry, now), true, 'job-hunt sees our live entry as held and does not start');
+  assert.equal(jobHuntHeld({ ...entry, pid: dead }, now), false, 'our entry after a crash (dead pid) is stale to job-hunt');
+  assert.equal(afterEnd, false, 'the lease end removes our entry');
+  assert.deepEqual(out[3], ['held', 'borrowed', 'captain', 'held', 0, true, true, true],
+    'a borrowed manual hold refuses hands and eyes, nothing posts, stop and status still answer, the file does not change');
+  assert.equal(jobHuntHeld(JSON.parse(readFileSync(lock, 'utf8')), now), true, 'job-hunt agrees the borrowed hold is held');
+});
+
 test('lease: one owner at a time; it ends after 2 idle minutes or on disarm, with the awake hold', { skip }, () => {
   const p = prelude();
   const click = j({ target: 'textedit', to: { rect: RECT } });
