@@ -14,8 +14,9 @@
 -- owner per arm (or busy period), and at most one every 10 minutes, so one gap is one message.
 -- An authenticated call is refused when no hold can be taken (the screen is locked, or
 -- Hammerspoon refused), or when awake mode records that the guard's port hold ended after the
--- guard took it (a person at the Mac, a lock, `awake off`): that hold stays ended, with no new
--- alert, until the owner arms again. A hold that only vanished (no such record) is taken again.
+-- guard took it (`awake off`, or a person at the Mac or a lock for a hold without a pid): that hold
+-- stays ended, with no new alert, until the owner arms again. A hold that only vanished (no such
+-- record), or that a person or a lock suspended (its pid still runs), is taken again.
 --
 -- deps: awake(on, opts) -> info table, awakeInfo() -> info table (init.lua's awake mode),
 --       now() -> seconds, log(line), alert(text)

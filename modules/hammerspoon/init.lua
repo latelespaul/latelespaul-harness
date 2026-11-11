@@ -76,6 +76,10 @@ end
 -- Several owners may hold it; it ends when the last one leaves (or its pid exits), the deadline
 -- passes, a person types or moves the mouse in away mode (then the screen locks at once), or the
 -- screen locks some other way (lid closed, Ctrl-Cmd-Q). It cannot stop those manual locks.
+-- A person or a lock does not end a hold whose pid still runs: it is suspended (awakeInfo().
+-- suspended) and taken back in "present" mode when the screen is unlocked, so a long run keeps
+-- its hold after someone used the Mac, and the away flow (dim, lock on touch) starts again once
+-- they leave. Holds without a pid end as before.
 -- Holds survive a Hammerspoon restart or reload: each one (owner, pid, deadline, dim) is saved in
 -- HOLDS_FILE, and the next load takes back every hold from this boot whose pid still runs and
 -- whose deadline has not passed (see restoreHolds below).
@@ -112,7 +116,7 @@ local function machineEvent(e)
   return tag == harness.EVENT_TAG or eventTags[tag] == true
 end
 local BKEY = "harness.awake.brightness"
-local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {}, ended = {} }
+local aw = { owners = {}, timers = {}, pids = {}, untils = {}, dims = {}, ended = {}, suspended = {} }
 local AWAY_SECS = 300   -- no human input for this long = the person has left
 -- No secret goes in it (arm secrets stay in memory, so armed owners re-arm after a restart).
 local HOLDS_FILE = hs.configdir .. "/harness-awake.json"
@@ -132,10 +136,14 @@ restoreBrightness()   -- a reload or crash while dimmed must not leave the scree
 local function awakeOn() return next(aw.owners) ~= nil end
 local function stamp() return os.date("!%Y-%m-%dT%H:%M:%SZ") end
 
--- Write the current holds to HOLDS_FILE: mode 600, replaced atomically.
+-- Write the current holds to HOLDS_FILE: mode 600, replaced atomically. Suspended holds are kept
+-- too (suspended=true), so a reload while the screen is locked does not lose them.
 local function saveHolds()
   local holds = {}
   for o in pairs(aw.owners) do holds[o] = { pid = aw.pids[o], ["until"] = aw.untils[o], dim = aw.dims[o] } end
+  for o, h in pairs(aw.suspended) do
+    if not holds[o] then holds[o] = { pid = h.pid, ["until"] = h["until"], dim = h.dim, suspended = true } end
+  end
   local tmp = HOLDS_FILE .. ".tmp"
   local f = io.open(tmp, "w")
   if not f then print("harness: cannot save awake holds to " .. HOLDS_FILE); return end
@@ -149,13 +157,28 @@ function harness.awakeInfo()
   local owners = {}
   for k in pairs(aw.owners) do table.insert(owners, k) end
   table.sort(owners)
+  local suspended
+  -- "since", not "at": `awake run` reads an owner's {..."at"...} entry as an end.
+  for o, h in pairs(aw.suspended) do suspended = suspended or {}; suspended[o] = { reason = h.reason, since = h.at } end
   return { on = awakeOn(), mode = awakeOn() and aw.mode or nil, owners = owners, ["until"] = aw.untilAt, last_end = aw.lastEnd,
-    ended = aw.ended }
+    ended = aw.ended, suspended = suspended }
 end
 
-local function stopAll(reason, lock)
+-- Ends awake mode. With keep (a person at the Mac, a lock), a hold whose pid still runs is
+-- suspended instead of ended; resumeHolds() takes it back once the screen is unlocked.
+local resumeTimer
+local function stopAll(reason, lock, keep)
   if not awakeOn() and not aw.watch then return end
-  for o in pairs(aw.owners) do aw.ended[o] = { reason = reason, at = stamp() } end
+  local kept = false
+  for o in pairs(aw.owners) do
+    local pid = aw.pids[o]
+    if keep and pid and pidAlive(pid) and (aw.untils[o] or 0) > os.time() then
+      aw.suspended[o] = { pid = pid, ["until"] = aw.untils[o], dim = aw.dims[o], reason = reason, at = stamp() }
+      kept = true
+    else
+      aw.ended[o] = { reason = reason, at = stamp() }
+    end
+  end
   aw.owners = {}
   for _, t in pairs(aw.timers) do t:stop() end
   aw.timers = {}
@@ -170,8 +193,10 @@ local function stopAll(reason, lock)
   aw.untilAt = nil
   local wasAway = aw.mode == "away"
   aw.mode, aw.dim = nil, nil
-  aw.lastEnd = { reason = reason, at = stamp() }
-  print("harness: awake mode off (" .. reason .. ")")
+  -- Suspended is not ended: `awake run` and the guard must not read it as an end on purpose.
+  if not kept then aw.lastEnd = { reason = reason, at = stamp() } end
+  print("harness: awake mode off (" .. reason .. (kept and "; live holds suspended until unlock" or "") .. ")")
+  if kept and resumeTimer then resumeTimer() end
   if lock and wasAway then hs.caffeinate.lockScreen() end   -- never lock on a person who is using it
 end
 
@@ -204,7 +229,7 @@ local function humanWatcher()
       local d = math.abs(e:getProperty(P.mouseEventDeltaX)) + math.abs(e:getProperty(P.mouseEventDeltaY))
       if d < 4 then return false end   -- desk bumps and sensor jitter
     end
-    hs.timer.doAfter(0, function() stopAll("person at the Mac", true) end)
+    hs.timer.doAfter(0, function() stopAll("person at the Mac", true, true) end)
     return not moved   -- a person's key, click or scroll must not reach the job's app
   end)
 end
@@ -222,7 +247,8 @@ function harness.awake(on, opts)
     if not awakeOn() then
       hs.caffeinate.set("displayIdle", true)   -- no display sleep, so no idle lock
       hs.caffeinate.set("systemIdle", true)
-      aw.lastHuman = hs.timer.secondsSinceEpoch() - hs.host.idleTime()
+      -- opts.present: a person is at the Mac now (they just unlocked it), whatever idleTime says.
+      aw.lastHuman = hs.timer.secondsSinceEpoch() - (opts.present and 0 or hs.host.idleTime())
       aw.mode = "present"
       -- Every 30 s: reset the idle clock (so the screen saver never starts) and check whether the
       -- person has left.
@@ -235,7 +261,7 @@ function harness.awake(on, opts)
     elseif aw.mode == "away" then
       dimNow()   -- a later holder may want the dim the first one skipped
     end
-    aw.owners[owner], aw.ended[owner] = true, nil
+    aw.owners[owner], aw.ended[owner], aw.suspended[owner] = true, nil, nil
     if tonumber(opts.pid) then
       aw.pids[owner] = tonumber(opts.pid)
       aw.pidCheck = aw.pidCheck or hs.timer.doEvery(30, function()
@@ -254,25 +280,58 @@ function harness.awake(on, opts)
     if not aw.untilAt or untilAt > aw.untilAt then aw.untilAt = untilAt end
     saveHolds()
   else
-    aw.owners[owner] = nil
+    aw.owners[owner], aw.suspended[owner] = nil, nil
     aw.ended[owner] = { reason = opts.reason or ("released by " .. owner), at = stamp() }
     aw.pids[owner], aw.untils[owner], aw.dims[owner] = nil, nil, nil
     if aw.timers[owner] then aw.timers[owner]:stop(); aw.timers[owner] = nil end
-    if awakeOn() then saveHolds() else stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
+    saveHolds()
+    if not awakeOn() then stopAll(opts.reason or ("released by " .. owner), opts.lock == true) end
   end
   return hs.json.encode(harness.awakeInfo())
 end
 
+local function screenLocked() return (hs.caffeinate.sessionProperties() or {}).CGSSessionScreenIsLocked == true end
+
+-- Take back the suspended holds once the screen is unlocked: in "present" mode, since the person
+-- who unlocked it is at the Mac. A hold whose pid exited or whose deadline passed meanwhile ends.
+function harness.resumeHolds()
+  if next(aw.suspended) == nil or screenLocked() then return false end
+  local held = aw.suspended
+  aw.suspended = {}
+  for o, h in pairs(held) do
+    local why = not (h.pid and pidAlive(h.pid)) and (o .. " process gone") or (h["until"] or 0) <= os.time() and "deadline" or nil
+    if why then
+      aw.ended[o] = { reason = why, at = stamp() }
+    else
+      harness.awake(true, { owner = o, pid = h.pid, dim = h.dim ~= false, ["until"] = h["until"], present = true })
+      print("harness: awake hold " .. o .. " resumed after unlock")
+    end
+  end
+  saveHolds()
+  return true
+end
+
+-- While holds are suspended, check every 30 s too, in case the unlock event was missed (or the
+-- lock never happened).
+resumeTimer = function()
+  aw.resumeCheck = aw.resumeCheck or hs.timer.doEvery(30, function()
+    harness.resumeHolds()
+    if next(aw.suspended) == nil and aw.resumeCheck then aw.resumeCheck:stop(); aw.resumeCheck = nil end
+  end)
+end
+
 -- A lock from outside (lid, Ctrl-Cmd-Q) ends awake mode; nothing can type into a locked screen.
+-- Holds whose pid still runs are suspended and come back on unlock.
 aw.lockWatch = hs.caffeinate.watcher.new(function(ev)
-  if ev == hs.caffeinate.watcher.screensDidLock then stopAll("screen locked", false) end
+  if ev == hs.caffeinate.watcher.screensDidLock then stopAll("screen locked", false, true)
+  elseif ev == hs.caffeinate.watcher.screensDidUnlock then hs.timer.doAfter(1, harness.resumeHolds) end
 end)
 aw.lockWatch:start()
 
 -- Take back the holds saved before a restart or reload. A missing file means none; an unreadable
 -- one is ignored (and replaced on the next save). Holds from an earlier boot, with a deadline
--- that passed, or whose pid has exited are dropped, and so is everything when the screen is
--- locked (awake mode refuses a locked screen).
+-- that passed, or whose pid has exited are dropped. When the screen is locked, a hold with a pid
+-- is kept suspended until the unlock, and one without is dropped.
 local function restoreHolds()
   local f = io.open(HOLDS_FILE)
   if not f then return end
@@ -294,9 +353,17 @@ local function restoreHolds()
       print("harness: awake hold " .. tostring(owner) .. " not restored (" .. why .. ")")
     else
       harness.awake(true, { owner = owner, pid = pid, dim = h.dim ~= false, ["until"] = untilAt })
-      print("harness: awake hold " .. owner .. (aw.owners[owner] and " restored" or " not restored (screen locked)"))
+      if aw.owners[owner] then
+        print("harness: awake hold " .. owner .. " restored")
+      elseif pid then   -- the screen is locked: keep it suspended until the unlock
+        aw.suspended[owner] = { pid = pid, ["until"] = untilAt, dim = h.dim ~= false, reason = "screen locked", at = stamp() }
+        print("harness: awake hold " .. owner .. " suspended (screen locked)")
+      else
+        print("harness: awake hold " .. owner .. " not restored (screen locked)")
+      end
     end
   end
+  if next(aw.suspended) ~= nil then resumeTimer() end
   saveHolds()   -- drop what was not restored
 end
 restoreHolds()
