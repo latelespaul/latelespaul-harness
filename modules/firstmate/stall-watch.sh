@@ -24,12 +24,12 @@ tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep '^fm-' | while read -
   idle=$(( (now - since) / 60 ))
   last=$(print -r -- "$pane" | grep '⏺' | tail -1 | cut -c1-140)
   if (( idle >= STALL_MIN && notified < 1 )); then
-    "$FM/bin/fm-inbox.sh" note --request-id "stall-$w-$since" -- "STALL WATCH: worker window $w has shown no change for $idle min. Last line: $last. Steer it, unblock it, or close it if it's done, then report." >/dev/null 2>&1
-    echo "$(date -u +%FT%TZ) $w idle ${idle}m (firstmate told): $last" >> "$ALERTS"; notified=1
+    "$FM/bin/fm-inbox.sh" note --request-id "stall-$w-$since" -- "STALL WATCH: worker window $w has shown no change for $idle min. Last line: $last. Steer it, unblock it, or close it if it's done, then report." >/dev/null 2>&1 &&
+      { echo "$(date -u +%FT%TZ) $w idle ${idle}m (firstmate told): $last" >> "$ALERTS"; notified=1; }
   fi
   if (( idle >= PING_MIN && notified < 2 )); then
-    python3 "$HARNESS_DIR/modules/cron/tg-notify.py" "Stall watch: firstmate worker $w idle ${idle} min. Last: $last" >/dev/null 2>&1
-    echo "$(date -u +%FT%TZ) $w idle ${idle}m (Telegram ping)" >> "$ALERTS"; notified=2
+    python3 "$HARNESS_DIR/modules/cron/tg-notify.py" "Stall watch: firstmate worker $w idle ${idle} min. Last: $last" >/dev/null 2>&1 &&
+      { echo "$(date -u +%FT%TZ) $w idle ${idle}m (Telegram ping)" >> "$ALERTS"; notified=2; }
   fi
   echo "$w $h $since $notified" >> "$new_state"
 done
