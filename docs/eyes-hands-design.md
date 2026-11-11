@@ -196,7 +196,8 @@ Non-goals:
 | Component | Language | Job |
 |---|---|---|
 | `EyesHands.spoon/init.lua` | Lua | Loads the parts, opens the port, registers commands, owns watchers and the stop switch |
-| `EyesHands.spoon/port.lua` | Lua | A copy of `modules/hammerspoon/port.lua`, made at build time; CI checks that the copy is identical |
+| `EyesHands.spoon/port.lua` | Lua | A committed copy of `modules/hammerspoon/port.lua`, so the Spoon works alone; CI checks that the copy is identical |
+| `EyesHands.spoon/config.lua` | Lua | The config defaults (`idle_buffer_s`, stop hotkey, file paths) and their checks |
 | `EyesHands.spoon/eyes.lua` | Lua | AX walks, field records, text, value, focus, dialogs, pixels, window shots |
 | `EyesHands.spoon/hands.lua` | Lua | The job player, event posting, the takeover tap, the clipboard save and restore |
 | `EyesHands.spoon/planner.lua` | Lua | Pure motion planning, seeded; a port of job-hunt's `plan.mjs` |
@@ -212,7 +213,7 @@ modules/eyeshands/
   SETUP.md             harness install, status, rollback
   install.sh           harness module: links Spoon, CLI, loader
   claude-notes.md.tmpl appended to CLAUDE.md
-  EyesHands.spoon/     the engine (port.lua copied at build)
+  EyesHands.spoon/     the engine (with a copy of port.lua)
   bin/eyeshands        CLI + MCP server (Python 3)
   targets.example.json
   packaging/           DMG build, Homebrew formula template
@@ -341,6 +342,8 @@ Final states: `done`, `interrupted` (takeover), `focus` (the target lost the fro
 | `offscreen` | The `to` rect is outside the viewport | `hands_scroll` with the suggested `dy` |
 | `locked` | The screen is locked, asleep or off the console | Stop and report; never retry in a loop |
 | `stopped` | The person pressed the stop switch | Stop and report |
+| `awake_away` | The harness awake mode is away, and the harness cannot take the Eyes & Hands tag for machine input (no `harness.addEventTag`) | Wait `retry_after_s`; update the harness |
+| `target_not_running`, `debug_port`, `targets_invalid`, `bad_target` | The target does not resolve (part 7) | Start the target, or fix the targets file |
 
 Example: `{"ok":false,"reason":"present","human_idle_s":12,"idle_buffer_s":20,"retry_after_s":8,"hint":"ask the person, or wait"}`.
 
