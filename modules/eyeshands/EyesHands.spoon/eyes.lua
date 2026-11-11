@@ -6,7 +6,8 @@
 -- present. init.lua registers each command on the port (eh.eyes.<name>); every one needs the `eyes`
 -- capability and, except frontmost, a target in the owner's `apps`. pixels and shot also need `shot`.
 --   fields    {target, match?, limits?}  url, title, window, viewport, fields[], nodes, truncated
---   value     {target, id | dom}         one field record, read live (a stale id falls back to dom)
+--   value     {target, id | dom}         one field record, read live (a stale id falls back to dom),
+--                                        and the viewport it was read in
 --   text      {target, limits?}          lines[], frames[], url, title, nodes, truncated
 --   focused   {target}                   focused (a field record or false) and its id
 --   dialog    {target}                   open, dialogs[] (dialog windows and sheets)
@@ -450,6 +451,7 @@ return function(deps)
     local hit = id and reg and reg.target == c.name and reg.pid == c.pid and reg.ids[id] or nil
     local function reply(d, via)
       d.ok, d.target, d.id, d.via = true, c.name, id, via
+      d.viewport = c.viewport   -- the hands suggest a scroll from it for an off-screen field
       return d
     end
     if hit and stillValid(hit.el) then return reply(describe(hit.el, nil, c), "id") end

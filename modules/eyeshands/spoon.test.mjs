@@ -328,7 +328,7 @@ test('the Spoon opens its own port, writes no global, never loads hs.ipc, and an
   assert.equal(out[3][0].result.access.owners.runner.armed, true);
   assert.equal(out[3][1], true, 'status never holds the secret');
   assert.deepEqual(out[4].result.targets, [{ name: 'chrome-test', bundle: 'com.google.Chrome', profile: '/tmp/p', running: true, pid: 9 }]);
-  assert.deepEqual(out[5], { ok: false, error: 'unknown command' }, 'no hands commands yet');
+  assert.deepEqual(out[5], { ok: false, error: 'unsigned call' }, 'hands commands exist and need a signed call');
   assert.equal(out[6], true, 'the Spoon wrote nothing into jobhunt or harness');
   const log = readFileSync(join(dir, 'eyeshands.log'), 'utf8');
   assert.match(log, /arm owner=runner cmd=arm/);
