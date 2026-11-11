@@ -285,7 +285,7 @@ Every eyes command needs the `eyes` capability and a granted target. `shot` and 
 - `rect` is `[x, y, w, h]` in global screen points, origin at the top left of the main display. Mouse events use the same points, so Retina and several displays need no conversion.
 - `id` is valid until the next `eyes_fields`. A stale id falls back to `dom`, the HTML id, as in `jobhunt.lua`.
 - `checked` and `checkedSource` (`ax`, `pixels` or `unknown`) appear for checkboxes and radio buttons. Chrome leaves `AXValue` empty for both states, so the eyes read the control's pixels. That path runs only when the owner has `shot`.
-- `onscreen` is true when the rect lies inside the viewport. The hands refuse an off-screen rect.
+- `onscreen` is true when the centre of the rect lies inside the viewport. Thus a tall text area that runs past the viewport edge still counts. The hands refuse an off-screen rect.
 
 **`eyes_fields` reply** (shortened):
 ```json
@@ -298,7 +298,9 @@ Every eyes command needs the `eyes` capability and a granted target. `shot` and 
 }
 ```
 
-**Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
+**Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. A caller can lower a limit, but never raise it. A node below `maxDepth` skips only its own subtree. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
+
+**Pixels.** `pixels`, `shot` and the pixel path of `checked` read the target window's own pixels, so no other window shows in them. A point or rect outside the target window is refused with `not_on_target`. On a locked screen they return `locked`.
 
 **Walls.** `eyes_text` in the CLI and MCP server adds `wall`: a list from `human`, `hcaptcha`, `recaptcha`, `captcha`, `otp`, `unusual`. The patterns come from job-hunt's `hs-client.mjs`. Part 15 says what the agent does next.
 
