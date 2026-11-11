@@ -11,7 +11,7 @@
 --   key    {target, combo}                   "cmd+shift+g": modifiers down, the key, modifiers up
 --   scroll {target, dy, dx?, at?}            wheel ticks (dy > 0 scrolls the page down)
 --   drag   {target, from, to}                press at from, a dragged path, release at to
---   play   {target, events[], rect?}         a pre-planned event list (the jobhunt.lua format)
+--   play   {target, events[]}                a pre-planned event list (the jobhunt.lua format)
 --   job    {id}                              one job's report
 --   status {}                                lease, busy, interrupted, interrupts, pos, watch
 --   resume {}                                clears a takeover, only when the present rule passes
@@ -26,7 +26,7 @@
 -- (guard 7) are checked again; the takeover tap ends the job at its next tick.
 --
 -- Every posted event carries EVENT_TAG in eventSourceUserData; nothing is posted any other way.
--- A job that ends early (any state) releases a held mouse button and every held key or modifier,
+-- A job that ends (any state, done too) releases a held mouse button and every held key or modifier,
 -- and puts the clipboard back, so a cut-off cmd+v never leaves cmd down.
 --
 -- Lease. One owner at a time holds the cursor. An owner takes the lease with its first hands job
@@ -85,7 +85,7 @@ return function(deps)
   local button = nil     -- "left" | "right" while a button is held
   local held = {}        -- key code -> "key" | "flag"
   local saved = nil      -- { data, change } the clipboard before a paste
-  local last = { x = -1e9, y = -1e9, at = -1e9 }
+  local last = { x = -1e9, y = -1e9 }
 
   local function log(line) if deps.log then pcall(deps.log, stamp(deps.now()) .. " " .. line) end end
   local function harnessFn(name)
@@ -122,7 +122,7 @@ return function(deps)
     else
       ev:setProperty(PR.mouseEventClickState, int(e.clicks or 1))
     end
-    last = { x = e.x, y = e.y, at = deps.nowMs() }
+    last = { x = e.x, y = e.y }
     return ev
   end
   local function keyEvent(e, down)
@@ -190,7 +190,7 @@ return function(deps)
   end
   local function finish(j, state, extra)
     if j.timer then pcall(function() j.timer:stop() end); j.timer = nil end
-    if state ~= "done" then letGo() else pcall(restoreClipboard) end
+    letGo()
     j.state, j.extra, j.endedMs = state, extra, deps.nowMs()
     if job == j then job = nil end
     if lease then lease.lastUse = deps.now() end
@@ -241,11 +241,6 @@ return function(deps)
       if tag == TAG then return end
       local t = ev:getType()
       local loc = ev:location() or { x = 0, y = 0 }
-      if t == T.mouseMoved or t == T.leftMouseDragged or t == T.rightMouseDragged then
-        -- No movement, or the window server echoing the move we just posted.
-        if ev:getProperty(PR.mouseEventDeltaX) == 0 and ev:getProperty(PR.mouseEventDeltaY) == 0 then return end
-        if deps.nowMs() - last.at < 300 and math.abs(loc.x - last.x) < 2 and math.abs(loc.y - last.y) < 2 then return end
-      end
       G.noteEvent(tag)
       if not takeover then
         takeover = { by = NAMES[t] or ("event" .. tostring(t)), x = round(loc.x), y = round(loc.y), at = stamp(deps.now()) }
@@ -511,6 +506,9 @@ return function(deps)
       if i > 1 and e.t < events[i - 1].t then return nil, refuse("bad_args", "events out of order at " .. i) end
       local m = e.type == "move" or e.type == "down" or e.type == "up"
       if m and not (num(e.x) and num(e.y)) then return nil, refuse("bad_args", "event " .. i .. " needs x and y") end
+      if m and not onWindow(t.pid, e.x, e.y) then
+        return nil, refuse("focus", "event " .. i .. " is not on a target window", { event = i, at = { round(e.x), round(e.y) } })
+      end
       if e.type == "paste" and type(e.text) ~= "string" then return nil, refuse("bad_args", "event " .. i .. " needs text") end
       local k = e.type:match("^key") or e.type:match("^flags")
       if k and e.key ~= nil and (math.type(e.key) ~= "integer" or e.key < 0 or e.key > 0xFFFF) then
@@ -519,10 +517,6 @@ return function(deps)
       out[i] = { t = e.t, type = e.type, x = e.x, y = e.y, dx = e.dx, dy = e.dy, clicks = e.clicks, key = e.key,
         flags = e.flags, chars = type(e.chars) == "string" and e.chars or nil, text = e.text,
         button = e.button == "right" and "right" or nil }
-    end
-    if a.rect ~= nil then
-      local _, bad = where({ rect = a.rect }, "rect", a, caller, t)
-      if bad then return nil, bad end
     end
     return out
   end
@@ -536,6 +530,8 @@ return function(deps)
     if not ok then return refuse("failed", "could not plan the " .. kind) end
     if not events then return why end
     takeLease(caller)
+    local r = G.sessionCheck()
+    if r then return r end
     nextId = nextId + 1
     local j = { id = nextId, kind = kind, owner = caller.owner, pid = t.pid, events = events, i = 1, total = #events,
       t0 = deps.nowMs(), lastCheck = 0, state = "running", planned = math.floor(lastT(events) + 0.5) }
