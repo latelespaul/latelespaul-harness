@@ -45,6 +45,14 @@ async function fakePort(conf) {
   };
 }
 const cmds = log => log.filter(e => e.cmd).map(e => e.cmd);
+const handsCmds = log => cmds(log).filter(c => c.startsWith('eh.hands.'));
+const targetsConf = rows => ({ file: '/tmp/targets.json', state: 'ok', targets: rows });
+const TARGETS = targetsConf([
+  { name: 'chrome-test', bundle: 'com.example.browser', running: true },
+  { name: 'chrome-other', bundle: 'com.example.browser', profile: '/tmp/eh-other-profile', running: true },
+  { name: 'chrome-agent', bundle: 'com.example.browser', profile: '/tmp/eh-agent-profile', running: true },
+  { name: 'notes-test', bundle: 'com.example.notes', running: true },
+  { name: 'textedit', bundle: 'com.apple.TextEdit', running: true }]);
 
 // A scripted MCP client: starts `eyeshands mcp`, sends one JSON-RPC message per line, matches replies by id.
 function client(port, { owner = 'runner', dir = tmp() } = {}) {
@@ -113,8 +121,17 @@ test('initialize and tools/list answer at once with 22 tools, each with a JSON S
       for (const k of ['oneOf', 'anyOf', 'allOf']) assert.ok(!(k in t.inputSchema), `${t.name}: no top-level ${k}`);
       const needsTarget = !['eyes_status', 'eyes_targets', 'eyes_frontmost', 'hands_status', 'hands_resume', 'hands_abort', 'hands_release'].includes(t.name);
       assert.equal((t.inputSchema.required || []).includes('target'), needsTarget, `${t.name} target`);
-      assert.equal(t.annotations.readOnlyHint, t.name.startsWith('eyes_'), `${t.name} readOnlyHint`);
     }
+    // Hints per tool: eyes and hands_status only read; the tools that act on the target window are destructive.
+    const acts = ['hands_move', 'hands_click', 'hands_type', 'hands_key', 'hands_scroll', 'hands_drag', 'hands_focus', 'hands_resume'];
+    const hints = Object.fromEntries(result.tools.map(t => [t.name, t.annotations]));
+    for (const n of [...EYES, 'hands_status']) assert.equal(hints[n].readOnlyHint, true, `${n} readOnlyHint`);
+    for (const n of acts) {
+      assert.equal(hints[n].readOnlyHint, false, `${n} readOnlyHint`);
+      assert.equal(hints[n].destructiveHint, true, `${n} destructiveHint`);
+      assert.equal(hints[n].openWorldHint, true, `${n} openWorldHint`);
+    }
+    for (const n of ['hands_abort', 'hands_release']) assert.equal(hints[n].readOnlyHint, false, `${n} readOnlyHint`);
     // Guard rules are in the descriptions.
     const d = Object.fromEntries(result.tools.map(t => [t.name, t.description]));
     for (const n of ['hands_move', 'hands_click', 'hands_type', 'hands_key', 'hands_scroll', 'hands_drag']) {
@@ -226,7 +243,7 @@ test('a port that keeps saying not armed gets exactly one re-arm per call', { sk
 
 test('wall guard: after eyes_text shows a wall, hands on that URL refuse until a new eyes_text shows none', { skip }, async () => {
   const A = 'https://example.test/apply', B = 'https://example.test/next';
-  const f = await fakePort({ job_polls: 1, text_seq: [
+  const f = await fakePort({ job_polls: 1, targets: TARGETS, text_seq: [
     { url: A, lines: ['Please verify you are human'] },
     { url: A, lines: ['Email', 'Submit'] },
     { url: A, frames: ['https://www.google.com/recaptcha/api2/anchor'] },
@@ -237,7 +254,7 @@ test('wall guard: after eyes_text shows a wall, hands on that URL refuse until a
     await c.init();
     const t1 = await c.call('eyes_text', { target: 'chrome-test' });
     assert.deepEqual(t1.json.wall, ['human']);
-    const before = cmds(f.log()).length;
+    const before = handsCmds(f.log()).length;
     for (const [name, args] of [['hands_click', { to: { field: 'f1' } }], ['hands_type', { text: 'x' }], ['hands_key', { combo: 'tab' }],
       ['hands_scroll', { dy: 100 }], ['hands_move', { to: { x: 1, y: 1 } }], ['hands_drag', { from: { x: 1, y: 1 }, to: { x: 2, y: 2 } }]]) {
       const r = await c.call(name, { target: 'chrome-test', ...args });
@@ -247,7 +264,7 @@ test('wall guard: after eyes_text shows a wall, hands on that URL refuse until a
       assert.equal(r.json.url, A);
       assert.match(r.json.hint, /eyes_shot/);
     }
-    assert.equal(cmds(f.log()).length, before, 'the refused hands reached no port');
+    assert.equal(handsCmds(f.log()).length, before, 'the refused hands reached no port');
     // hands on another target and hands without input are not walled
     assert.equal((await c.call('hands_status')).isError, false);
     assert.equal((await c.call('hands_click', { target: 'textedit', to: { x: 1, y: 1 } })).isError, false);
@@ -261,6 +278,119 @@ test('wall guard: after eyes_text shows a wall, hands on that URL refuse until a
     assert.equal((await c.call('hands_key', { target: 'chrome-test', combo: 'enter' })).json.reason, 'wall');
     assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, []);
     assert.equal((await c.call('hands_key', { target: 'chrome-test', combo: 'enter' })).isError, false);
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+});
+
+test('wall guard: every spelling of one window shares its mark, and a clean eyes_text through either lifts it', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  const f = await fakePort({ job_polls: 1, targets: TARGETS,
+    text_seq: [{ url: A, lines: ['Please verify you are human'] }, { url: A, lines: ['Email'] }] });
+  const c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, ['human']);
+    const before = handsCmds(f.log()).length;
+    for (const target of ['com.example.browser', 'chrome-test']) {
+      const r = await c.call('hands_click', { target, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', target);
+      assert.equal(r.json.url, A, target);
+    }
+    assert.equal(handsCmds(f.log()).length, before, 'the refused hands reached no port');
+    // a target with no profile may be any process of its bundle, so profiled aliases of that bundle are walled too
+    assert.equal((await c.call('hands_click', { target: 'chrome-other', to: { x: 1, y: 1 } })).json.reason, 'wall');
+    // another app, under its name or its bundle id, is not walled
+    for (const target of ['notes-test', 'com.example.notes']) {
+      assert.equal((await c.call('hands_click', { target, to: { x: 1, y: 1 } })).isError, false, target);
+    }
+    // a new eyes_text with no wall through the other spelling lifts the mark for every spelling
+    assert.deepEqual((await c.call('eyes_text', { target: 'com.example.browser' })).json.wall, []);
+    for (const target of ['chrome-test', 'com.example.browser']) {
+      assert.equal((await c.call('hands_click', { target, to: { x: 1, y: 1 } })).isError, false, target);
+    }
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+});
+
+test('wall guard: profiled aliases of one bundle are separate windows; a target with no profile is any of them', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  let f = await fakePort({ job_polls: 1, targets: TARGETS, text_seq: [{ url: A, lines: ['Please verify you are human'] }] });
+  let c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-other' })).json.wall, ['human']);
+    assert.equal((await c.call('hands_click', { target: 'chrome-agent', to: { x: 1, y: 1 } })).isError, false);
+    for (const target of ['chrome-other', 'com.example.browser', 'chrome-test']) {
+      const r = await c.call('hands_click', { target, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', target);
+      assert.equal(r.json.url, A, target);
+    }
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+  // a wall seen through the bare bundle id blocks every profiled alias of that bundle
+  f = await fakePort({ job_polls: 1, targets: TARGETS, text_seq: [{ url: A, lines: ['Please verify you are human'] }] });
+  c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'com.example.browser' })).json.wall, ['human']);
+    for (const target of ['chrome-agent', 'chrome-other', 'chrome-test']) {
+      assert.equal((await c.call('hands_click', { target, to: { x: 1, y: 1 } })).json.reason, 'wall', target);
+    }
+    assert.equal((await c.call('hands_click', { target: 'notes-test', to: { x: 1, y: 1 } })).isError, false);
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+});
+
+test('wall guard: a refusal across spellings names the target that saw the wall (seen_via); eyes_text there lifts it', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  for (const [via, other] of [['com.example.browser', 'chrome-agent'], ['chrome-agent', 'com.example.browser']]) {
+    const f = await fakePort({ job_polls: 1, targets: TARGETS,
+      text_seq: [{ url: A, lines: ['Please verify you are human'] }, { url: A, lines: ['Email'] }] });
+    const c = client(f.name);
+    try {
+      await c.init();
+      assert.deepEqual((await c.call('eyes_text', { target: via })).json.wall, ['human']);
+      const r = await c.call('hands_click', { target: other, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', via);
+      assert.equal(r.json.seen_via, via);
+      assert.match(r.json.hint, /seen_via/);
+      assert.deepEqual((await c.call('eyes_text', { target: r.json.seen_via })).json.wall, []);
+      assert.equal((await c.call('hands_click', { target: other, to: { x: 1, y: 1 } })).isError, false, via);
+      await c.close();
+    } finally { c.kill(); f.stop(); }
+  }
+});
+
+test('wall guard fails closed when the window cannot be told', { skip }, async () => {
+  const A = 'https://example.test/apply';
+  // a name that is neither a target nor a bundle id, while a wall mark exists
+  let f = await fakePort({ job_polls: 1, targets: TARGETS, text_seq: [{ url: A, lines: ['Please verify you are human'] }] });
+  let c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, ['human']);
+    const r = await c.call('hands_click', { target: 'mystery', to: { x: 1, y: 1 } });
+    assert.equal(r.isError, true);
+    assert.equal(r.json.reason, 'wall');
+    assert.match(r.json.hint, /cannot tell which window/);
+    assert.equal(handsCmds(f.log()).length, 0, 'the refused hands reached no port');
+    await c.close();
+  } finally { c.kill(); f.stop(); }
+  // eh.targets gives no target list: every input hands call refuses until eyes_text there shows no wall
+  f = await fakePort({ job_polls: 1, targets: { file: '/tmp/targets.json', error: 'bad json' },
+    text_seq: [{ url: A, lines: ['Please verify you are human'] }, { url: A, lines: ['Email'] }] });
+  c = client(f.name);
+  try {
+    await c.init();
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, ['human']);
+    for (const target of ['chrome-test', 'com.example.browser', 'com.example.notes']) {
+      const r = await c.call('hands_click', { target, to: { x: 1, y: 1 } });
+      assert.equal(r.json.reason, 'wall', target);
+      assert.deepEqual(r.json.wall, ['human'], target);
+    }
+    assert.equal(handsCmds(f.log()).length, 0, 'the refused hands reached no port');
+    assert.deepEqual((await c.call('eyes_text', { target: 'chrome-test' })).json.wall, []);
+    assert.equal((await c.call('hands_click', { target: 'chrome-test', to: { x: 1, y: 1 } })).isError, false);
     await c.close();
   } finally { c.kill(); f.stop(); }
 });

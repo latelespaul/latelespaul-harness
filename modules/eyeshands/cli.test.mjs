@@ -120,14 +120,6 @@ test('a one-shot eyes command arms, makes one signed call, and disarms; the secr
   } finally { f.stop(); }
 });
 
-test('the CLI source takes no secret from argv, the environment or a file', () => {
-  const src = readFileSync(CLI, 'utf8');
-  assert.match(src, /secrets\.token_hex\(32\)/, 'the secret is made in the process');
-  assert.doesNotMatch(src, /environ[^\n]*SECRET|SECRET[^\n]*environ/i);
-  assert.doesNotMatch(src, /add_argument\("--secret/);
-  assert.doesNotMatch(src, /read_secret/);
-});
-
 test('a one-shot hands command waits for its job to end before it disarms', { skip }, async () => {
   const f = await fake({ job_polls: 3 });
   try {

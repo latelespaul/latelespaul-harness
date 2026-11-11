@@ -47,12 +47,12 @@ def load_hsx():
             loader = importlib.machinery.SourceFileLoader("hsx", path)
             mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("hsx", loader))
             loader.exec_module(mod)
-            return mod, path
+            return mod
     print("eyeshands: hsx not found (expected next to this file)", file=sys.stderr)
     sys.exit(2)
 
 
-hsx, HSX_PATH = load_hsx()
+hsx = load_hsx()
 NAME = hsx.NAME
 EYES = ("fields", "value", "text", "focused", "dialog", "tree", "frontmost", "pixels", "shot")
 HANDS = ("focus", "move", "click", "type", "key", "scroll", "drag", "play", "job", "status", "resume", "abort")
@@ -283,7 +283,11 @@ SERVER_VERSION = "0.1.0"
 SHOT_MAX_PX = 1568       # the long edge of an image that MCP clients take without scaling it again
 SHOT_NAME = re.compile(r"^shot-\d+-[0-9a-f]{4}\.png$")
 WALL_HINT = ("a human check or code wall shows on this page: never solve it; send eyes_shot to the person "
-             "and wait. Hands refuse on this page until a new eyes_text shows no wall")
+             "and wait. Hands refuse on this page until a new eyes_text through the target in seen_via shows no wall")
+
+WALL_UNKNOWN_HINT = ("a wall was seen and this server cannot tell which window this target is (eh.targets failed or "
+                     "the name is not a target or bundle id): hands refuse until a new eyes_text through the target "
+                     "that showed it shows no wall; never solve a wall, send eyes_shot to the person")
 
 TARGET = {"type": "string", "pattern": NAME.pattern,
           "description": "a target name from eyes_targets, or a bundle id such as com.apple.TextEdit"}
@@ -409,7 +413,14 @@ TOOLS = {
                       "Ends the task: releases the hands lease and disarms this owner (a running job stops), and resets "
                       "the kept interrupt count. The next call arms again."),
 }
-TOOL_ANNOTATIONS = {"unsigned": True, "eyes": True, "shot": True}   # read-only kinds
+READ_ONLY = {"unsigned", "eyes", "shot"}
+
+
+def annotations(name, kind):
+    acts = kind == "input" or name in ("hands_focus", "hands_resume")   # real input on the target window
+    return {"readOnlyHint": kind in READ_ONLY or name == "hands_status", "destructiveHint": acts, "openWorldHint": acts}
+
+
 INSTRUCTIONS = ("Eyes & Hands: eyes_* read a Mac app's screen (Accessibility and window pixels); hands_* post real mouse "
                 "and keyboard input. The person always wins: on present or interrupted, wait; after 3 interruptions on "
                 "one task, stop and say you will go on later. Never solve a human check or code wall: send eyes_shot to "
@@ -506,8 +517,8 @@ class Mcp:
     def __init__(self, port, owner, minutes, max_wait):
         self.port, self.max_wait = port, max_wait
         self.owner = Owner(port, owner, minutes)
-        self.urls = {}      # target -> the url of its latest eyes reply
-        self.walls = {}     # (target, url) -> the walls the latest eyes_text there showed
+        self.urls = {}      # window -> the url of its latest eyes reply, while any wall mark exists
+        self.walls = {}     # (window, url) -> (the walls the latest eyes_text there showed, the target it went through)
         self.kept = 0       # takeovers in this task, kept until hands_release
         self.seen = 0       # the Spoon's last reported count (it resets when its lease ends)
 
@@ -535,6 +546,21 @@ class Mcp:
         if self.kept >= 3:
             res["stop_rule"] = "3 or more interruptions on this task: stop and tell the person you will go on later"
 
+    def window(self, target):
+        """One key for every spelling of one window: (bundle, profile) of an alias, (bundle id, None) of a bare
+        bundle id; None when it cannot be told (eh.targets fails, or a name that is neither)."""
+        try:
+            rep = self.port.unsigned("eh.targets")
+        except Failed:
+            return None
+        rows = rep.get("result", {}).get("targets") if rep.get("ok") is True and isinstance(rep.get("result"), dict) else None
+        if not isinstance(rows, list):
+            return None
+        for r in rows:
+            if isinstance(r, dict) and r.get("name") == target:
+                return (r["bundle"], r.get("profile")) if isinstance(r.get("bundle"), str) else None
+        return (target, None) if "." in target else None
+
     # ---- tools ----
     def tool(self, name, args):
         cmd, kind, schema, _ = TOOLS[name]
@@ -556,11 +582,16 @@ class Mcp:
             self.kept = self.seen = 0
             return {"ok": True, "released": released}, None
         target = args.get("target")
-        if kind == "input":
-            url = self.urls.get(target)
-            seen = self.walls.get((target, url))
-            if seen:
-                return {"ok": False, "reason": "wall", "wall": seen, "url": url, "hint": WALL_HINT}, None
+        if kind == "input" and self.walls:
+            win = self.window(target)
+            if win is None or any(w[0] is None for w, _ in self.walls):
+                return {"ok": False, "reason": "wall", "wall": sorted({x for v, _ in self.walls.values() for x in v}),
+                        "hint": WALL_UNKNOWN_HINT}, None
+            for (w, url), (seen, via) in self.walls.items():
+                same = w == win or w[0] == win[0] and (w[1] is None or win[1] is None)   # no profile: any process
+                if same and self.urls.get(w) == url:
+                    return {"ok": False, "reason": "wall", "wall": seen, "url": url, "seen_via": via,
+                            "hint": WALL_HINT}, None
         if name == "eyes_shot":
             args = dict(args, max_px=min(args.get("max_px", SHOT_MAX_PX), SHOT_MAX_PX))
         rep = enrich(cmd, self.signed(cmd, args or None))
@@ -569,15 +600,18 @@ class Mcp:
         res = result_of(rep)
         if not isinstance(res, dict):
             return res, None
-        if kind in ("eyes", "shot") and res.get("ok") is not False and target:
+        walled = name == "eyes_text" and res.get("wall")
+        if kind in ("eyes", "shot") and res.get("ok") is not False and target and (self.walls or walled):
+            win = self.window(target) or (None, target)
             if isinstance(res.get("url"), str):
-                self.urls[target] = res["url"]
+                self.urls[win] = res["url"]
             if name == "eyes_text":
-                key = (target, res.get("url") if isinstance(res.get("url"), str) else self.urls.get(target))
-                if res.get("wall"):
-                    self.walls[key] = res["wall"]
+                key = (win, self.urls.get(win))
+                if walled:
+                    self.walls[key] = (res["wall"], target)
                 else:
                     self.walls.pop(key, None)
+                    self.walls = {k: v for k, v in self.walls.items() if k[0] != (None, target)}
         if kind in ("input", "hands"):
             if res.get("state") == "interrupted" and "interrupts" not in res:
                 st = result_of(self.signed("eh.hands.status", None))
@@ -633,7 +667,7 @@ class Mcp:
         if method == "tools/list":
             return reply({"tools": [
                 {"name": n, "description": d, "inputSchema": s,
-                 "annotations": {"readOnlyHint": k in TOOL_ANNOTATIONS, "destructiveHint": False, "openWorldHint": False}}
+                 "annotations": annotations(n, k)}
                 for n, (_, k, s, d) in TOOLS.items()]})
         if method == "tools/call":
             if params.get("name") not in TOOLS:
@@ -673,14 +707,14 @@ def mcp(opts, port):
 
 # ---------- files ----------
 def harness_env():
-    """HS_ACCESS_FILE and PROFILE_DIR from a configured harness around this copy, else None."""
+    """HS_ACCESS_FILE from a configured harness around this copy, else None."""
     env_sh = os.path.join(HARNESS_ROOT, "lib", "env.sh")
     conf = os.environ.get("HARNESS_ENV") or os.path.join(HARNESS_ROOT, "harness.env")
     if not (os.path.isfile(env_sh) and os.path.isfile(conf)):
         return None
-    out = subprocess.run(["/bin/zsh", "-c", 'source "$1"; print -r -- "$HS_ACCESS_FILE"; print -r -- "$PROFILE_DIR"',
+    out = subprocess.run(["/bin/zsh", "-c", 'source "$1"; print -r -- "$HS_ACCESS_FILE"',
                           "eyeshands", env_sh], capture_output=True, text=True).stdout.splitlines()
-    return {"access": out[0], "profile": out[1]} if len(out) >= 2 and out[0] else None
+    return {"access": out[0]} if len(out) >= 1 and out[0] else None
 
 
 def home(*parts):

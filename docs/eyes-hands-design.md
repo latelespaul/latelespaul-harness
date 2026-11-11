@@ -551,7 +551,7 @@ A script that makes many calls uses `session`, which keeps one signer, so `seq` 
 5. It signs each call through one in-process signer, one call at a time.
 6. It sends `disarm` when the agent closes standard input, and the port sweep catches a crash.
 7. After a Hammerspoon restart, the port holds no arms, because secrets never reach the disk. The next call fails as not armed. The server then arms again with a new secret, once.
-8. It keeps a "wall seen" mark per URL. After `eyes_text` shows a wall, hands on that URL refuse until a new `eyes_text` shows no wall.
+8. It keeps a "wall seen" mark per window and URL. A window is a target's bundle and profile. A target with no profile can be any window of its bundle. After `eyes_text` shows a wall, hands on that window and URL refuse. The refusal names, in `seen_via`, the target that showed the wall. The mark lifts when a new `eyes_text` through that target shows no wall. When the server cannot resolve a window, hands refuse.
 
 **MCP tools.** The 22 tools in parts 8 and 9. Each tool has a JSON Schema for its arguments and a description that states its guard rules. `eyes_shot` returns MCP image content (a PNG, scaled so that the long edge is 1568 px or less) and the JSON.
 
@@ -709,7 +709,7 @@ On macOS 15 and later, macOS asks again about Screen Recording about once a mont
 | `planner` tests (Lua through `node --test`, as PR #16 does) | Path bounds, Fitts durations, monotone ease-out, end point in the rect, centre bias, overshoot rate, click hold, typing gaps, the 300-character paste rule, combos, scroll totals, seed replay, golden vectors from `plan.mjs` |
 | Spoon tests under fake `hs` | Guard order; present rule with known and unknown tags; foreign hands detectors (fake `jobhunt` and `harness` tables); lease; stop switch; takeover and resume; target resolution from fake `ps` output; field records from a JSON AX tree fixture; stale id fallback; pixel decisions on synthetic images |
 | Port integration | The Spoon's commands through a real `port.lua` instance: capabilities `eyes`, `shot` and `hands`; targets as `apps`; owner passed to commands |
-| CLI and MCP (Python `unittest`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by PR #16's `test/fake-port.py` |
+| CLI and MCP (`cli.test.mjs` and `mcp.test.mjs` through `node --test`) | JSON-RPC handshake, `tools/list` schemas, tool calls, signer `seq`, lazy arm, `owner_in_use`, wall guard; a real CFMessagePort served by `modules/eyeshands/test/fake-eh-port.py` |
 | Vendored copies | `EyesHands.spoon/port.lua` and the bundled `hsx` equal the harness files |
 | Packaging | DMG build with `hdiutil` (contents only); `brew audit --strict` and `brew install --build-from-source` on the formula in a local tap |
 | Docs | `ste-check` on the README; a scan for home paths, e-mail addresses and host names |
