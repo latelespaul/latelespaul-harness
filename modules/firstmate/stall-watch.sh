@@ -12,6 +12,7 @@ ALERTS=${ALERTS:-$PROFILE_DIR/logs/fm-stall-watch.alerts}
 FM=${FIRSTMATE_DIR}
 SESSION=${FIRSTMATE_SESSION:-firstmate}
 now=$(date +%s)
+mkdir -p "${STATE:h}" "${ALERTS:h}"
 touch "$STATE"
 new_state=$(mktemp)
 tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep '^fm-' | while read -r w; do

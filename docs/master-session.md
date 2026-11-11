@@ -45,10 +45,11 @@ A worker that shows no change for a long time has usually stalled: it waits at a
 an answer, or hangs on a command. `modules/firstmate/stall-watch.sh` checks every `fm-*` window in
 the firstmate tmux session. After `STALL_MIN` (20) idle minutes it sends firstmate a note to steer,
 unblock or close the worker. After `PING_MIN` (45) it also pings the user through
-`modules/cron/tg-notify.py`. Schedule it with hcron:
+`modules/cron/tg-notify.py`. Schedule it with hcron. Run this from the harness folder, so `$PWD` expands
+to the full harness path when you add the job:
 
 ```sh
-hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$HARNESS_DIR/modules/firstmate/stall-watch.sh" --timeout 2m
+hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stall-watch.sh" --timeout 2m
 ```
 
 **Warnings**
