@@ -1,12 +1,17 @@
-"""Fake Eyes & Hands port for cli.test.mjs: a real CFMessagePort with the port.lua rules that the CLI
+"""Fake Eyes & Hands port for cli.test.mjs and mcp.test.mjs: a real CFMessagePort with the port.lua rules that the CLI
 depends on (arm, first arm wins, HMAC-SHA256 over seq|cmd|args, seq strictly rising, disarm) and
 canned eyes and hands replies. Never touches Hammerspoon.
   python3 fake-eh-port.py <port name> <config.json> <log.jsonl>   prints "ready" once listening
 Every envelope it receives goes to the log as one JSON line, plus {"event": ...} lines for jobs.
 config.json: {"owners": {name: {"enabled": true}}, "status": {...}, "targets": {...},
   "lines": [...], "frames": [...], "job_polls": 2, "refuse": {cmd: result},
-  "ax_flag": path (accessibility reads true once this file exists)}"""
-import copy, ctypes, hashlib, hmac, json, os, sys
+  "ax_flag": path (accessibility reads true once this file exists),
+  "url": url in every eyes reply, "text_seq": [{lines, frames, url}] one per eh.eyes.text (the last repeats),
+  "restart_flag": path (when it exists, every arm is dropped as by a Hammerspoon restart, once),
+  "forget_arms": true (every signed call finds no arm), "job_end": final job state (default done),
+  "hands_status_seq": [interrupts] one per eh.hands.status (the last repeats),
+  "shot": {"dir": private folder, "w": px, "h": px, "honor_max_px": bool} (writes a grey PNG)}"""
+import copy, ctypes, hashlib, hmac, json, os, struct, sys, time, zlib
 
 CF = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
 vp = ctypes.c_void_p
@@ -33,6 +38,7 @@ LOG = open(sys.argv[3], "a", buffering=1)
 armed = {}   # owner -> {secret, seq, pid}
 jobs = {}    # id -> {owner, polls, state}
 next_job = [0]
+calls = {}   # cmd -> how many times it ran (for the *_seq configs)
 JOB_CMDS = {"eh.hands." + c for c in ("focus", "move", "click", "type", "key", "scroll", "drag", "play")}
 
 
@@ -66,9 +72,44 @@ def status():
     return st
 
 
+def seq_item(key, cmd):
+    items = CONF.get(key) or [None]
+    n = calls[cmd] = calls.get(cmd, 0) + 1
+    return items[min(n, len(items)) - 1]
+
+
+def png(w, h):
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + b"\x80" * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def shot(a):
+    c = CONF["shot"]
+    w, h = c.get("w", 2400), c.get("h", 1200)
+    m = a.get("max_px")
+    if c.get("honor_max_px") and m and max(w, h) > m:
+        k = m / max(w, h)
+        w, h = round(w * k), round(h * k)
+    path = os.path.join(c["dir"], "shot-%d-%04x.png" % (int(time.time() * 1000), next_job[0] & 0xFFFF))
+    data = png(w, h)
+    with open(path, "wb") as f:
+        f.write(data)
+    return {"ok": True, "target": a.get("target"), "path": path, "bounds": [0, 25, w, h], "size": [w, h], "bytes": len(data)}
+
+
 def handle(env):
     cmd, args = env.get("cmd"), env.get("args") or ""
     a = json.loads(args) if args else {}
+    flag = CONF.get("restart_flag")
+    if flag and os.path.exists(flag):
+        os.unlink(flag)
+        armed.clear()
+        log({"event": "restart"})
+    if CONF.get("forget_arms") and env.get("mac"):
+        armed.clear()
     if cmd == "status":
         return ok(status())
     if cmd == "eh.targets":
@@ -109,9 +150,19 @@ def handle(env):
     if cmd in CONF.get("refuse", {}):
         return ok(CONF["refuse"][cmd])
     if cmd == "eh.eyes.text":
-        return ok({"ok": True, "target": a.get("target"), "lines": CONF.get("lines", []), "frames": CONF.get("frames", [])})
+        page = seq_item("text_seq", cmd) or {}
+        out = {"ok": True, "target": a.get("target"), "lines": page.get("lines", CONF.get("lines", [])),
+               "frames": page.get("frames", CONF.get("frames", []))}
+        if page.get("url") or CONF.get("url"):
+            out["url"] = page.get("url") or CONF.get("url")
+        return ok(out)
+    if cmd == "eh.eyes.shot":
+        return ok(shot(a))
     if cmd.startswith("eh.eyes."):
-        return ok({"ok": True, "cmd": cmd, "args": a})
+        out = {"ok": True, "cmd": cmd, "args": a}
+        if CONF.get("url"):
+            out["url"] = CONF["url"]
+        return ok(out)
     if cmd in JOB_CMDS:
         next_job[0] += 1
         jid = next_job[0]
@@ -124,9 +175,12 @@ def handle(env):
         if j["state"] == "running":
             j["polls"] -= 1
             if j["polls"] <= 0:
-                j["state"] = "done"
-                log({"event": "job-done", "job": (a or {}).get("id")})
-        return ok({"ok": j["state"] in ("done", "running"), "job": a["id"], "state": j["state"], "posted": 3, "total": 3})
+                j["state"] = CONF.get("job_end", "done")
+                log({"event": "job-" + j["state"], "job": (a or {}).get("id")})
+        out = {"ok": j["state"] in ("done", "running"), "job": a["id"], "state": j["state"], "posted": 3, "total": 3}
+        if not out["ok"]:
+            out["reason"] = j["state"]
+        return ok(out)
     if cmd == "eh.hands.abort":
         for jid, j in jobs.items():
             if j["owner"] == owner and j["state"] == "running":
@@ -134,6 +188,8 @@ def handle(env):
                 log({"event": "job-aborted", "job": jid, "why": "abort"})
                 return ok({"ok": False, "job": jid, "state": "aborted"})
         return ok({"ok": True, "aborted": False})
+    if cmd == "eh.hands.status" and CONF.get("hands_status_seq"):
+        return ok({"ok": True, "lease": owner, "mine": True, "busy": False, "interrupts": seq_item("hands_status_seq", cmd)})
     if cmd.startswith("eh.hands."):
         return ok({"ok": True, "cmd": cmd, "lease": False, "interrupts": 0})
     return err("unknown command")
