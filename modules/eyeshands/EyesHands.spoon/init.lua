@@ -2,9 +2,9 @@
 ---
 --- Eyes & Hands: lets an AI agent read the screen ("eyes") and drive the mouse and keyboard
 --- ("hands") of a Mac app, through one authenticated port, while the person always wins.
---- Design: docs/eyes-hands-design.md in the harness repo. This is the skeleton (part 19, PR 5):
---- its own port, config, targets, `status`, `eh.targets`, `stop`, and the guards. The eyes and
---- hands commands come in the next PRs.
+--- Design: docs/eyes-hands-design.md in the harness repo. So far (part 19, PRs 5-7): its own
+--- port, config, targets, `status`, `eh.targets`, `stop`, the guards, the eyes (eyes.lua) and the
+--- hands (hands.lua).
 ---
 --- Load and start it (it writes no global; hs.loadSpoon keeps it in spoon.EyesHands):
 ---   hs.loadSpoon("EyesHands"):start({ access_file = "~/.config/eyeshands/access.json" })
@@ -23,6 +23,16 @@
 ---   eh.targets   (no secret) each target in the targets file: name, bundle, profile, running, pid
 ---   stop         (no secret) stops every job and disarms every owner; stopping is always safe
 ---   arm, disarm  built into port.lua
+---   eh.eyes.fields, .value, .text, .focused, .dialog, .tree   (signed; capability eyes and the
+---                args.target in the owner's apps) AX reads of the target, see eyes.lua
+---   eh.eyes.frontmost  (signed; capability eyes) the front app and the targets it matches
+---   eh.eyes.pixels, .shot  (signed; capabilities eyes and shot, and the target) the target
+---                window's own pixels; a shot goes to cfg.shot_dir (mode 700)
+---   eh.hands.focus, .move, .click, .type, .key, .scroll, .drag, .play  (signed; capability hands
+---                and the args.target in the owner's apps) guards, a plan, then a job, see hands.lua
+---   eh.hands.job, .status, .resume, .abort  (signed; capability hands) the caller's jobs and lease
+---   hands_release is the built-in disarm: it ends the owner's arm and its hands lease.
+--- Eyes only read. Only the hands post input, every event with EVENT_TAG.
 local obj = {}
 obj.__index = obj
 
@@ -150,8 +160,121 @@ function obj:start(user)
     pidAlive = pidAlive,
     log = s.log,
     alert = s.alert,
+    -- An owner's field ids (AX elements) and its hands lease end with its arm.
+    disarmed = function(owner, reason)
+      if s.eyes then s.eyes.forget(owner) end
+      if s.hands then s.hands.release(owner, reason) end
+    end,
   })
   self._s = s
+
+  -- The eyes: AX reads and the target window's own pixels. Nothing here posts input.
+  local function hasCap(owner, cap)
+    local o = owner and s.core.policyInfo().owners[owner]
+    for _, c in ipairs(o and o.capabilities or {}) do if c == cap then return true end end
+    return false
+  end
+  -- The target's front window: focused or main when it is a visible standard window, else the
+  -- first visible window larger than 100 x 100 points.
+  local function targetWindow(pid)
+    local app = hs.application.applicationForPID(pid)
+    if not app then return nil end
+    local win = app:focusedWindow() or app:mainWindow()
+    if win and win:isStandard() and win:isVisible() then return win end
+    for _, w in ipairs(app:allWindows() or {}) do
+      local f = w:frame()
+      if w:isVisible() and f.w > 100 and f.h > 100 then return w end
+    end
+    return nil
+  end
+  -- A window's own pixels (no other window shows in them), never on a locked screen.
+  local function snapshot(pid)
+    if s.session().locked then return nil, "locked" end
+    local win = targetWindow(pid)
+    if not win then return nil, "no_window" end
+    local img = win:snapshot()
+    if not img then return nil, "no_screen_recording" end
+    return win, img
+  end
+  s.eyes = part("eyes")({
+    axTrusted = function() return hs.accessibilityState(false) == true end,
+    appElement = function(pid) return hs.axuielement.applicationElementForPID(pid) end,
+    resolve = s.targets.resolve,
+    targetsList = s.targets.list,
+    front = function()
+      local a = hs.application.frontmostApplication()
+      return a and { pid = a:pid(), name = a:name(), bundle = a:bundleID() } or nil
+    end,
+    nowMs = function() return hs.timer.absoluteTime() / 1e6 end,
+    sleepMs = function(ms) hs.timer.usleep(math.floor(ms * 1000)) end,
+    hasCap = hasCap,
+    windowImage = function(pid)
+      local win, img = snapshot(pid)
+      if not win then return nil, img end
+      local f, sz = win:frame(), img:size()
+      return { frame = { f.x, f.y, f.w, f.h }, w = sz.w, h = sz.h, color = function(px, py)
+        local c = img:colorAt({ x = px, y = py })
+        if type(c) == "table" and c.red then return c.red, c.green, c.blue end
+      end }
+    end,
+    windowShot = function(pid, maxPx)
+      local win, img = snapshot(pid)
+      if not win then return nil, img end
+      local sz = img:size()
+      local long = math.max(sz.w, sz.h)
+      if maxPx and long > maxPx then
+        local k = maxPx / long
+        img = img:setSize({ w = math.floor(sz.w * k), h = math.floor(sz.h * k) }, true) or img
+        sz = img:size()
+      end
+      local dir = cfg.shot_dir
+      os.execute("/bin/mkdir -p -m 700 '" .. dir:gsub("'", "'\\''") .. "' && /bin/chmod 700 '" .. dir:gsub("'", "'\\''") .. "'")
+      local path = string.format("%s/shot-%d-%04x.png", dir, math.floor(hs.timer.secondsSinceEpoch() * 1000), math.random(0, 0xffff))
+      if not img:saveToFile(path) then return nil, "write_failed" end
+      local f = win:frame()
+      return { path = path, bounds = { f.x, f.y, f.w, f.h }, size = { sz.w, sz.h }, bytes = hs.fs.attributes(path, "size") or 0 }
+    end,
+  })
+
+  -- The hands: planned, tagged input from a 4 ms timer; the takeover tap and the awake hold
+  -- while a lease exists.
+  local P = part("planner")
+  s.hands = part("hands")({
+    tag = obj.EVENT_TAG,
+    planner = P,
+    guards = s.guards,
+    now = hs.timer.secondsSinceEpoch,
+    nowMs = function() return hs.timer.absoluteTime() / 1e6 end,
+    seed = function() return math.tointeger(hs.timer.absoluteTime() // 1) or os.time() end,
+    layout = function() return P.keys(hs.keycodes.map, hs.keycodes.currentLayout()) end,
+    resolve = s.targets.resolve,
+    frontPid = function()
+      local a = hs.application.frontmostApplication()
+      return a and a:pid() or nil
+    end,
+    windows = function(pid)
+      local app = hs.application.applicationForPID(pid)
+      local out = {}
+      for _, w in ipairs(app and app:allWindows() or {}) do
+        if w:isVisible() then local f = w:frame(); out[#out + 1] = { f.x, f.y, f.w, f.h } end
+      end
+      return out
+    end,
+    field = function(a, owner) return s.eyes.value(a, owner) end,
+    activate = function(pid)
+      local app = hs.application.applicationForPID(pid)
+      return app ~= nil and app:activate(true) ~= false
+    end,
+    event = hs.eventtap.event,
+    newTap = function(types, fn) return hs.eventtap.new(types, fn) end,
+    every = function(secs, fn) return hs.timer.new(secs, fn, true):start() end,
+    pasteboard = hs.pasteboard,
+    mousePos = function() return hs.mouse.absolutePosition() end,
+    global = function(name) return rawget(_G, name) end,
+    caffeinate = function(on) hs.caffeinate.set("displayIdle", on == true) end,
+    log = s.log,
+  })
+  s.timers[#s.timers + 1] = hs.timer.doEvery(5, s.hands.sweep)   -- 2 idle minutes end a lease
 
   -- The access policy file: missing = nothing may arm; invalid = every authenticated call denied,
   -- with an alert. Edits apply within a second (folder watch) or 5 s (poll), and are announced.
@@ -189,6 +312,34 @@ function obj:start(user)
   s.core.register("eh.targets", function() return s.targets.list() end, { auth = false })
   s.core.register("stop", function() return self:stopAgents("command", false) end, { auth = false })
 
+  -- The eyes, signed. The port checks the capability and that args.target is in the owner's apps;
+  -- pixels and shot are registered under shot and check eyes here (a command has one capability).
+  local function target(a) return type(a) == "table" and a.target or nil end
+  local function args(a) return type(a) == "table" and a or {} end
+  for _, name in ipairs({ "fields", "value", "text", "focused", "dialog", "tree" }) do
+    s.core.register("eh.eyes." .. name, function(a, caller) return s.eyes[name](args(a), caller.owner) end,
+      { cap = "eyes", app = target })
+  end
+  s.core.register("eh.eyes.frontmost", function() return s.eyes.frontmost() end, { cap = "eyes" })
+  for _, name in ipairs({ "pixels", "shot" }) do
+    s.core.register("eh.eyes." .. name, function(a, caller)
+      if not hasCap(caller.owner, "eyes") then
+        s.log(string.format("%s deny owner=%s cmd=eh.eyes.%s reason=capability?eyes?not?granted", stamp(), clean(caller.owner), name))
+        return { ok = false, reason = "capability", hint = "eh.eyes." .. name .. " needs the eyes and shot capabilities" }
+      end
+      return s.eyes[name](args(a))
+    end, { cap = "shot", app = target })
+  end
+
+  -- The hands, signed, capability hands. The commands that drive a target name it in args.target.
+  for _, name in ipairs({ "focus", "move", "click", "type", "key", "scroll", "drag", "play" }) do
+    s.core.register("eh.hands." .. name, function(a, caller) return s.hands[name](args(a), caller) end,
+      { cap = "hands", app = target })
+  end
+  for _, name in ipairs({ "job", "status", "resume", "abort" }) do
+    s.core.register("eh.hands." .. name, function(a, caller) return s.hands[name](args(a), caller) end, { cap = "hands" })
+  end
+
   -- hs.libipc is the message-port part of hs.ipc without the generic "Hammerspoon" port that
   -- loading hs.ipc opens; this Spoon never loads hs.ipc.
   local okLib, ipc = pcall(require, "hs.libipc")
@@ -225,6 +376,8 @@ function obj:stop()
   local s = self._s
   if not s then return self end
   self._s = nil
+  -- A held button or key is released and the clipboard put back before anything else closes.
+  pcall(s.hands.unload)
   for name, o in pairs(s.core.policyInfo().owners) do if o.armed then s.core.disarm(name, "unloaded") end end
   if s.port then pcall(function() s.port:delete() end) end
   for _, t in ipairs(s.timers) do pcall(function() t:stop() end) end
@@ -256,7 +409,7 @@ function obj:status()
     present = s.guards.presentInfo(),
     idle_buffer_s = s.cfg.idle_buffer_s,
     access = s.core.policyInfo(),
-    hands = { lease = false, busy = false },
+    hands = s.hands.info(),
     foreign = s.guards.foreign(),
     stop = s.guards.stopInfo(),
     targets = s.targets.fileState(),
@@ -270,7 +423,7 @@ end
 function obj:stopAgents(by, hold)
   local s = self._s
   if not s then return { stopped = false, error = "not started" } end
-  -- (The hands PR aborts the running job here, before the disarm.)
+  s.hands.abortAll("stop switch")
   local disarmed = {}
   for name, o in pairs(s.core.policyInfo().owners) do
     if o.armed and s.core.disarm(name, "stop switch") then disarmed[#disarmed + 1] = name end
@@ -300,12 +453,12 @@ function obj:consent(minutes)
   return self
 end
 
--- The menu bar: its state (idle, eyes active, stopped) and items. Hands active comes with the
--- hands PR.
+-- The menu bar: its state (idle, eyes active, hands active, stopped) and items.
 function obj:_menuState()
   local s = self._s
   if not s then return "off" end
   if s.guards.stopInfo().stopped then return "stopped" end
+  if s.hands.info().lease then return "hands" end
   for _, o in pairs(s.core.policyInfo().owners) do if o.armed then return "eyes" end end
   return "idle"
 end

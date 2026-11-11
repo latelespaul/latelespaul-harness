@@ -71,6 +71,8 @@ local KEYS = {
   targets_file = { "~/.config/eyeshands/targets.json", path },
   -- The audit log: one line per call, never a secret or arguments.
   log_file = { "~/Library/Logs/eyeshands.log", path },
+  -- Window shots (eh.eyes.shot): a private folder (mode 700); the reader deletes each file.
+  shot_dir = { "~/Library/Caches/eyeshands/shots", path },
   -- Present rule: hands start only after this many seconds with no human input.
   idle_buffer_s = { 20, int(1, 3600) },
   -- The stop hotkey; false for none (tests).

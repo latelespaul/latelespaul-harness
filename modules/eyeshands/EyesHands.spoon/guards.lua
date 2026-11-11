@@ -4,12 +4,14 @@
 -- Before a hands job starts, check(ctx) runs the guards in this order; the first failure refuses:
 --   1. stop switch   the stop hotkey or menu item was used in the last stop_minutes
 --   2. foreign hands job-hunt or another driver is armed or busy (read only; never stopped)
---   3. lease         one owner at a time holds the cursor            (ctx.lease hook, hands PR)
+--   3. lease         one owner at a time holds the cursor            (ctx.lease hook, hands.lua)
 --   4. session       unlocked, display awake, no screen saver, on the console
 --   5. present rule  no human input for idle_buffer_s (default 20), or the person consented
---   6. takeover      no takeover waits for hands_resume             (ctx.takeover hook, hands PR)
+--   6. takeover      no takeover waits for hands_resume             (ctx.takeover hook, hands.lua)
 --   7. focus         the target is frontmost
 -- A refusal is { ok=false, reason=, hint=, ... } with the reasons of the design's part 9.
+-- During a job, hands.lua repeats checks 4 (G.sessionCheck) and 7 every 250 ms; hands_resume needs
+-- check 5 (G.presentCheck).
 -- Eyes never come here: they post no input, so they work while a person is present.
 --
 -- Foreign hands, read only (part 11): never a call that changes another driver's state, and never
@@ -119,7 +121,7 @@ return function(deps)
     if tag == htag then return true end
     return false
   end
-  -- While the takeover tap runs (hands PR), it reports each event here. An event with no known
+  -- While the takeover tap runs (hands.lua), it reports each event here. An event with no known
   -- machine tag is a person; one with a known tag is not (a job-hunt event is not a person).
   function G.noteEvent(tag)
     if not machineTag(tag) then lastHuman = now(); return true end
@@ -156,6 +158,9 @@ return function(deps)
     return { ok = false, reason = "present", human_idle_s = math.floor(idle), idle_buffer_s = deps.idleBuffer,
       retry_after_s = math.max(1, ceil(deps.idleBuffer - idle)), hint = "ask the person, or wait" }
   end
+
+  -- Checks 4 and 5 alone: nil when they pass, else the refusal.
+  G.sessionCheck, G.presentCheck = sessionRefusal, presentRefusal
 
   -- ---- the order --------------------------------------------------------------------------------
   -- ctx: { owner, targetPid, frontPid, lease = fn(owner) -> refusal|nil, takeover = fn() -> refusal|nil }

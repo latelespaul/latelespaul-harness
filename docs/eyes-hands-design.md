@@ -285,7 +285,7 @@ Every eyes command needs the `eyes` capability and a granted target. `shot` and 
 - `rect` is `[x, y, w, h]` in global screen points, origin at the top left of the main display. Mouse events use the same points, so Retina and several displays need no conversion.
 - `id` is valid until the next `eyes_fields`. A stale id falls back to `dom`, the HTML id, as in `jobhunt.lua`.
 - `checked` and `checkedSource` (`ax`, `pixels` or `unknown`) appear for checkboxes and radio buttons. Chrome leaves `AXValue` empty for both states, so the eyes read the control's pixels. That path runs only when the owner has `shot`.
-- `onscreen` is true when the rect lies inside the viewport. The hands refuse an off-screen rect.
+- `onscreen` is true when the centre of the rect lies inside the viewport. Thus a tall text area that runs past the viewport edge still counts. The hands refuse an off-screen rect.
 
 **`eyes_fields` reply** (shortened):
 ```json
@@ -298,7 +298,9 @@ Every eyes command needs the `eyes` capability and a granted target. `shot` and 
 }
 ```
 
-**Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
+**Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. A caller can lower a limit, but never raise it. A node below `maxDepth` skips only its own subtree. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
+
+**Pixels.** `pixels`, `shot` and the pixel path of `checked` read the target window's own pixels, so no other window shows in them. A point or rect outside the target window is refused with `not_on_target`. On a locked screen they return `locked`.
 
 **Walls.** `eyes_text` in the CLI and MCP server adds `wall`: a list from `human`, `hcaptcha`, `recaptcha`, `captcha`, `otp`, `unusual`. The patterns come from job-hunt's `hs-client.mjs`. Part 15 says what the agent does next.
 
@@ -316,7 +318,7 @@ Hands post real mouse and keyboard events with human timing. Every hands command
 | `hands_scroll` | `eh.hands.scroll` | `target`, `dy`, optional `dx`, `at` | Wheel ticks that speed up, then slow down |
 | `hands_drag` | `eh.hands.drag` | `target`, `from`, `to` | Press at `from`, a dragged path, release at `to` |
 | (CLI and job-hunt only) | `eh.hands.play` | `target`, `events[]` | Plays a pre-planned event list (the `jobhunt.lua` format) |
-| `hands_status` | `eh.hands.status` | none | `lease`, `busy`, `interrupted`, `pos`, `watch` |
+| `hands_status` | `eh.hands.status` | none | `lease`, `busy`, `interrupted`, `interrupts`, `pos`, `watch`, `awake` |
 | `hands_resume` | `eh.hands.resume` | none | Clears a takeover, only when the present rule passes |
 | `hands_abort` | `eh.hands.abort` | none | Stops the running job |
 | `hands_release` | `disarm` (built in) | none | Ends the owner's arm and hands lease |
@@ -337,6 +339,7 @@ Final states: `done`, `interrupted` (takeover), `focus` (the target lost the fro
 | `interrupted` | The person took over during a job | Wait until they leave, then `hands_resume` |
 | `foreign_hands` | job-hunt or another driver is armed | Wait `retry_after_s`; never force |
 | `lease_held` | Another Eyes & Hands owner holds the cursor | Wait for its release |
+| `busy` | The owner's previous job still runs | Poll `eh.hands.job`, or call `hands_abort` |
 | `focus` | The target is not frontmost | Call `hands_focus` |
 | `wrong_mode` | The target's browser profile is in `agent` mode | Use the CDP tool, or switch the profile to desktop mode first |
 | `offscreen` | The `to` rect is outside the viewport | `hands_scroll` with the suggested `dy` |
