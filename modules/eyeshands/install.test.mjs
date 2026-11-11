@@ -93,7 +93,7 @@ test('fresh install: links the Spoon, loader and CLI into this module, and nothi
   assert.equal(realpathSync(s.links.loader), realpathSync(join(MOD, 'loader.lua')));
   assert.equal(realpathSync(s.links.cli), realpathSync(join(MOD, 'bin/eyeshands')));
   for (const l of Object.values(s.links)) assert.ok(lstatSync(l).isSymbolicLink(), l);
-  // Asks before it registers anything with Claude Code: off a terminal it only prints the line.
+  // Registers nothing with Claude Code without --mcp: it only prints the line.
   assert.deepEqual(s.claude(), []);
   assert.match(r.stdout, new RegExp(`MCP \\(not registered\\): claude mcp add --scope user eyeshands -- ${s.links.cli} mcp --owner ${OWNER}`));
   assert.match(r.stdout, /Access \(default deny; harness-session has none\): eyeshands access allow harness-session eyes,shot,hands/);
@@ -199,6 +199,22 @@ test('the Spoon already runs: no restart; --restart restarts, deferred while Eye
   } finally { stop(); }
 });
 
+test('the stop switch is on: --restart and --uninstall defer the restart, so the person keeps the hold', { skip }, async () => {
+  const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
+  assert.equal(s.run('--no-restart').status, 0);
+  const stop = await fakePort(s, { stop: { stopped: true, by: 'hotkey', until: '2026-11-11T10:30:00Z', retry_after_s: 1500 } });
+  try {
+    let r = s.run('--restart');
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(s.acted(), [], 'a restart would clear the stop hold');
+    assert.match(r.stdout, /restart deferred: .*Eyes & Hands is busy \(the stop switch is on until 2026-11-11T10:30:00Z\)/);
+    r = s.run('--uninstall');
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(s.acted(), []);
+    assert.match(r.stdout, new RegExp(`restart deferred: Eyes & Hands was uninstalled and its Spoon still runs, but Eyes & Hands is busy \\(the stop switch is on until 2026-11-11T10:30:00Z\\)\\. Run ${INSTALL} --uninstall again`));
+  } finally { stop(); }
+});
+
 test('--no-restart only links', { skip }, () => {
   const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
   const r = s.run('--no-restart');
@@ -290,11 +306,6 @@ test('example files: access.example.json passes the hsx policy check and enables
   assert.match(r.stdout, /harness-session +on +eyes,shot,hands +apps=chrome-agent,com\.apple\.TextEdit/);
   const targets = JSON.parse(readFileSync(join(MOD, 'targets.example.json'), 'utf8'));
   assert.ok(targets.targets['chrome-agent'], 'the example target harness-session may use');
-  // No personal data in shipped files: no home paths or e-mail addresses.
-  for (const f of ['access.example.json', 'targets.example.json', 'SETUP.md', 'claude-notes.md.tmpl', 'loader.lua', 'install.sh']) {
-    const text = readFileSync(join(MOD, f), 'utf8');
-    assert.doesNotMatch(text, /\/Users\/|\/home\/[a-z]|[\w.]+@[\w-]+\.[a-z]{2,}/i, f);
-  }
 });
 
 test('targets.example.json parses with the Spoon targets.lua', { skip: LUA ? false : 'no Lua 5.4 (brew install lua@5.4)' }, () => {

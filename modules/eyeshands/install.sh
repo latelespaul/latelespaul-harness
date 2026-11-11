@@ -9,10 +9,11 @@
 #   install.sh --no-restart link only; the Spoon starts at the next Hammerspoon start
 #   install.sh --restart    restart even when the Spoon already runs (to load changed Spoon code)
 #   install.sh --mcp        also register the MCP server with Claude Code (owner harness-session);
-#                           without it, install asks on a terminal and only prints the line otherwise
+#                           without it, install only prints the claude mcp add line
 #   install.sh --status     links, Hammerspoon, the eyeshands port, grants, policy (exit 1 if not ok)
 #   install.sh --uninstall  remove the three links (never the access or targets file), then the same
 #                           deferred restart so the Spoon stops; with --mcp also the MCP entry
+#                           (without it, only the claude mcp remove line is printed)
 #   --dry-run               print what it would do, change nothing
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -70,6 +71,8 @@ if sys.argv[1] == "busy":
     if armed: print("armed: " + ", ".join(armed))
     if hands.get("busy") not in (None, False): print("a hands job runs (job %s)" % hands.get("busy"))
     if hands.get("lease") not in (None, False): print("%s holds the hands lease" % hands.get("lease"))
+    stop = s.get("stop") if isinstance(s.get("stop"), dict) else {}
+    if stop.get("stopped") is True: print("the stop switch is on until %s" % stop.get("until", "?"))
     sys.exit(0)
 bad = 0
 if s.get("running") is not True:
@@ -162,16 +165,12 @@ ensure_dir $HOME/.local/bin
 act chmod +x $cli
 link $cli $cli_link                       # CLI and MCP server
 
-# Claude Code's MCP server for this harness: only when asked (--mcp, or yes on a terminal).
+# Claude Code's MCP server for this harness: only when asked (--mcp).
 if mcp_registered; then
   print "MCP: Claude Code already has an eyeshands server."
 elif (( mcp )); then
   act ${(z)mcp_line}
-elif [[ -t 0 ]] && ! dry && read -q "?Register the eyeshands MCP server with Claude Code (owner $owner)? [y/N] "; then
-  print
-  ${(z)mcp_line}
 else
-  [[ -t 0 ]] && ! dry && print
   print -r -- "MCP (not registered): $mcp_line"
 fi
 

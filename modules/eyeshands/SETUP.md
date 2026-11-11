@@ -27,7 +27,7 @@ The loader starts the Spoon with three harness values:
    ```
    `eyes` reads the accessibility (AX) tree, `shot` reads screen pixels (only together with `eyes`), and `hands` posts input. `apps` lists every target the owner may read or drive. `access.example.json` shows a full file with `harness-session`, a night runner and a disabled owner.
 5. Optional: name targets. Copy `targets.example.json` to the targets file and edit it. A target is an app (`bundle`) or one Chromium profile (`bundle` plus `profile`). A bundle id works as a target without an entry.
-6. Optional: register the MCP server with Claude Code. The install asks on a terminal. Otherwise, it prints the line, or `install.sh --mcp` runs it:
+6. Optional: register the MCP server with Claude Code. The install only prints the line. `install.sh --mcp` runs it:
    ```sh
    claude mcp add --scope user eyeshands -- ~/.local/bin/eyeshands mcp --owner harness-session
    ```
