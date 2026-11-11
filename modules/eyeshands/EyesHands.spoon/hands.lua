@@ -13,7 +13,7 @@
 --   drag   {target, from, to}                press at from, a dragged path, release at to
 --   play   {target, events[]}                a pre-planned event list (the jobhunt.lua format)
 --   job    {id}                              one job's report
---   status {}                                lease, busy, interrupted, interrupts, pos, watch
+--   status {}                                lease, mine, busy, interrupted, interrupts, pos, watch, awake
 --   resume {}                                clears a takeover, only when the present rule passes
 --   abort  {}                                stops the caller's running job
 -- `to`, `from` and `at` are {field = "f3"} (an id from eyes_fields, read again just before the
