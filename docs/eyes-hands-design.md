@@ -89,7 +89,7 @@ These pieces exist today. Eyes & Hands joins them into one generic engine.
 | Hammerspoon module | `modules/hammerspoon/` (this repo) | The one signed app with the grants, `harness.status()`, awake mode, `harness.EVENT_TAG`, the `awake` CLI |
 | Harness port (PR #16, merged) | `modules/hammerspoon/port.lua`, `hsx`, `access.example.json` | A narrow, authenticated CFMessagePort: registered commands only, per-run secret, HMAC and `seq`, first arm wins, default-deny access policy with hot reload, audit log, alerts |
 | cron module | `modules/cron/hcron.mjs` | One scheduler; `--needs gui` jobs check the lock state and hold awake mode |
-| `eyes-hands` skill (PR #20, merged) | `skills/eyes-hands/SKILL.md` | The look-think-act-check loop, how to verify each step, pause and resume after a 20 s idle buffer, the 3-interruptions stop rule, hand-offs, and a lessons loop. It names no product tools yet. |
+| `eyes-hands` skill (PR #20, merged) | `skills/eyes-hands/SKILL.md` | The look-think-act-check loop, how to verify each step, pause and resume after a 20 s idle buffer, the 3-interruptions stop rule, hand-offs, and a lessons loop. PR 10 adds the product's MCP and CLI tool names and rules (part 15). |
 | Browser modes (PRs #21 and #22, merged) | `modules/browser/chrome-mode.sh` | One state file per browser profile records `agent` (CDP, debug port) or `desktop` (normal Chrome) mode |
 | job-hunt desktop tools | `tools/desktop/` in the private job-hunt project | Proven eyes and hands for one Chrome profile: `jobhunt.lua` (AX reads, pixel checks, tagged events, takeover tap, focus and lock guards), `plan.mjs` (human motion), `hs-client.mjs`, a live fixture test |
 
