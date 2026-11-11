@@ -500,7 +500,7 @@ return function(deps)
     local events = a.events
     if type(events) ~= "table" or #events == 0 then return nil, refuse("bad_args", "play needs events") end
     if #events > MAX_EVENTS then return nil, refuse("bad_args", "at most " .. MAX_EVENTS .. " events") end
-    local out = {}
+    local out, pos = {}, nil
     for i, e in ipairs(events) do
       if type(e) ~= "table" or not POST[e.type] or not num(e.t) or e.t < 0 then return nil, refuse("bad_args", "bad event " .. i) end
       if i > 1 and e.t < events[i - 1].t then return nil, refuse("bad_args", "events out of order at " .. i) end
@@ -508,6 +508,13 @@ return function(deps)
       if m and not (num(e.x) and num(e.y)) then return nil, refuse("bad_args", "event " .. i .. " needs x and y") end
       if m and not onWindow(t.pid, e.x, e.y) then
         return nil, refuse("focus", "event " .. i .. " is not on a target window", { event = i, at = { round(e.x), round(e.y) } })
+      end
+      if m then pos = { x = e.x, y = e.y } end
+      if e.type == "scroll" then
+        pos = pos or from()
+        if not onWindow(t.pid, pos.x, pos.y) then
+          return nil, refuse("focus", "event " .. i .. " scrolls off a target window", { event = i, at = { round(pos.x), round(pos.y) } })
+        end
       end
       if e.type == "paste" and type(e.text) ~= "string" then return nil, refuse("bad_args", "event " .. i .. " needs text") end
       local k = e.type:match("^key") or e.type:match("^flags")
@@ -529,9 +536,13 @@ return function(deps)
     local ok, events, why = pcall(PLAN[kind], a, caller, t)
     if not ok then return refuse("failed", "could not plan the " .. kind) end
     if not events then return why end
+    local fresh = lease == nil
     takeLease(caller)
     local r = G.sessionCheck()
-    if r then return r end
+    if r then
+      if fresh then endLease(r.reason) end
+      return r
+    end
     nextId = nextId + 1
     local j = { id = nextId, kind = kind, owner = caller.owner, pid = t.pid, events = events, i = 1, total = #events,
       t0 = deps.nowMs(), lastCheck = 0, state = "running", planned = math.floor(lastT(events) + 0.5) }

@@ -416,7 +416,25 @@ test('a harness without addEventTag that goes away when we take the awake hold: 
      harness.awakeInfo = function() return { mode = MODE } end
      harness.awake = function(on) MODE = on and "away" or "present"; return "{}" end
      local r = hc("runner", "eh.hands.click", ${j({ target: 'textedit', to: { rect: RECT } })}); run(3000)
-     return { r.reason, #POSTED, SPOONOBJ:status().hands.busy }`,
+     return { r.reason, #POSTED, SPOONOBJ:status().hands.busy, SPOONOBJ:status().hands.lease, tapsOn(), MODE }`,
   ]));
-  assert.deepEqual(out[1], ['awake_away', 0, false]);
+  assert.deepEqual(out[1], ['awake_away', 0, false, false, 0, 'present'], 'the lease this call took ends: tap off, hold released');
+});
+
+test('play: a scroll is refused as focus when the cursor it scrolls at is off the target windows', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `WINS[7] = { { 0, 0, 800, 600 } }; MOUSE = { x = 900, y = 100 }
+     return { hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'scroll', dy: 400 }] })}), #POSTED }`,
+    `return { hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'move', x: 300, y: 300 }, { t: 5, type: 'scroll', dy: 40 }] })}).state, #POSTED > 0 }`,
+    `MOUSE = { x = 300, y = 300 }; run(3000)
+     return hc("runner", "eh.hands.play", ${j({ target: 'textedit', events: [{ t: 0, type: 'scroll', dy: 40 }, { t: 5, type: 'move', x: 900, y: 100 }] })}).event`,
+  ]));
+  assert.equal(out[1][0].reason, 'focus');
+  assert.equal(out[1][0].event, 1);
+  assert.deepEqual(out[1][0].at, [900, 100]);
+  assert.equal(out[1][1], 0);
+  assert.deepEqual(out[2], ['running', true], 'a scroll after a move on the window plays');
+  assert.equal(out[3], 2);
 });
