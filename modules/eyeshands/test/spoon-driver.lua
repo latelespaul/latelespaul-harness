@@ -72,7 +72,7 @@ function guards(over)
   local deps = {
     now = function() return T end, idleTime = function() return IDLE end,
     session = function() return SESSION end, global = function(name) return rawget(_G, name) end,
-    json = json, idleBuffer = 20, stopMinutes = 30, consentMinutes = 10, detectors = {}, machineTags = {},
+    json = json, idleBuffer = 20, stopMinutes = 30, consentMinutes = 10, detectors = {},
     ownTag = 0x45484E44, tagRegistered = function() return true end,
   }
   for k, v in pairs(over or {}) do deps[k] = v end

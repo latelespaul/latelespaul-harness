@@ -113,7 +113,7 @@ function obj:start(user)
     global = function(name) return rawget(_G, name) end,
     json = hs.json,
     idleBuffer = cfg.idle_buffer_s, stopMinutes = cfg.stop_minutes, consentMinutes = cfg.consent_minutes,
-    detectors = cfg.detectors, machineTags = cfg.machine_tags,
+    detectors = cfg.detectors,
     ownTag = obj.EVENT_TAG,
     tagRegistered = function() return s.tagRegistered == true end,
   })

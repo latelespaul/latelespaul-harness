@@ -54,15 +54,6 @@ local function hotkey(v)
   end
   return { mods = mods, key = v.key }
 end
-local function tags(v)
-  if type(v) ~= "table" then return nil, "must be a list of non-zero integers" end
-  local out = {}
-  for k, x in pairs(v) do
-    if math.type(k) ~= "integer" or math.type(x) ~= "integer" or x == 0 then return nil, "must be a list of non-zero integers" end
-    out[k] = x
-  end
-  return out
-end
 local function fn(v)
   if v ~= nil and type(v) ~= "function" then return nil, "must be a function" end
   return v
@@ -93,9 +84,6 @@ local KEYS = {
   -- More global tables to read as foreign drivers (<name>.hands.status() armed or busy), besides
   -- job-hunt's `jobhunt` and the harness port's armed hands owners.
   detectors = { {}, names(GLOBAL, "global names") },
-  -- More event tags that count as machine input for the present rule (part 10 of the design),
-  -- besides our own tag, harness.EVENT_TAG and job-hunt's tag.
-  machine_tags = { {}, tags },
   -- alert(text): where security alerts go. Default: a macOS notification, the console and the log.
   alert = { nil, fn },
 }

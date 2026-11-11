@@ -53,11 +53,11 @@ test('the vendored EyesHands.spoon/port.lua equals the harness port.lua', () => 
 });
 
 test('config: defaults, ~ expansion, and a bad key or value fails at start', { skip }, () => {
-  const [d, mine, typo, badBuf, badKey, noKey, badTag, badPort] = drive([
+  const [d, mine, typo, badBuf, badKey, noKey, badPort] = drive([
     'return config(nil)', 'return config({ idle_buffer_s = 45, stop_hotkey = false, menubar = false, detectors = {"otherdriver"} })',
     'return select(2, config({ idle_bufer_s = 30 }))', 'return select(2, config({ idle_buffer_s = 0 }))',
     'return select(2, config({ stop_hotkey = { mods = {"hyper"}, key = "x" } }))', 'return select(2, config({ access_file = "relative.json" }))',
-    'return select(2, config({ machine_tags = {0} }))', 'return select(2, config({ port = "bad name" }))']);
+    'return select(2, config({ port = "bad name" }))']);
   assert.equal(d.idle_buffer_s, 20);
   assert.equal(d.port, 'eyeshands');
   assert.equal(d.access_file, '/home/test/.config/eyeshands/access.json');
@@ -74,7 +74,6 @@ test('config: defaults, ~ expansion, and a bad key or value fails at start', { s
   assert.match(badBuf, /^idle_buffer_s: must be a whole number 1-3600/);
   assert.match(badKey, /^stop_hotkey: mods are/);
   assert.match(noKey, /^access_file: must be an absolute path/);
-  assert.match(badTag, /^machine_tags:/);
   assert.match(badPort, /^port:/);
 });
 
@@ -146,9 +145,9 @@ test('present rule: idle_buffer_s (default 20), retry_after_s, and consent', { s
 
 test('present rule with the tap: known machine tags are not a person, any other tag is', { skip }, () => {
   const out = ok(drive([
-    'G = guards({ machineTags = { 0x1234 } }); IDLE = 300; G.tap(true); return G.check() == nil',
+    'G = guards(); IDLE = 300; G.tap(true); return G.check() == nil',
     `local seen = {}
-     for _, tag in ipairs({ 0x45484E44, 0x484E, 0x4A484844, 0x1234 }) do seen[#seen + 1] = G.noteEvent(tag) end
+     for _, tag in ipairs({ 0x45484E44, 0x484E, 0x4A484844 }) do seen[#seen + 1] = G.noteEvent(tag) end
      return seen`,
     'return G.check() == nil',
     'harness = { EVENT_TAG = 0x5555 }; local a = G.noteEvent(0x5555); harness = nil; return { a, G.check() == nil }',
@@ -158,7 +157,7 @@ test('present rule with the tap: known machine tags are not a person, any other 
     'G.noteEvent(0x99); G.tap(false); IDLE = 400; return G.check() == nil',
   ]));
   assert.equal(out[0], true, 'the tap starts from the hardware idle time');
-  assert.deepEqual(out[1], [false, false, false, false], 'ours, the harness, job-hunt and configured tags are machine input');
+  assert.deepEqual(out[1], [false, false, false], 'ours, the harness and job-hunt tags are machine input');
   assert.equal(out[2], true);
   assert.deepEqual(out[3], [false, true], 'the harness EVENT_TAG is read from the harness when it is there');
   assert.equal(out[4], true, 'an untagged event is a person');

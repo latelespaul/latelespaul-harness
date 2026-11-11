@@ -21,7 +21,7 @@
 -- deps: now() -> seconds, idleTime() -> seconds since the last hardware input,
 --       session() -> { locked, on_console, display_asleep, screensaver },
 --       global(name) -> rawget(_G, name), json (decode for a status() that returns JSON text),
---       idleBuffer, stopMinutes, consentMinutes, detectors (names), machineTags (list),
+--       idleBuffer, stopMinutes, consentMinutes, detectors (names),
 --       ownTag, tagRegistered() -> whether the harness takes our tag for machine input
 local JOBHUNT_TAG = 0x4A484844       -- "JHHD", job-hunt's event tag
 local HARNESS_TAG = 0x484E           -- harness.EVENT_TAG when no harness is loaded to read it from
@@ -111,13 +111,12 @@ return function(deps)
   end
 
   -- ---- 5. present rule --------------------------------------------------------------------------
-  -- Known machine tags: ours, harness.EVENT_TAG, job-hunt's, and cfg.machine_tags.
+  -- Known machine tags: ours, harness.EVENT_TAG, and job-hunt's; any other tag is a person.
   local function machineTag(tag)
     if tag == deps.ownTag or tag == JOBHUNT_TAG then return true end
     local h = deps.global("harness")
     local htag = type(h) == "table" and rawget(h, "EVENT_TAG") or HARNESS_TAG
     if tag == htag then return true end
-    for _, t in ipairs(deps.machineTags or {}) do if tag == t then return true end end
     return false
   end
   -- While the takeover tap runs (hands PR), it reports each event here. An event with no known
