@@ -85,7 +85,7 @@ EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=<the driver lock file> EYESHANDS_LIVE_REPOR
 
 What it checks first. The test checks each item and skips with the reason. It never forces one, and it reads these states only:
 1. `hs -c` answers, and Hammerspoon has Accessibility and Screen Recording.
-2. The screen is unlocked and on the console. Awake mode is not away, because one untagged test event would lock the screen.
+2. The screen is unlocked and on the console. When harness awake mode is on, `harness.addEventTag` must exist. Awake mode away is fine (see step 7 below).
 3. job-hunt does not hold its hands (armed or busy). No owner with `hands` holds an arm on the harness port or on the running Spoon. That Spoon has no lease or job. No `--needs gui` hcron job runs. No `__eyeshands_test` stays from an earlier run.
 4. The driver lock is free. The test skips on a manual hold, a live driver's pid, a borrowed hold, or a bad lock file.
 5. Nobody used the Mac for the idle buffer (20 s). It waits up to 90 s, then checks items 1-4 again.
@@ -96,8 +96,8 @@ What it does (design part 18, run steps 1-8):
 3. It loads the Spoon with `dofile` as `__eyeshands_test`, on the port `eyeshands-test-<random>`. The driver lock is its `hold_file`. It has no hotkey and no menu bar item. The test never calls `hs.loadSpoon` or `hs.reload()`, and never writes in `~/.hammerspoon`.
 4. It starts a throwaway Chrome with a temporary profile and no debugging port. It finds that Chrome by its profile path, never by app name.
 5. An `eyeshands session` arms `eh-live-test`. Its first hands call takes the hands lease, and the lease takes the driver lock with the session's pid. The test checks the lock file.
-6. It fills every field, uploads the file through the native dialog, and compares the eyes (AX) with the page (DOM). The page must see only trusted events, and a mouse move before every click.
-7. One untagged 1-point nudge must stop the hands. `hands_resume` must refuse `present` until the idle buffer passes.
+6. It waits up to 10 s for the page's web content (a new Chrome profile can be slow to show it to the eyes). Then it fills every field, uploads the file through the native dialog, and compares the eyes (AX) with the page (DOM). The page must see only trusted events, and a mouse move before every click.
+7. One 1-point nudge must stop the hands. `hands_resume` must refuse `present` until the idle buffer passes. The nudge carries a test tag that is new for each run. The test registers that tag with `harness.addEventTag` before it makes anything. The awake watcher then takes the nudge for machine input, so the nudge cannot lock the screen in away mode. The Spoon does not know the tag, so its hands still take the nudge for a person.
 8. A fake detector in the test's own namespace must give `foreign_hands`. The stop command must end the job, disarm the owner and remove the driver lock.
 9. It measures whether posted events reset `hs.host.idleTime()` (in the report: `measured`).
 
@@ -105,12 +105,13 @@ Outcomes: `pass`; a skip for a precondition; `fail`; or `inconclusive`, a skip w
 
 Clean-up. A `finally` step runs in every case and touches only what the run made:
 - It aborts the job and closes the session, so the owner disarms.
+- It removes the run's test tag with `harness.removeEventTag`, also when a step failed.
 - It unloads `__eyeshands_test` and checks that the global is gone and the port is closed. When the running Spoon had its event tag registered with the harness, the unload registers it again.
 - It removes the driver lock only when the file still holds the run's exact entry. It never touches a manual, borrowed or foreign hold.
 - It quits the throwaway Chrome by its pid, only while that pid still runs with the run's profile. Then it deletes the temporary folder.
 - It compares `jobhunt.info()` from before and after the run, and fails when it changed.
 
-After a crash, the lock names a dead pid, so the next taker treats it as stale. To unload a test Spoon that a crash left, run this:
+After a crash, the lock names a dead pid, so the next taker treats it as stale. A test tag that a crash leaves registered matches no other tool's events, and the next Hammerspoon reload clears it. To unload a test Spoon that a crash left, run this:
 ```sh
 hs -c '__eyeshands_test:stop(); __eyeshands_test = nil; if spoon and spoon.EyesHands and harness then harness.addEventTag(spoon.EyesHands.EVENT_TAG) end'
 ```

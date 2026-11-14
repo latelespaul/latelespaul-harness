@@ -5,8 +5,8 @@
 //
 // What it touches, and nothing else: Hammerspoon through `hs -c` (the read-only probe, the test
 // Spoon under the global __eyeshands_test on its own port eyeshands-test-<random>, the fake
-// detector __eyeshands_test_detector, one untagged 1-point mouse nudge), a Chrome started with a
-// temporary --user-data-dir, and a temporary folder. It never calls hs.loadSpoon or hs.reload(),
+// detector __eyeshands_test_detector, the run's test tag in harness.addEventTag, one 1-point mouse
+// nudge with that tag), a Chrome started with a temporary --user-data-dir, and a temporary folder. It never calls hs.loadSpoon or hs.reload(),
 // never writes in ~/.hammerspoon, and never touches job-hunt, its lock or the real ports.
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -36,7 +36,8 @@ function run(file, args, { timeout = 15000, input } = {}) {
     const child = execFile(file, args, { timeout, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, missing: err?.code === 'ENOENT', stdout, stderr });
     });
-    if (input !== undefined) child.stdin.end(input);
+    // Always close stdin: `hs -c` waits on an open stdin pipe and never answers.
+    child.stdin.end(input);
   });
 }
 const firstFile = list => list.find(p => p && existsSync(p));
@@ -57,6 +58,16 @@ export function realWorld(env = process.env) {
     try { return JSON.parse(out); } catch { throw new Error(`hs -c gave no JSON: ${out.slice(0, 300)}`); }
   };
   const ps = async args => (await run('/bin/ps', args)).stdout;
+  const tagInt = tag => {
+    if (!Number.isInteger(tag) || tag <= 0 || tag > 0x7fffffff) throw new Error(`not a test tag: ${tag}`);
+    return String(tag);
+  };
+  // harness.addEventTag or removeEventTag: { ok, why }.
+  const tagCall = (name, tag) => hsJson(`local h = rawget(_G, "harness")
+      local f = type(h) == "table" and rawget(h, ${lua(name)})
+      if type(f) ~= "function" then return hs.json.encode({ ok = false, why = "no harness.${name}" }) end
+      local ok, why = f(${tagInt(tag)})
+      return hs.json.encode({ ok = ok == true, why = why })`);
 
   return {
     env,
@@ -112,9 +123,17 @@ export function realWorld(env = process.env) {
     portOpen: async port => (await run(EYESHANDS, ['--port', port, '--timeout', '3', 'status'])).code !== 3,
     testStatus: () => hsJson(`local t = rawget(_G, ${lua(GLOBAL)}); return hs.json.encode(t and t:status() or { running = false })`),
     setDetector: on => hs(`${DETECTOR} = ${on ? '{ hands = { status = function() return { armed = true } end } }' : 'nil'}; return "ok"`),
-    // One untagged mouse move of 1 point: a stand-in for a person touching the mouse.
-    nudge: () => hs(`local p = hs.mouse.absolutePosition()
-      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = p.x + 1, y = p.y }):post(); return "ok"`),
+    // The run's test tag: 24 random bits (live-lib.mjs testTagFrom puts them under its base).
+    random24: async () => randomBytes(3).readUIntBE(0, 3),
+    addEventTag: tag => tagCall('addEventTag', tag),
+    removeEventTag: tag => tagCall('removeEventTag', tag),
+    // One mouse move of 1 point: a stand-in for a person touching the mouse. It carries the run's
+    // test tag (registered with the harness, so the awake watcher takes it for machine input); the
+    // Spoon does not know that tag, so its hands still take it for a person. No tag: untagged.
+    nudge: tag => hs(`local p = hs.mouse.absolutePosition()
+      local e = hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = p.x + 1, y = p.y })
+      ${tag == null ? '' : `e:setProperty(hs.eventtap.event.properties.eventSourceUserData, ${tagInt(tag)})`}
+      e:post(); return "ok"`),
     releaseAwake: who => hs(`local h = rawget(_G, "harness")
       if type(h) == "table" and type(rawget(h, "awake")) == "function" then h.awake(false, { owner = ${lua(who)} }) end; return "ok"`),
 

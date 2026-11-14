@@ -2,7 +2,8 @@
 // The live fixture test (test/live.test.mjs, design part 18) checked offline: the fixture server and
 // form, the gate (EYESHANDS_LIVE=1, never CI), the preconditions and their skip reasons (the driver
 // hold file with a manual or live hold, job-hunt, the harness port, hcron GUI jobs, the running
-// Spoon), the clean-up in its finally, a whole run against a fake world, and the read-only probe
+// Spoon), the run's test tag on the takeover nudge (registered for the run, removed in the clean-up),
+// awake mode away (no skip), the clean-up in its finally, a whole run against a fake world, and the read-only probe
 // under a plain Lua 5.4 with a fake hs. Also checks that a default run of test/live.test.mjs skips
 // before it starts any process.
 // The probe test needs Lua 5.4 (LUA=..., `lua5.4`, `lua`, or Homebrew's lua@5.4); it skips without it.
@@ -17,8 +18,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFixture } from './test/fixture-server.mjs';
 import {
-  DETECTOR, FILL, GLOBAL, OWNER, SELECT, Skip, UPLOAD, WHO, cleanup, compareFill, eventProblems, gate, guiJobsRunning,
-  holdFileFrom, holdReason, judge, lockIsOurs, preflight, runLive,
+  DETECTOR, EVENT_TAG, FILL, GLOBAL, OWNER, SELECT, Skip, TEST_TAG_BASE, UPLOAD, WHO, cleanup, compareFill, eventProblems,
+  WEB_CONTENT_WAIT_MS, gate, guiJobsRunning, holdFileFrom, holdReason, judge, lockIsOurs, preflight, runLive, testTagFrom,
 } from './test/live-lib.mjs';
 import { lua } from './test/live-world.mjs';
 
@@ -227,7 +228,7 @@ test('judge: each precondition in order, with its reason; a clean probe passes',
     [goodProbe({ grants: { accessibility: true, screen_recording: false } }), /no Screen Recording/],
     [goodProbe({ session: { locked: true } }), /screen is locked/],
     [goodProbe({ session: { on_console: false } }), /not on the console/],
-    [goodProbe({ awake: { on: true, mode: 'away' } }), /awake mode is away/],
+    [goodProbe({ awake: { on: true, mode: 'present' }, add_event_tag: false }), /no addEventTag/],
     [goodProbe({ foreign: ['jobhunt'] }), /job-hunt holds its hands/],
     [goodProbe({ foreign: ['harness:harness-session'] }), /harness port has an armed hands owner \(harness:harness-session\)/],
     [goodProbe({ foreign: ['otherdriver'] }), /another driver holds hands/],
@@ -241,6 +242,8 @@ test('judge: each precondition in order, with its reason; a clean probe passes',
   for (const [probe, want] of cases) assert.match(judge(probe, opts), want, JSON.stringify(probe));
   assert.match(judge(goodProbe(), { hcron: '  jh  * * * * *  any time  next x  RUNNING pid 5 since 1s ago  needs gui', holdFile: '/l' }), /hcron runs a --needs gui job \(jh\)/);
   assert.equal(judge(goodProbe({ awake: { on: true, mode: 'present' } }), opts), null, 'awake mode present is fine');
+  assert.equal(judge(goodProbe({ awake: { on: true, mode: 'away', owners: ['x'] } }), opts), null, 'awake mode away is fine: the nudge carries a registered tag');
+  assert.equal(judge(goodProbe({ awake: undefined, add_event_tag: false }), opts), null, 'no harness awake mode: no tag needed');
   assert.equal(judge(goodProbe({ production: { running: false } }), opts), null);
   // job-hunt wins over a held lock: the first failing check names the reason.
   assert.match(judge(goodProbe({ foreign: ['jobhunt'], hold: { configured: true, held: true, kind: 'manual' } }), opts), /job-hunt/);
@@ -254,7 +257,7 @@ function fakeWorld(over = {}) {
   const calls = [];
   const files = new Map();
   const st = { t: 1_800_000_000_000, idle: 30, armed: false, lease: false, interrupted: false, presentUntil: 0, detector: false,
-    job: 0, jobs: new Map(), alive: new Set(), loaded: false, fxClosed: false, rm: [], probe: goodProbe() };
+    job: 0, jobs: new Map(), alive: new Set(), loaded: false, fxClosed: false, rm: [], probe: goodProbe(), tags: new Set() };
   const SESSION_PID = 5151;
   const record = (name, ...a) => calls.push([name, ...a]);
   const fieldsOk = () => [
@@ -335,8 +338,12 @@ function fakeWorld(over = {}) {
     portOpen: async () => st.loaded,
     testStatus: async () => ({ running: true, hands: { lease: st.lease ? OWNER : false, busy: false } }),
     setDetector: async on => { record('setDetector', on); st.detector = on; },
-    nudge: async () => {
-      record('nudge');
+    random24: async () => 0xabcdef,
+    addEventTag: async tag => { record('addEventTag', tag); st.tags.add(tag); return { ok: true }; },
+    removeEventTag: async tag => { record('removeEventTag', tag); st.tags.delete(tag); return { ok: true }; },
+    // The harness's view: the nudge's tag is machine input only while it is registered.
+    nudge: async tag => {
+      record('nudge', tag, tag != null && st.tags.has(tag));
       for (const j of st.jobs.values()) if (j.state === 'running') j.state = 'interrupted';
       st.interrupted = true;
       st.presentUntil = st.t + 20000;
@@ -391,6 +398,94 @@ test('runLive: a whole run against a fake world passes, takes the driver lock an
   assert.ok(f.calls.some(c => c[0] === 'log' && /Hands off the mouse and keyboard/.test(c[1])));
 });
 
+test('runLive: the nudge carries the run\'s test tag, registered for the run and removed in the clean-up', async () => {
+  const f = fakeWorld();
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'pass', JSON.stringify(out));
+  const tag = testTagFrom(0xabcdef);
+  assert.equal(tag, TEST_TAG_BASE + 0xabcdef);
+  assert.notEqual(tag, EVENT_TAG, 'never the Spoon\'s own tag');
+  assert.notEqual(tag, 0x484e, 'never harness.EVENT_TAG');
+  assert.notEqual(tag, 0x4a484844, 'never job-hunt\'s tag');
+  assert.deepEqual(f.calls.filter(c => c[0] === 'nudge'), [['nudge', tag, true]], 'one nudge, with the tag registered at that time');
+  assert.deepEqual(f.calls.filter(c => c[0] === 'addEventTag'), [['addEventTag', tag]]);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'removeEventTag'), [['removeEventTag', tag]]);
+  assert.equal(f.st.tags.size, 0, 'the clean-up removed the test tag');
+  const n = f.names();
+  assert.ok(n.indexOf('addEventTag') < n.indexOf('mkTemp'), 'registered before the run makes anything');
+  assert.ok(n.indexOf('nudge') < n.indexOf('removeEventTag'));
+  assert.ok(n.indexOf('removeEventTag') < n.indexOf('unloadSpoon'));
+  // With no harness (no awake mode, no addEventTag), the nudge goes untagged and nothing is registered.
+  const g = fakeWorld();
+  g.st.probe = goodProbe({ awake: undefined, add_event_tag: false });
+  assert.equal((await runLive(g.world)).status, 'pass');
+  assert.deepEqual(g.calls.filter(c => c[0] === 'nudge'), [['nudge', undefined, false]]);
+  assert.ok(!g.names().includes('addEventTag') && !g.names().includes('removeEventTag'));
+});
+
+test('runLive: the test tag is removed in the clean-up when a step throws, and when the add itself fails', async () => {
+  // A step throws after the tag was registered (the takeover's typing job).
+  let f = fakeWorld();
+  const call = f.session.call;
+  let nudged = false;
+  const nudge = f.world.nudge;
+  f.world.nudge = async tag => { nudged = true; return nudge(tag); };
+  f.session.call = async (cmd, args) => {
+    if (nudged && cmd === 'eh.hands.job') throw new Error('port gone');
+    return call(cmd, args);
+  };
+  let out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /port gone/);
+  assert.equal(f.st.tags.size, 0);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'removeEventTag'), [['removeEventTag', testTagFrom(0xabcdef)]]);
+  assert.ok(f.names().includes('unloadSpoon'));
+
+  // An early failure (the Spoon does not load) still removes it.
+  f = fakeWorld({ loadSpoon: async () => { throw new Error('boom'); } });
+  out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.equal(f.st.tags.size, 0);
+  assert.ok(f.names().includes('removeEventTag'));
+
+  // The add throws half-way: the remove still runs, and the run fails.
+  f = fakeWorld({ addEventTag: async tag => { f.st.tags.add(tag); throw new Error('hs -c failed'); } });
+  out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /hs -c failed/);
+  assert.equal(f.st.tags.size, 0);
+  assert.ok(!f.names().includes('mkTemp'));
+
+  // The harness refuses the tag: a skip that makes nothing (the remove is harmless).
+  f = fakeWorld({ addEventTag: async () => ({ ok: false, why: 'event tag must be an integer' }) });
+  out = await runLive(f.world);
+  assert.equal(out.status, 'skip');
+  assert.match(out.reason, /addEventTag refused the test tag: event tag must be an integer/);
+  assert.ok(!f.names().includes('mkTemp') && !f.names().includes('loadSpoon'));
+
+  // A refused remove is a clean-up problem: the run fails with it.
+  f = fakeWorld({ removeEventTag: async () => ({ ok: false, why: 'no harness.removeEventTag' }) });
+  out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.ok(out.problems.some(p => /clean-up tag: harness.removeEventTag refused the test tag: no harness.removeEventTag/.test(p)), out.problems.join('\n'));
+});
+
+test('runLive: awake mode away no longer skips, before or during the run', async () => {
+  let f = fakeWorld();
+  f.st.probe = goodProbe({ awake: { on: true, mode: 'away', owners: ['eh-live-test'] } });
+  let out = await runLive(f.world);
+  assert.equal(out.status, 'pass', JSON.stringify(out));
+  assert.deepEqual(f.calls.filter(c => c[0] === 'nudge'), [['nudge', testTagFrom(0xabcdef), true]]);
+
+  // Awake mode switches to away mid-run (nobody touched the Mac for 5 min): the run goes on.
+  f = fakeWorld();
+  const nudge = f.world.nudge;
+  f.world.nudge = async tag => { f.st.probe = goodProbe({ awake: { on: true, mode: 'away', owners: ['x'] } }); return nudge(tag); };
+  out = await runLive(f.world);
+  assert.equal(out.status, 'pass', JSON.stringify(out));
+  assert.equal(out.measured.present_refusal, true, 'the takeover was still exercised');
+});
+
 test('runLive: a precondition skip touches nothing (no folder, Spoon, Chrome or session)', async () => {
   const f = fakeWorld();
   f.st.probe = goodProbe({ hold: { configured: true, held: true, kind: 'manual', who: 'me', until: '2026-11-14T12:00:00Z' } });
@@ -399,7 +494,7 @@ test('runLive: a precondition skip touches nothing (no folder, Spoon, Chrome or 
   assert.match(out.reason, /manual hold \(me\)/);
   assert.deepEqual(out.problems, []);
   const n = f.names();
-  for (const name of ['mkTemp', 'loadSpoon', 'unloadSpoon', 'startChrome', 'openSession', 'kill', 'rmTemp', 'setDetector', 'startFixture']) {
+  for (const name of ['addEventTag', 'removeEventTag', 'mkTemp', 'loadSpoon', 'unloadSpoon', 'startChrome', 'openSession', 'kill', 'rmTemp', 'setDetector', 'startFixture']) {
     assert.ok(!n.includes(name), `${name} after a skip`);
   }
 });
@@ -459,6 +554,63 @@ test('runLive: job-hunt arming during the run aborts the job, ends inconclusive 
   assert.ok(f.names().includes('unloadSpoon'));
   assert.ok(f.names().includes('session.close'));
   assert.deepEqual(f.st.rm, ['/tmp/eh-live-x']);
+});
+
+// A fresh Chrome profile: the eyes say no_web_content for the first `misses` fields calls.
+function slowWebContent(f, misses) {
+  const call = f.session.call;
+  let left = misses;
+  const seen = [];
+  f.session.call = async (cmd, args) => {
+    if (cmd === 'eh.eyes.fields' && left > 0) {
+      left -= 1;
+      seen.push(f.st.t);
+      return { ok: true, result: { ok: false, reason: 'no_web_content', hint: 'no AXWebArea yet' } };
+    }
+    return call(cmd, args);
+  };
+  return seen;
+}
+
+test('runLive: the first fill waits for the web content of a fresh Chrome, then passes', async () => {
+  const f = fakeWorld();
+  const seen = slowWebContent(f, 6);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'pass', JSON.stringify(out));
+  assert.equal(seen.length, 6);
+  assert.ok(seen.at(-1) - seen[0] < WEB_CONTENT_WAIT_MS, 'the retries stay inside the wait');
+  // The wait ends before the first click of the fill.
+  const cmds = f.calls.filter(c => c[0] === 'call').map(c => c[1]);
+  assert.ok(cmds.lastIndexOf('eh.eyes.fields', cmds.indexOf('eh.hands.click')) > cmds.indexOf('eh.hands.focus'));
+  assert.deepEqual(out.problems, []);
+});
+
+test('runLive: no web content after the wait fails with no_web_content and clicks nothing', async () => {
+  const f = fakeWorld();
+  const seen = slowWebContent(f, Infinity);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /^eyes fields: no_web_content: no AXWebArea yet/);
+  assert.ok(seen.length > 1, 'it retried');
+  assert.ok(seen.at(-1) - seen[0] >= WEB_CONTENT_WAIT_MS, 'it gave up only after the wait');
+  assert.ok(seen.at(-1) - seen[0] < WEB_CONTENT_WAIT_MS + 1000, 'and not much later');
+  assert.ok(!f.calls.some(c => c[0] === 'call' && c[1] === 'eh.hands.click'));
+  assert.deepEqual(out.problems, [], 'the clean-up still ran');
+  assert.ok(f.names().includes('session.close'));
+});
+
+test('runLive: another eyes refusal before the fill is not waited on', async () => {
+  const f = fakeWorld();
+  const call = f.session.call;
+  let n = 0;
+  f.session.call = async (cmd, args) => {
+    if (cmd === 'eh.eyes.fields') { n += 1; return { ok: true, result: { ok: false, reason: 'not_running' } }; }
+    return call(cmd, args);
+  };
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /eyes fields: not_running/);
+  assert.equal(n, 2, 'one call from the wait, one from the fill');
 });
 
 test('runLive: a real takeover during the fill ends inconclusive, not failed', async () => {

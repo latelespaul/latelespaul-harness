@@ -11,11 +11,14 @@
 //   - every precondition is checked and skips with its reason; nothing is forced;
 //   - the driver lock: the hold file must be configured and free (no manual hold, no live driver);
 //     the test Spoon gets it as hold_file, so its hands lease takes the lock with the session's pid;
+//   - the takeover nudge carries the run's own test tag, registered with harness.addEventTag for the
+//     run: the awake watcher takes it for machine input (so it cannot lock the screen in away mode),
+//     while the Spoon's guards do not know it and still take it for a person;
 //   - job-hunt arming during the run aborts the job at once and ends the run as inconclusive, and so
 //     does a takeover the test did not make (a real person);
 //   - the clean-up runs in every case and only touches what the run made: its session, its Spoon
-//     global, its lock entry (exact pid, who and since), its Chrome (by pid, checked against its
-//     profile path) and its temporary folder.
+//     global, its test tag, its lock entry (exact pid, who and since), its Chrome (by pid, checked
+//     against its profile path) and its temporary folder.
 export const OWNER = 'eh-live-test';
 export const TARGET = 'chrome-test';
 export const GLOBAL = '__eyeshands_test';
@@ -23,6 +26,10 @@ export const DETECTOR = '__eyeshands_test_detector';
 export const WHO = `eyeshands-${OWNER}`;
 export const EVENT_TAG = 0x45484e44;
 export const IDLE_BUFFER_S = 20;
+// The run's test tag: "T" in the top byte and 24 random bits. It is none of the machine tags the
+// Spoon knows (its own EVENT_TAG, harness.EVENT_TAG, job-hunt's), so the hands see a person.
+export const TEST_TAG_BASE = 0x54000000;
+export const testTagFrom = n => TEST_TAG_BASE + ((Number(n) >>> 0) & 0xffffff);
 
 export class Skip extends Error {}
 export class Inconclusive extends Error {}
@@ -81,7 +88,7 @@ export function judge(probe, { hcron, holdFile } = {}) {
   if (probe.grants.screen_recording === false) return 'Hammerspoon has no Screen Recording grant';
   if (probe.session?.locked) return 'the screen is locked';
   if (probe.session?.on_console === false) return 'the session is not on the console';
-  if (probe.awake?.on && probe.awake.mode === 'away') return 'awake mode is away: an untagged test event would lock the screen';
+  if (probe.awake && probe.add_event_tag !== true) return 'the harness has awake mode but no addEventTag: the test nudge would count as a person and could lock the screen';
   const foreign = list(probe.foreign);
   if (foreign.includes('jobhunt')) return 'job-hunt holds its hands (armed or busy); never run next to it';
   const port = foreign.filter(n => String(n).startsWith('harness:'));
@@ -251,6 +258,20 @@ function driver(w, st) {
   return { watch, call, act, fields, clickField };
 }
 
+// A brand-new Chrome profile can take a few seconds to show its web area to the eyes after
+// AXManualAccessibility goes on: poll the fields until they stop saying no_web_content.
+export const WEB_CONTENT_WAIT_MS = 10000;
+export async function waitWebContent(w, d, { timeoutMs = WEB_CONTENT_WAIT_MS, everyMs = 500 } = {}) {
+  const end = w.now() + timeoutMs;
+  for (;;) {
+    await d.watch();
+    const res = await d.call('eh.eyes.fields', { target: TARGET });
+    if (res.ok !== false || res.reason !== 'no_web_content') return res;
+    if (w.now() >= end) throw new Error(`eyes fields: ${res.reason}: ${res.hint || ''}`);
+    await sleepFor(w, everyMs);
+  }
+}
+
 async function fillForm(w, st, d) {
   for (const id of Object.keys(FILL)) {
     await d.clickField(id);
@@ -296,17 +317,15 @@ async function measureIdle(w, st, d) {
   st.measured.tagged_resets_idle = Number(p.idle_s) < 2;
 }
 
-// Step 6: one untagged nudge stops the hands; the next call is refused; resume only after the
+// Step 6: one nudge with the run's test tag (a person to the hands) stops the hands; the next call is refused; resume only after the
 // present rule passes.
 async function takeover(w, st, d, buffer) {
-  const p = await w.probe(null);
-  if (p?.awake?.on && p.awake.mode === 'away') throw new Inconclusive('inconclusive: awake mode went away (a nudge would lock the screen)');
   await d.clickField('notes');
   await d.watch();
   const started = await d.call('eh.hands.type', { target: TARGET, text: ' The quick brown fox jumps over the lazy dog.'.repeat(4), paste: false });
   if (started.state !== 'running') throw new Error(`takeover: the typing job did not start: ${JSON.stringify(started)}`);
   await sleepFor(w, 500);
-  await w.nudge();
+  await w.nudge(st.testTag);
   const q = await w.probe(null);
   st.measured.idle_after_untagged_s = Number(q.idle_s);
   st.measured.untagged_resets_idle = Number(q.idle_s) < 2;
@@ -373,6 +392,15 @@ async function body(w, st, opts) {
   st.jobhuntBefore = pre.probe.jobhunt?.info ?? null;
   st.restoreTag = !!(pre.probe.production?.running && pre.probe.production.tag_registered);
 
+  // The run's test tag counts as machine input for the harness until the clean-up removes it. With
+  // no harness addEventTag there is no awake watcher either (judge skips otherwise): the nudge goes
+  // untagged.
+  if (pre.probe.add_event_tag) {
+    st.testTag = testTagFrom(await w.random24());   // set first: an add that fails half-way is still removed
+    const added = await w.addEventTag(st.testTag);
+    if (!added || added.ok !== true) throw new Skip(`harness.addEventTag refused the test tag: ${added?.why || JSON.stringify(added)}`);
+  }
+
   // 1. A temporary folder with an access file, a targets file and the file to upload.
   st.dir = await w.mkTemp();
   st.profile = `${st.dir}/chrome-profile`;
@@ -421,6 +449,7 @@ async function body(w, st, opts) {
   st.measured.driver_lock = true;
   await sleepFor(w, 600);
 
+  await waitWebContent(w, d);
   await fillForm(w, st, d);             // 5
   await measureIdle(w, st, d);          // 8
   await takeover(w, st, d, opts.buffer); // 6
@@ -429,7 +458,7 @@ async function body(w, st, opts) {
 
 // ---------- abort and clean-up ----------
 // Undoes what the run made, every step in its own try, in this order: the session (abort, then
-// disarm by closing it), the fake detector, the Spoon (unload, then check the global is gone and
+// disarm by closing it), the fake detector, the test tag (harness.removeEventTag), the Spoon (unload, then check the global is gone and
 // the port closed), a left awake hold, a left lock entry (only the run's exact entry), the throwaway
 // Chrome (by pid, only while its command line still names the run's profile), the fixture server,
 // the temporary folder, and last the jobhunt.info() check. Returns the problems it found.
@@ -444,6 +473,11 @@ export async function cleanup(w, st) {
     await st.session.close();
   });
   await step('detector', async () => { if (st.loaded || st.detectorOn) await w.setDetector(false); });
+  await step('tag', async () => {
+    if (st.testTag == null) return;
+    const r = await w.removeEventTag(st.testTag);
+    if (!r || r.ok !== true) throw new Error(`harness.removeEventTag refused the test tag: ${r?.why || JSON.stringify(r)}`);
+  });
   await step('spoon', async () => {
     if (!st.loaded) return;
     const r = await w.unloadSpoon({ restoreTag: st.restoreTag });
