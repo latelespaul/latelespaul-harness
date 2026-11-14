@@ -52,6 +52,17 @@ to the full harness path when you add the job:
 hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stall-watch.sh" --timeout 2m
 ```
 
+## Alerts to the master session
+
+The user may not want every alert. Create `<profile>/telegram/ALERTS_TO_MASTER` (an empty file) to
+send them to the master session instead. Then `modules/cron/tg-notify.py` (used by hcron, the stall
+watch, the Hammerspoon awake guard and the Eyes & Hands loader) appends each alert to
+`<profile>/logs/master-alerts.log` while the master session's screen (`claude-tg`) runs. The master
+session watches that file, fixes what it can and tells the user only about real blockers. If the
+master session is down, the alert goes to Telegram as before, marked "(master session down)".
+`TG_NOTIFY_DIRECT=1` always sends. The Telegram watchdog and the morning brief send on their own and
+are not affected.
+
 **Warnings**
 - A process can sit in the stopped state (`ps` shows `T`) and look "running" for hours. When a run
   is far over its usual time, check `ps -o stat` and send `SIGCONT` before `SIGTERM`.
