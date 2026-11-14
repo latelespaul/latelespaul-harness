@@ -1,0 +1,39 @@
+# Builds the unsigned Eyes & Hands disk image and the Spoon zip (docs/eyes-hands-design.md part 16, options E and H)
+# on a macOS runner, and keeps both as workflow artifacts. The build downloads the pinned Hammerspoon release,
+# checks its SHA-256, its signature (codesign) and its notarization (spctl), and fails on any mismatch.
+# No release is published and no signing secret is used.
+name: package
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the disk image and the Spoon zip
+        run: modules/eyeshands/packaging/build-dmg.sh --out dist
+      - name: Show the image contents
+        run: |
+          cat dist/SHA256SUMS
+          hdiutil imageinfo dist/EyesHands.dmg | grep -E '^(Format|Format Description):'
+          unzip -l dist/EyesHands.spoon.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyesHands-dmg
+          path: |
+            dist/EyesHands.dmg
+            dist/EyesHands.spoon.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
