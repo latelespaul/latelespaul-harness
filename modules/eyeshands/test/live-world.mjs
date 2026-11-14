@@ -36,7 +36,8 @@ function run(file, args, { timeout = 15000, input } = {}) {
     const child = execFile(file, args, { timeout, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, missing: err?.code === 'ENOENT', stdout, stderr });
     });
-    if (input !== undefined) child.stdin.end(input);
+    // Always close stdin: `hs -c` waits on an open stdin pipe and never answers.
+    child.stdin.end(input);
   });
 }
 const firstFile = list => list.find(p => p && existsSync(p));
