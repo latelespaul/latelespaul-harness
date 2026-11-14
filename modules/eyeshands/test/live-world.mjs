@@ -45,8 +45,8 @@ const firstFile = list => list.find(p => p && existsSync(p));
 const hasProfile = (command, profile) => String(command).split(/\s+/).includes(`--user-data-dir=${profile}`);
 
 export function realWorld(env = process.env) {
-  const HS = env.EYESHANDS_HS || firstFile(['/opt/homebrew/bin/hs', '/usr/local/bin/hs']) || 'hs';
-  const HCRON = env.HCRON_BIN || firstFile([join(homedir(), '.local/bin/hcron')]) || 'hcron';
+  const HS = firstFile(['/opt/homebrew/bin/hs', '/usr/local/bin/hs']) || 'hs';
+  const HCRON = firstFile([join(homedir(), '.local/bin/hcron')]) || 'hcron';
   const hs = async (code, timeout = 10000) => {
     const r = await run(HS, ['-c', code], { timeout });
     if (r.code !== 0) throw new Error(`hs -c failed (${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 300)}`);

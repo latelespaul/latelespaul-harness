@@ -8,10 +8,9 @@
 //   EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=<driver lock> awake run eh-live-test -- \
 //     node --test modules/eyeshands/test/live.test.mjs
 //
-// Optional: EYESHANDS_LIVE_REPORT=<file> writes the outcome and the measurements as JSON;
-// EYESHANDS_HS and HCRON_BIN name the hs and hcron commands. How and when: SETUP.md, "Live fixture
-// test". The logic is live-lib.mjs (offline tests: ../live-offline.test.mjs); the real calls are
-// live-world.mjs.
+// Optional: EYESHANDS_LIVE_REPORT=<file> writes the outcome and the measurements as JSON. How and
+// when: SETUP.md, "Live fixture test". The logic is live-lib.mjs (offline tests:
+// ../live-offline.test.mjs); the real calls are live-world.mjs.
 import test from 'node:test';
 import { writeFileSync } from 'node:fs';
 import { gate } from './live-lib.mjs';

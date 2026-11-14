@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFixture } from './test/fixture-server.mjs';
@@ -70,22 +71,72 @@ test('fixture server: serves the form on 127.0.0.1 only, keeps the newest report
   }
 });
 
-test('fixture form: every field kind of part 18, an event log, and no external resource', () => {
-  const html = readFileSync(here('./test/fixture/form.html'), 'utf8');
-  for (const id of ['name', 'accented', 'email', 'city', 'size', 'notes', 'long', 'contact-mail', 'contact-phone', 'agree', 'upload', 'log']) {
-    assert.match(html, new RegExp(`id="${id}"`), id);
+// Runs the page's own script against a small fake DOM in a vm and lets it POST to the real fixture
+// server, so the report the server keeps is the one the live test compares (compareFill, eventProblems).
+function fakePage(fx) {
+  const els = new Map();
+  const el = id => {
+    if (!els.has(id)) els.set(id, { id, tagName: 'INPUT', value: '', checked: false, files: [], scrollTop: 0, scrollHeight: 0, appendChild() {} });
+    return els.get(id);
+  };
+  const listeners = {};
+  const document = {
+    getElementById: el,
+    createElement: tag => ({ tagName: tag.toUpperCase(), textContent: '' }),
+    querySelector: sel => (sel === 'input[name=contact]:checked'
+      ? ['contact-mail', 'contact-phone'].map(el).find(e => e.checked) || null : null),
+    addEventListener: (type, fn, capture) => { assert.equal(capture, true); (listeners[type] ||= []).push(fn); },
+  };
+  const fire = (type, id, isTrusted = true) => {
+    for (const fn of listeners[type] || []) fn({ type, isTrusted, target: id === 'document' ? document : el(id) });
+  };
+  const fetch = (path, init) => globalThis.fetch(new URL(path, fx.url), init);
+  return { el, fire, listeners, sandbox: { document, fetch, setTimeout, JSON } };
+}
+
+test('fixture form: its script reports every field, the radio, the box, the file and a trusted event log', async () => {
+  const fx = await startFixture();
+  try {
+    const html = (await http(fx.url)).text;
+    const script = html.slice(html.indexOf('<script>') + '<script>'.length, html.indexOf('</script>'));
+    const page = fakePage(fx);
+    runInNewContext(script, page.sandbox);
+    for (const t of ['mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change', 'focusin']) {
+      assert.ok(page.listeners[t]?.length, `listens for ${t}`);
+    }
+    const first = await fx.waitFor(r => r.seq === 1, 2000);
+    assert.ok(first, 'the page reports once on load');
+    assert.deepEqual(first.log, []);
+
+    for (const [id, v] of Object.entries(FILL)) page.el(id).value = v;
+    page.el(SELECT.id).value = SELECT.value;
+    page.el('contact-mail').value = 'mail';
+    page.el('contact-phone').value = 'phone';
+    page.el('contact-phone').checked = true;
+    page.el('agree').checked = true;
+    page.el('upload').files = [{ name: UPLOAD.name, size: Buffer.byteLength(UPLOAD.text) }];
+    page.fire('mousemove', 'document');
+    page.fire('mousemove', 'name');
+    page.fire('mousedown', 'name');
+    page.fire('mouseup', 'name');
+    page.fire('input', 'name');
+
+    const r = await fx.waitFor(x => x.seq >= 2, 2000);
+    assert.ok(r, 'a change sends a new report');
+    const ax = [
+      ...[...Object.keys(FILL), SELECT.id].map(id => ({ dom: id, value: r.values[id] })),
+      { dom: 'contact-phone', checked: true }, { dom: 'agree', checked: true },
+    ];
+    assert.deepEqual(compareFill(r, ax), []);
+    assert.deepEqual(r.log.map(e => [e.type, e.id, e.n]), [['mousemove', 'name', 2], ['mousedown', 'name', 1], ['mouseup', 'name', 1], ['input', 'name', 1]]);
+    assert.deepEqual(eventProblems(r.log), []);
+
+    page.fire('click', 'agree', false);
+    const u = await fx.waitFor(x => x.log.some(e => e.type === 'click'), 2000);
+    assert.deepEqual(eventProblems(u.log), ['an untrusted click on agree']);
+  } finally {
+    await fx.close();
   }
-  assert.match(html, /<input id="city"[^>]*list="cities"/, 'a combo box');
-  assert.match(html, /<datalist id="cities">/);
-  assert.match(html, /<select id="size"/);
-  assert.equal(html.match(/<textarea /g).length, 2, 'two text areas');
-  assert.match(html, /type="radio"/);
-  assert.match(html, /type="checkbox"/);
-  assert.match(html, /type="file"/);
-  assert.match(html, /<option value="medium">Medium<\/option>/);
-  assert.doesNotMatch(html, /(src|href)=["']?(https?:)?\/\//i, 'no external resources');
-  assert.match(html, /isTrusted/);
-  assert.match(html, /fetch\('\/report'/);
 });
 
 // ---------- the gate ----------
@@ -107,7 +158,7 @@ test('a default run of test/live.test.mjs skips and starts no process (no EYESHA
     chmodSync(p, 0o755);
   }
   writeFileSync(log, '');
-  const base = { ...process.env, PATH: `${dir}:${process.env.PATH}`, EYESHANDS_HS: join(dir, 'hs'), HCRON_BIN: join(dir, 'hcron') };
+  const base = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
   delete base.NODE_TEST_CONTEXT;
   delete base.EYESHANDS_LIVE;
   delete base.CI;
