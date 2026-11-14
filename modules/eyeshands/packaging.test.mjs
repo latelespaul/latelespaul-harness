@@ -100,9 +100,10 @@ test('the layout check accepts the expected image layout', { skip }, () => {
   assert.match(r.stdout, /layout of .* is as expected/);
 });
 
-test('the shipped Spoon carries the CLI and the same hsx', { skip }, () => {
+test('the shipped Spoon carries the licence, the CLI and the same hsx', { skip }, () => {
   const spoon = join(fakeStage(), 'EyesHands.spoon');
   assert.ok(existsSync(join(spoon, 'init.lua')));
+  assert.equal(readFileSync(join(spoon, 'LICENSE'), 'utf8'), readFileSync(here('../../LICENSE'), 'utf8'));
   assert.equal(readFileSync(join(spoon, 'bin', 'eyeshands'), 'utf8'), readFileSync(here('./bin/eyeshands'), 'utf8'));
   assert.equal(readFileSync(join(spoon, 'bin', 'hsx'), 'utf8'), readFileSync(here('./bin/hsx'), 'utf8'));
   assert.ok(lstatSync(join(spoon, 'bin', 'eyeshands')).mode & 0o100, 'the CLI is executable');
@@ -119,6 +120,7 @@ for (const [name, change, why] of [
     mkdirSync(join(s, 'Applications'));
   }, /not a link to \/Applications/],
   ['no Read Me page', s => spawnSync('rm', [join(s, PAGE)]), /unexpected top level/],
+  ['a Spoon without its licence', s => spawnSync('rm', [join(s, 'EyesHands.spoon', 'LICENSE')]), /has no LICENSE/],
 ]) {
   test(`the layout check refuses ${name}`, { skip }, () => {
     const stage = fakeStage();

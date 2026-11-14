@@ -4,7 +4,7 @@
 #   build-dmg.sh [--out DIR] [--hammerspoon-zip FILE]   build dist/EyesHands.dmg, dist/EyesHands.spoon.zip, dist/SHA256SUMS
 #   build-dmg.sh --verify-app APP                       check one Hammerspoon.app as the build does
 #   build-dmg.sh --check-layout DIR                     check one staged (or mounted) disk image folder
-#   build-dmg.sh --stage-spoon DEST                     write the shipped Spoon (with bin/eyeshands and bin/hsx) to DEST
+#   build-dmg.sh --stage-spoon DEST                     write the shipped Spoon (with LICENSE, bin/eyeshands and bin/hsx) to DEST
 #
 # The image holds the official, unmodified Hammerspoon.app, EyesHands.spoon (with the CLI in its bin/),
 # an Applications link, "Read Me First.html" (the README as a page) and Licenses/. It holds no unsigned
@@ -70,6 +70,7 @@ check_layout() {
   [ -d "$dir/Licenses" ] && [ -d "$dir/EyesHands.spoon" ] && [ -d "$dir/Hammerspoon.app" ] \
     || die "Licenses, EyesHands.spoon and Hammerspoon.app must be folders"
   [ -f "$dir/EyesHands.spoon/init.lua" ] || die "$dir/EyesHands.spoon has no init.lua"
+  [ -f "$dir/EyesHands.spoon/LICENSE" ] || die "$dir/EyesHands.spoon has no LICENSE"
   # Outside Hammerspoon.app: no app, installer, image or .command script, no link, no binary code.
   bad="$(find "$dir" -mindepth 1 -path "$dir/Hammerspoon.app" -prune -o -path "$dir/Applications" -prune -o \
     \( -iname '*.app' -o -iname '*.pkg' -o -iname '*.mpkg' -o -iname '*.command' -o -iname '*.tool' \
@@ -81,9 +82,10 @@ check_layout() {
   say "layout of $dir is as expected"
 }
 
-stage_spoon() {   # stage_spoon DEST: the Spoon with the CLI and its hsx in bin/
+stage_spoon() {   # stage_spoon DEST: the Spoon with the licence, and the CLI and its hsx in bin/
   local dest="$1"
   ditto --norsrc --noextattr "$MODULE/EyesHands.spoon" "$dest"
+  ditto --norsrc --noextattr "$REPO/LICENSE" "$dest/LICENSE"
   mkdir -p "$dest/bin"
   ditto --norsrc --noextattr "$MODULE/bin/eyeshands" "$dest/bin/eyeshands"
   ditto --norsrc --noextattr "$MODULE/bin/hsx" "$dest/bin/hsx"
