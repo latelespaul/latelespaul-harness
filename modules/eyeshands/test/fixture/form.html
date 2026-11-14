@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  Eyes & Hands live fixture form (design part 18). A generic form with no external resources, served
+  by test/fixture-server.mjs on 127.0.0.1 only. The live test (test/live.test.mjs) fills it with the
+  hands and reads it with the eyes.
+
+  The page reports to the server that served it (POST /report, about every 150 ms after a change):
+  each field's DOM value, the chosen file's name and size, and an event log. Each log entry records
+  the event type, the element id and isTrusted. Runs of mousemove events fold into one entry with a
+  count, so the log stays small. The test compares this report with what the eyes read (AX) and
+  checks that every event was trusted and that the mouse moved before every click.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eyes &amp; Hands fixture form</title>
+<style>
+  body { font: 16px/1.4 -apple-system, system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  label { display: block; margin: 14px 0 4px; }
+  input[type=text], input[type=email], input:not([type]), select, textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 6px; }
+  textarea { height: 64px; }
+  fieldset { margin-top: 14px; }
+  #log { font: 12px/1.3 ui-monospace, monospace; height: 120px; overflow: auto; border: 1px solid #999; padding: 4px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<h1>Fixture form</h1>
+<form id="form" onsubmit="return false">
+  <label for="name">Full name</label>
+  <input id="name" name="name" type="text" autocomplete="off">
+
+  <label for="accented">Accented text</label>
+  <input id="accented" name="accented" type="text" autocomplete="off">
+
+  <label for="email">E-mail</label>
+  <input id="email" name="email" type="email" autocomplete="off">
+
+  <label for="city">City (combo box)</label>
+  <input id="city" name="city" list="cities" autocomplete="off">
+  <datalist id="cities">
+    <option value="Lisbon"></option>
+    <option value="Oslo"></option>
+    <option value="Zürich"></option>
+  </datalist>
+
+  <label for="size">Size</label>
+  <select id="size" name="size">
+    <option value="">Choose a size</option>
+    <option value="small">Small</option>
+    <option value="medium">Medium</option>
+    <option value="large">Large</option>
+  </select>
+
+  <label for="notes">Notes</label>
+  <textarea id="notes" name="notes"></textarea>
+
+  <label for="long">Long text</label>
+  <textarea id="long" name="long"></textarea>
+
+  <fieldset>
+    <legend>Contact by</legend>
+    <label><input type="radio" id="contact-mail" name="contact" value="mail"> Mail</label>
+    <label><input type="radio" id="contact-phone" name="contact" value="phone"> Phone</label>
+  </fieldset>
+
+  <label><input type="checkbox" id="agree" name="agree"> I agree</label>
+
+  <label for="upload">Upload a file</label>
+  <input id="upload" name="upload" type="file">
+</form>
+<div id="log" aria-label="Event log"></div>
+<script>
+(() => {
+  const FIELDS = ['name', 'accented', 'email', 'city', 'size', 'notes', 'long'];
+  const TYPES = ['mousemove', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change', 'focusin'];
+  const log = [];
+  const box = document.getElementById('log');
+  let seq = 0, timer = null;
+
+  function state() {
+    const values = {};
+    for (const id of FIELDS) values[id] = document.getElementById(id).value;
+    const radio = document.querySelector('input[name=contact]:checked');
+    const file = document.getElementById('upload').files[0];
+    return {
+      seq: ++seq,
+      values,
+      contact: radio ? radio.value : null,
+      agree: document.getElementById('agree').checked,
+      file: file ? { name: file.name, size: file.size } : null,
+      log,
+    };
+  }
+  function send() {
+    timer = null;
+    fetch('/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(state()) })
+      .catch(() => {});
+  }
+  function later() { if (!timer) timer = setTimeout(send, 150); }
+  function note(e) {
+    const id = (e.target && e.target.id) || (e.target === document ? 'document' : (e.target && e.target.tagName) || '?');
+    const last = log[log.length - 1];
+    if (e.type === 'mousemove' && last && last.type === 'mousemove') {
+      last.n += 1;
+      last.trusted = last.trusted && e.isTrusted;
+      last.id = id;
+    } else {
+      log.push({ type: e.type, id, trusted: e.isTrusted, n: 1 });
+      const line = document.createElement('div');
+      line.textContent = e.type + ' ' + id + (e.isTrusted ? '' : ' (untrusted)');
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+    later();
+  }
+  for (const t of TYPES) document.addEventListener(t, note, true);
+  send();
+})();
+</script>
+</body>
+</html>

@@ -333,6 +333,18 @@ The build also makes `EyesHands.spoon.zip`, next to the disk image. Unzip it and
 
 A copy of the Spoon does not update with `git pull`. The CLI of a clone needs the clone, because it loads `hsx` from the same folder.
 
+## Test it on a real form (optional)
+
+`modules/eyeshands/test/live.test.mjs` fills a generic test form in a throwaway Chrome with real hands. It also checks takeover, the stop command and the hold file. It runs only when you set `EYESHANDS_LIVE=1`, and never on continuous integration (CI).
+
+WARNING: Run it only when no other program drives the mouse and keyboard. It checks, and it skips when one does.
+
+It needs a hold file, because every live run takes the driver lock:
+```sh
+EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=~/.config/eyeshands/driver.lock node --test modules/eyeshands/test/live.test.mjs
+```
+`SETUP.md` ("Live fixture test") lists what it checks first, what it does and how it cleans up.
+
 ## What to do next
 
 1. Run `eyeshands doctor` until every check passes.

@@ -753,6 +753,9 @@ Preconditions. The test checks each one and skips with the reason. It never forc
 2. The screen is usable, and awake mode is off or present (not away), unless PR 2 is live.
 3. `jobhunt.hands.status()` shows not armed and not busy. The harness port shows no armed owner with `hands`. `hcron status` shows no running `--needs gui` job. The test reads these states only.
 4. Nobody used the Mac for the idle buffer (20 s). The test prints "Hands off the mouse and keyboard for about 60 s" and waits. Thus the present rule runs for real.
+5. The driver lock is configured and free. The lock is `EYESHANDS_HOLD_FILE`, else the running Spoon's `hold_file` (part 10). A manual hold, a live driver's pid, a borrowed hold or a file that cannot be read makes the test skip. The test Spoon gets the lock as its `hold_file`, so its hands lease takes the lock with the session's pid. The test checks the lock file after `hands_focus`.
+
+The test also skips while awake mode is away, even with PR 2 live, because the untagged takeover nudge (run step 6) would lock the screen. The probe that reads these states is `modules/eyeshands/test/live-probe.lua`. It judges the hold file with the Spoon's own `guards.lua`.
 
 Run:
 1. Make a temporary folder with an access file (owner `eh-live-test`, target `chrome-test`) and a targets file.
