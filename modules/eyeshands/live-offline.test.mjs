@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { startFixture } from './test/fixture-server.mjs';
 import {
   DETECTOR, EVENT_TAG, FILL, GLOBAL, OWNER, SELECT, Skip, TEST_TAG_BASE, UPLOAD, WHO, cleanup, compareFill, eventProblems,
-  WEB_CONTENT_WAIT_MS, gate, guiJobsRunning, holdFileFrom, holdReason, judge, lockIsOurs, preflight, runLive, testTagFrom,
+  PORT_RECHECKS, WEB_CONTENT_WAIT_MS, gate, guiJobsRunning, holdFileFrom, holdReason, judge, lockIsOurs, portAnswered, portStillOpen,
+  preflight, runLive, testTagFrom, webSummary,
 } from './test/live-lib.mjs';
 import { lua } from './test/live-world.mjs';
 
@@ -286,6 +287,7 @@ function fakeWorld(over = {}) {
       }
       if (cmd === 'eh.eyes.fields') return ok({ ok: true, fields: fieldsOk() });
       if (cmd === 'eh.eyes.dialog') return ok({ open: true });
+      if (cmd === 'eh.eyes.tree') return ok({ ok: true, target: 'chrome-test', tree: { role: 'AXWindow', title: 'Profile' }, nodes: 1 });
       if (INPUT.has(cmd)) {
         if (st.detector) return ok({ ok: false, reason: 'foreign_hands', by: [DETECTOR] });
         if (st.interrupted || st.t < st.presentUntil) return ok({ ok: false, reason: 'present' });
@@ -336,6 +338,7 @@ function fakeWorld(over = {}) {
     loadSpoon: async cfg => { record('loadSpoon', cfg); st.loaded = true; },
     unloadSpoon: async opts => { record('unloadSpoon', opts); st.loaded = false; return { gone: true }; },
     portOpen: async () => st.loaded,
+    webDiag: async pid => { record('webDiag', pid); return st.webDiag; },
     testStatus: async () => ({ running: true, hands: { lease: st.lease ? OWNER : false, busy: false } }),
     setDetector: async on => { record('setDetector', on); st.detector = on; },
     random24: async () => 0xabcdef,
@@ -599,6 +602,66 @@ test('runLive: no web content after the wait fails with no_web_content and click
   assert.ok(f.names().includes('session.close'));
 });
 
+// What live-webdiag.lua returns for a fresh profile whose focused window is a profile picker.
+const PICKER_DIAG = {
+  pid: 4242, resolved: { ok: true, pid: 4242 }, app: { manual_accessibility: true, enhanced_ui: null, windows: 2 },
+  windows: [{ index: 1, title: 'Who is using Chrome?', role: 'AXWindow', subrole: 'AXDialog', focused: true, main: false },
+    { index: 2, title: 'Eyes & Hands fixture', role: 'AXWindow', subrole: 'AXStandardWindow', focused: false, main: true }],
+  front: { by: 'AXFocusedWindow', index: 1, title: 'Who is using Chrome?', subrole: 'AXDialog' },
+  eyes_budget: { max_nodes: 8000, time_ms: 4000, max_depth: 80 }, eyes_bfs: { found: false, nodes: 12, ms: 3 },
+  web_areas: [{ window: 2, depth: 9, children: 14, url: 'http://127.0.0.1:1/' }], walk: { nodes: 300, ms: 40 },
+};
+
+test('runLive: no web content after the wait records the diagnostic of the throwaway Chrome, read-only', async () => {
+  const f = fakeWorld();
+  f.st.webDiag = PICKER_DIAG;
+  slowWebContent(f, Infinity);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /^eyes fields: no_web_content/, 'the diagnostic does not change the failure');
+  const dg = out.diagnostic;
+  assert.ok(dg, JSON.stringify(out));
+  assert.equal(dg.chrome_pid, 4242);
+  assert.deepEqual(dg.chrome_pids, [4242]);
+  assert.equal(dg.ax, PICKER_DIAG);
+  assert.equal(dg.eyes_tree.tree.title, 'Profile');
+  assert.deepEqual(f.calls.find(c => c[0] === 'webDiag'), ['webDiag', 4242]);
+  assert.match(dg.summary, /the eyes pick AXFocusedWindow "Who is using Chrome\?" \(AXDialog, window 1\)/);
+  assert.match(dg.summary, /no web area in it/);
+  assert.match(dg.summary, /web areas: window 2 depth 9 14 child\(ren\) http:\/\/127\.0\.0\.1:1\//);
+  // Taken before the clean-up closed Chrome; no input in between.
+  const n = f.names();
+  assert.ok(n.indexOf('webDiag') < n.indexOf('session.close') && n.indexOf('webDiag') < n.indexOf('kill'));
+  const cmds = f.calls.filter(c => c[0] === 'call').map(c => c[1]);
+  assert.ok(!cmds.some(c => /^eh\.hands\.(click|type|key|move|scroll)$/.test(c)), 'the diagnostic posts no input');
+  assert.deepEqual(out.problems, []);
+});
+
+test('runLive: a diagnostic that fails records its error and keeps the no_web_content failure', async () => {
+  const f = fakeWorld({ webDiag: async () => { throw new Error('hs -c failed (-1): timeout'); } });
+  slowWebContent(f, Infinity);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /^eyes fields: no_web_content/);
+  assert.equal(out.diagnostic.ax_error, 'hs -c failed (-1): timeout');
+  assert.match(out.diagnostic.summary, /^no AX diagnostic \(hs -c failed/);
+  assert.ok(out.diagnostic.eyes_tree, 'the other parts still run');
+});
+
+test('webSummary: a pid the Spoon resolves elsewhere, a web area deep in the walk, no web area at all', () => {
+  const deep = { chrome_pid: 4242, ax: { ...PICKER_DIAG, resolved: { ok: true, pid: 999 },
+    windows: [{ index: 1, title: 'Fixture', subrole: 'AXStandardWindow', focused: true, main: true }],
+    front: { by: 'AXFocusedWindow', index: 1, title: 'Fixture', subrole: 'AXStandardWindow' },
+    eyes_bfs: { found: true, nodes: 9100, ms: 900, depth: 30, children: 14 } } };
+  const s = webSummary(deep);
+  assert.match(s, /resolves the target to pid 999 \(ok\), not the Chrome pid 4242/);
+  assert.match(s, /its web area is 9100 node\(s\) and 900 ms into the walk \(eyes budget 8000 nodes, 4000 ms\) with 14 child\(ren\)/);
+  const none = webSummary({ chrome_pid: 4242, ax: { ...PICKER_DIAG, web_areas: [], walk: { nodes: 20000, stopped: 'nodes' } } });
+  assert.match(none, /no web area in any window \(walk stopped on nodes\)/);
+  assert.match(none, /AXManualAccessibility true, AXEnhancedUserInterface null/);
+  assert.equal(webSummary({ ax: { error: 'no AX application element for the pid' } }), 'no AX application element for the pid');
+});
+
 test('runLive: another eyes refusal before the fill is not waited on', async () => {
   const f = fakeWorld();
   const call = f.session.call;
@@ -611,6 +674,8 @@ test('runLive: another eyes refusal before the fill is not waited on', async () 
   assert.equal(out.status, 'fail');
   assert.match(out.reason, /eyes fields: not_running/);
   assert.equal(n, 2, 'one call from the wait, one from the fill');
+  assert.equal(out.diagnostic, undefined, 'only no_web_content records the diagnostic');
+  assert.ok(!f.names().includes('webDiag'));
 });
 
 test('runLive: a real takeover during the fill ends inconclusive, not failed', async () => {
@@ -709,6 +774,36 @@ test('cleanup: a left Spoon, an open port, a left awake hold and a changed jobhu
   assert.ok(!g.names().includes('unloadSpoon') && !g.names().includes('probe'));
 });
 
+test('portAnswered: only a real reply counts; no port, unreachable, a timeout, a crash or no JSON does not', () => {
+  assert.equal(portAnswered({ code: 0, stdout: '{"running":true,"port":"eyeshands-test-abcd"}\n' }), true);
+  assert.equal(portAnswered({ code: 1, stdout: '{"ok":false,"error":"not armed"}' }), true, "the port's own refusal is an answer");
+  assert.equal(portAnswered({ code: 3, stdout: '{"ok":false,"error":"unreachable: no \\"x\\" port"}' }), false);
+  assert.equal(portAnswered({ code: 1, stdout: '{"ok":false,"error":"unreachable: send timeout on the x port"}' }), false);
+  assert.equal(portAnswered({ code: 1, stdout: '{"ok":false,"error":"not an Eyes & Hands port reply"}' }), false);
+  assert.equal(portAnswered({ code: -1, stdout: '' }), false, 'a timeout (killed) is no answer');
+  assert.equal(portAnswered({ code: 1, stdout: '', stderr: 'Traceback (most recent call last):' }), false, 'a crash is no answer');
+  assert.equal(portAnswered({ code: 0, stdout: 'not json' }), false);
+  assert.equal(portAnswered({ code: 0, stdout: '[1]' }), false);
+  assert.equal(portAnswered({ code: 2, stdout: '{"ok":false,"error":"refused"}' }), false);
+  assert.equal(portAnswered(null), false);
+});
+
+test('cleanup: a port that closes a moment after the unload is no problem; one that keeps answering is', async () => {
+  let checks = 0;
+  const closing = fakeWorld({ portOpen: async () => { checks += 1; return checks < 3; } });
+  assert.deepEqual(await cleanup(closing.world, { loaded: true, port: 'eyeshands-test-abcd', jobhuntBefore: '{"state":"idle"}' }), []);
+  assert.equal(checks, 3, 'it re-checked until the port closed');
+  let open = 0;
+  const stays = fakeWorld({ portOpen: async () => { open += 1; return true; } });
+  const t0 = stays.st.t;
+  const problems = await cleanup(stays.world, { loaded: true, port: 'eyeshands-test-abcd', jobhuntBefore: '{"state":"idle"}' });
+  assert.ok(problems.some(p => /port eyeshands-test-abcd still answers/.test(p)));
+  assert.equal(open, PORT_RECHECKS);
+  assert.ok(stays.st.t - t0 >= (PORT_RECHECKS - 1) * 500, 'the checks are spread over the re-check time');
+  const w = fakeWorld({ portOpen: async () => false });
+  assert.equal(await portStillOpen(w.world, 'p'), false);
+});
+
 // ---------- the fill checks ----------
 test('compareFill and eventProblems: AX and DOM agree, trusted events, a move before each mousedown', () => {
   const values = { ...FILL, [SELECT.id]: SELECT.value };
@@ -792,4 +887,92 @@ test('live-probe.lua: reads grants, session, job-hunt, the harness port, the run
   assert.equal(p.test_loaded, false);
   assert.match(judge(p, { hcron: '', holdFile: hold }), /no Screen Recording/);
   assert.match(judge({ ...p, grants: { accessibility: true } }, { hcron: '', holdFile: hold }), /harness port has an armed hands owner/);
+});
+
+// ---------- the no_web_content diagnostic (Lua) ----------
+// A fake Chrome: a focused profile picker with no web area, and the fixture window (main) whose web
+// area sits under a toolbar of `toolbar` groups. Elements are tables; a write to any of them fails.
+function webdiagRun(opts, { toolbar = 3, focus = 'picker' } = {}) {
+  const chunk = `
+    local fakes = dofile(${JSON.stringify(here('../hammerspoon/test/fakes.lua'))})
+    local WRITES, T = 0, 0
+    local function el(attrs, kids)
+      attrs.AXChildren = kids or {}
+      return { attributeValue = function(self, k) return attrs[k] end, setTimeout = function() end,
+        setAttributeValue = function() WRITES = WRITES + 1; error("no write") end }
+    end
+    local bar = {}
+    for i = 1, ${toolbar} do bar[i] = el({ AXRole = "AXGroup", AXTitle = "tab " .. i }, { el({ AXRole = "AXButton" }) }) end
+    local web = el({ AXRole = "AXWebArea", AXTitle = "Eyes & Hands fixture", AXURL = { url = "http://127.0.0.1:1/" } },
+      { el({ AXRole = "AXTextField", AXDOMIdentifier = "name" }), el({ AXRole = "AXTextField" }), el({ AXRole = "AXButton" }) })
+    local picker = el({ AXRole = "AXWindow", AXSubrole = "AXDialog", AXTitle = "Who is using Chrome?" },
+      { el({ AXRole = "AXGroup" }, { el({ AXRole = "AXButton", AXTitle = "Add" }) }) })
+    local fixture = el({ AXRole = "AXWindow", AXSubrole = "AXStandardWindow", AXTitle = "Eyes & Hands fixture",
+      AXPosition = { x = 0, y = 25 }, AXSize = { w = 800, h = 600 } },
+      { el({ AXRole = "AXGroup", AXDescription = "toolbar" }, bar), el({ AXRole = "AXGroup" }, { web }) })
+    local app = el({ AXRole = "AXApplication", AXTitle = "Google Chrome", AXFrontmost = true, AXManualAccessibility = true,
+      AXWindows = { picker, fixture }, AXFocusedWindow = ${focus}, AXMainWindow = fixture })
+    hs = { timer = { absoluteTime = function() T = T + 1000000; return T end },
+      axuielement = { applicationElementForPID = function(pid) return pid == 4242 and app or nil end },
+      application = {
+        frontmostApplication = function() return { pid = function() return 4242 end, name = function() return "Google Chrome" end,
+          bundleID = function() return "com.google.Chrome" end } end,
+        applicationForPID = function() return { allWindows = function() return {
+          { title = function() return "Who is using Chrome?" end, isStandard = function() return false end,
+            isVisible = function() return true end, frame = function() return { x = 1, y = 2, w = 3, h = 4 } end } } end } end } }
+    __eyeshands_test = { _s = { targets = { resolve = function(n) return { ok = true, pid = 4242, name = n } end } } }
+    local before = {}
+    for k in pairs(_G) do before[k] = true end
+    local out = dofile(${JSON.stringify(here('./test/live-webdiag.lua'))})(${opts})
+    for k in pairs(_G) do if not before[k] then error("the diagnostic wrote the global " .. tostring(k)) end end
+    out.writes = WRITES
+    print(fakes.json.encode(out))`;
+  const r = spawnSync(LUA, ['-e', chunk], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test('live-webdiag.lua: names every window, the one the eyes pick, its tree and every web area; writes nothing', { skip: LUA ? false : 'no Lua 5.4 (brew install lua@5.4)' }, () => {
+  const d = webdiagRun('{ pid = 4242, test = "__eyeshands_test", target = "chrome-test", depth = 1 }');
+  assert.equal(d.writes, 0, 'it sets no attribute');
+  assert.deepEqual(d.resolved, { ok: true, pid: 4242 });
+  assert.deepEqual(d.front_app, { pid: 4242, name: 'Google Chrome', bundle: 'com.google.Chrome' });
+  assert.equal(d.app.manual_accessibility, true);
+  assert.equal(d.app.windows, 2);
+  assert.equal(d.app.focused_title, 'Who is using Chrome?');
+  assert.equal(d.app.main_title, 'Eyes & Hands fixture');
+  assert.deepEqual(d.windows.map(w => [w.index, w.subrole, w.focused, w.main, w.children]),
+    [[1, 'AXDialog', true, false, 1], [2, 'AXStandardWindow', false, true, 2]]);
+  assert.deepEqual(d.windows[1].rect, [0, 25, 800, 600]);
+  assert.equal(d.hs_windows[0].title, 'Who is using Chrome?');
+  assert.deepEqual(d.front, { by: 'AXFocusedWindow', index: 1, title: 'Who is using Chrome?', role: 'AXWindow', subrole: 'AXDialog' });
+  // depth 1: the window and its children, each with its own child count.
+  assert.equal(d.front_tree.role, 'AXWindow');
+  assert.equal(d.front_tree.n, 1);
+  assert.deepEqual(d.front_tree.children, [{ role: 'AXGroup', n: 1 }]);
+  assert.equal(d.tree_nodes, 2);
+  assert.equal(d.eyes_bfs.found, false, 'the picker has no web area');
+  assert.equal(d.eyes_bfs.nodes, 3);
+  assert.deepEqual(d.eyes_budget, { max_nodes: 8000, time_ms: 4000, max_depth: 80 });
+  assert.deepEqual(d.web_areas, [{ window: 2, depth: 2, children: 3, url: 'http://127.0.0.1:1/', title: 'Eyes & Hands fixture' }]);
+  assert.equal(d.walk.stopped, undefined);
+});
+
+test('live-webdiag.lua: every walk stops at its node cap and its deadline', { skip: LUA ? false : 'no Lua 5.4 (brew install lua@5.4)' }, () => {
+  const capped = webdiagRun('{ pid = 4242, test = "__none", target = "chrome-test", max_nodes = 5, tree_nodes = 2 }', { toolbar: 50, focus: 'fixture' });
+  assert.equal(capped.eyes_bfs.stopped, 'nodes');
+  assert.equal(capped.eyes_bfs.nodes, 5);
+  assert.equal(capped.walk.stopped, 'nodes');
+  assert.equal(capped.tree_truncated, true);
+  assert.equal(capped.resolved.ok, false, 'no test Spoon: no resolve');
+  // The fake clock moves 1 ms per read: a 50 ms deadline ends the walks long before 20000 nodes.
+  const timed = webdiagRun('{ pid = 4242, target = "chrome-test", time_ms = 50 }', { toolbar: 400, focus: 'fixture' });
+  assert.equal(timed.eyes_bfs.stopped, 'time');
+  assert.equal(timed.walk.stopped, 'time');
+  assert.ok(timed.walk.nodes < 100);
+  // The fixture window in front: the eyes' walk finds its web area past the toolbar.
+  const found = webdiagRun('{ pid = 4242, target = "chrome-test" }', { toolbar: 50, focus: 'fixture' });
+  assert.equal(found.front.index, 2);
+  assert.deepEqual([found.eyes_bfs.found, found.eyes_bfs.depth, found.eyes_bfs.children, found.eyes_bfs.nodes], [true, 2, 3, 54]);   // window, 2 groups, 50 tabs, the web area
+  assert.deepEqual(webdiagRun('{ pid = 1, target = "chrome-test" }').error, 'no AX application element for the pid');
 });

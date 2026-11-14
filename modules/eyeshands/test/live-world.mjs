@@ -3,8 +3,8 @@
 // logic and calls only what this object offers; live.test.mjs imports this file only after the gate
 // passed (EYESHANDS_LIVE=1, no CI), so a default run starts no process at all.
 //
-// What it touches, and nothing else: Hammerspoon through `hs -c` (the read-only probe, the test
-// Spoon under the global __eyeshands_test on its own port eyeshands-test-<random>, the fake
+// What it touches, and nothing else: Hammerspoon through `hs -c` (the read-only probe and web
+// diagnostic, the test Spoon under the global __eyeshands_test on its own port eyeshands-test-<random>, the fake
 // detector __eyeshands_test_detector, the run's test tag in harness.addEventTag, one 1-point mouse
 // nudge with that tag), a Chrome started with a temporary --user-data-dir, and a temporary folder. It never calls hs.loadSpoon or hs.reload(),
 // never writes in ~/.hammerspoon, and never touches job-hunt, its lock or the real ports.
@@ -16,11 +16,12 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { startFixture } from './fixture-server.mjs';
-import { DETECTOR, EVENT_TAG, GLOBAL, OWNER, WHO } from './live-lib.mjs';
+import { DETECTOR, EVENT_TAG, GLOBAL, OWNER, TARGET, WHO, portAnswered } from './live-lib.mjs';
 
 const here = p => fileURLToPath(new URL(p, import.meta.url));
 const SPOON = here('../EyesHands.spoon');
 const PROBE = here('./live-probe.lua');
+const WEBDIAG = here('./live-webdiag.lua');
 const EYESHANDS = here('../bin/eyeshands');
 const TMP_PREFIX = 'eh-live-';
 
@@ -119,8 +120,14 @@ export function realWorld(env = process.env) {
       local h = rawget(_G, "harness")
       if ${restoreTag ? 'true' : 'false'} and type(h) == "table" and type(rawget(h, "addEventTag")) == "function" then h.addEventTag(${EVENT_TAG}) end
       return hs.json.encode({ gone = rawget(_G, ${lua(GLOBAL)}) == nil })`),
-    // Exit 3 means Hammerspoon has no such port.
-    portOpen: async port => (await run(EYESHANDS, ['--port', port, '--timeout', '3', 'status'])).code !== 3,
+    // Whether the port gave a real answer (live-lib.mjs portAnswered): exit 3 (no such port, or
+    // unreachable), a timeout, a crash or a reply that is not JSON is no answer.
+    portOpen: async port => {
+      const r = await run(EYESHANDS, ['--port', port, '--timeout', '3', 'status']);
+      const open = portAnswered(r);
+      if (r.code !== 3) console.log(`eh-live: port ${port} check: exit ${r.code}, ${open ? 'answered' : 'no answer'}: ${(r.stdout || r.stderr).trim().slice(0, 200)}`);
+      return open;
+    },
     testStatus: () => hsJson(`local t = rawget(_G, ${lua(GLOBAL)}); return hs.json.encode(t and t:status() or { running = false })`),
     setDetector: on => hs(`${DETECTOR} = ${on ? '{ hands = { status = function() return { armed = true } end } }' : 'nil'}; return "ok"`),
     // The run's test tag: 24 random bits (live-lib.mjs testTagFrom puts them under its base).
@@ -136,6 +143,12 @@ export function realWorld(env = process.env) {
       e:post(); return "ok"`),
     releaseAwake: who => hs(`local h = rawget(_G, "harness")
       if type(h) == "table" and type(rawget(h, "awake")) == "function" then h.awake(false, { owner = ${lua(who)} }) end; return "ok"`),
+
+    // The no_web_content diagnostic (live-webdiag.lua): read-only, bounded, so a longer timeout.
+    webDiag: pid => {
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error(`not a pid: ${pid}`);
+      return hsJson(`return hs.json.encode(dofile(${lua(WEBDIAG)})({ pid = ${pid}, test = ${lua(GLOBAL)}, target = ${lua(TARGET)} }))`, 45000);
+    },
 
     // Run step 2: a throwaway Chrome with no debugging port, found later by its profile path.
     startChrome: async (profile, url) => {

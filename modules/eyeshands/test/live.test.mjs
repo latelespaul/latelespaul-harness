@@ -8,7 +8,8 @@
 //   EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=<driver lock> awake run eh-live-test -- \
 //     node --test modules/eyeshands/test/live.test.mjs
 //
-// Optional: EYESHANDS_LIVE_REPORT=<file> writes the outcome and the measurements as JSON. How and
+// Optional: EYESHANDS_LIVE_REPORT=<file> writes the outcome and the measurements as JSON (after a
+// no_web_content failure also the diagnostic of the throwaway Chrome's windows and tree). How and
 // when: SETUP.md, "Live fixture test". The logic is live-lib.mjs (offline tests:
 // ../live-offline.test.mjs); the real calls are live-world.mjs.
 import test from 'node:test';
@@ -21,8 +22,11 @@ test('live fixture test: fill, takeover, stop and foreign hands on a throwaway C
   const { runLive } = await import('./live-lib.mjs');
   const { realWorld } = await import('./live-world.mjs');
   const out = await runLive(realWorld(process.env));
-  t.diagnostic(`eh-live outcome: ${JSON.stringify(out)}`);
+  // The no_web_content diagnostic is long: the line shows its summary, the report has all of it.
+  const { diagnostic, ...brief } = out;
+  t.diagnostic(`eh-live outcome: ${JSON.stringify(diagnostic ? { ...brief, diagnostic: diagnostic.summary } : out)}`);
   if (process.env.EYESHANDS_LIVE_REPORT) writeFileSync(process.env.EYESHANDS_LIVE_REPORT, JSON.stringify(out, null, 2) + '\n');
+  else if (diagnostic) t.diagnostic(`eh-live diagnostic: ${JSON.stringify(diagnostic)}`);
   if (out.status === 'skip' || out.status === 'inconclusive') return t.skip(out.reason);
   if (out.status !== 'pass') throw new Error(out.reason);
 });

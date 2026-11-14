@@ -5,7 +5,8 @@
 //   gate(env, platform)        null when the live run may start, else why it skips
 //   preflight(w)               preconditions 1-4: { holdFile, probe } or throws Skip(reason)
 //   runLive(w, opts)           preflight, run steps 1-8, then the clean-up in a finally:
-//                              { status: pass | skip | inconclusive | fail, reason, measured, problems }
+//                              { status: pass | skip | inconclusive | fail, reason, measured, problems,
+//                                diagnostic (only after no_web_content: webDiagnostic) }
 //
 // Rules this file keeps (the person and every other driver always win):
 //   - every precondition is checked and skips with its reason; nothing is forced;
@@ -272,6 +273,44 @@ export async function waitWebContent(w, d, { timeoutMs = WEB_CONTENT_WAIT_MS, ev
   }
 }
 
+// What the throwaway Chrome shows to Accessibility when the eyes find no web content: the AX
+// diagnostic (live-webdiag.lua: windows, the front window's tree, every web area), the eyes' own
+// tree of the front window, the Chrome pids of the profile, and a one-line summary. Read-only; each
+// part records its own error, so the diagnostic never hides the failure it explains.
+export async function webDiagnostic(w, st, d) {
+  const out = { chrome_pid: st.chromePid ?? null };
+  const part = async (name, fn) => { try { out[name] = await fn(); } catch (e) { out[`${name}_error`] = e.message || String(e); } };
+  await part('chrome_pids', () => w.chromePids(st.profile));
+  await part('ax', () => w.webDiag(st.chromePid));
+  await part('eyes_tree', () => d.call('eh.eyes.tree', { target: TARGET, depth: 5, max_nodes: 400 }));
+  out.summary = webSummary(out);
+  return out;
+}
+
+// The diagnostic in one line: which window the eyes read, and where (or whether) a web area is.
+export function webSummary(dg) {
+  const ax = dg?.ax;
+  if (!ax) return `no AX diagnostic${dg?.ax_error ? ` (${dg.ax_error})` : ''}`;
+  if (ax.error) return ax.error;
+  const parts = [];
+  if (ax.resolved && ax.resolved.pid !== dg.chrome_pid) parts.push(`the Spoon resolves the target to pid ${ax.resolved.pid ?? '-'} (${ax.resolved.reason || 'ok'}), not the Chrome pid ${dg.chrome_pid}`);
+  const wins = list(ax.windows);
+  parts.push(`${wins.length} AX window(s): ${wins.map(x => `${x.index} "${x.title ?? ''}" ${x.subrole || x.role || '?'}${x.focused ? ' focused' : ''}${x.main ? ' main' : ''}`).join(', ') || 'none'}`);
+  const f = ax.front || {};
+  parts.push(f.by === 'none' ? 'the eyes pick no front window' : `the eyes pick ${f.by} "${f.title ?? ''}" (${f.subrole || f.role || '?'}${f.index ? `, window ${f.index}` : ''})`);
+  const b = ax.eyes_bfs;
+  if (b) {
+    const budget = ax.eyes_budget || {};
+    parts.push(b.found ? `its web area is ${b.nodes} node(s) and ${b.ms} ms into the walk (eyes budget ${budget.max_nodes} nodes, ${budget.time_ms} ms) with ${b.children} child(ren)`
+      : `no web area in it (${b.nodes} node(s) walked${b.stopped ? `, stopped on ${b.stopped}` : ''})`);
+  }
+  const areas = list(ax.web_areas);
+  parts.push(areas.length ? `web areas: ${areas.map(a => `window ${a.window} depth ${a.depth} ${a.children} child(ren) ${a.url || ''}`.trim()).join('; ')}`
+    : `no web area in any window${ax.walk?.stopped ? ` (walk stopped on ${ax.walk.stopped})` : ''}`);
+  if (ax.app) parts.push(`AXManualAccessibility ${JSON.stringify(ax.app.manual_accessibility ?? null)}, AXEnhancedUserInterface ${JSON.stringify(ax.app.enhanced_ui ?? null)}`);
+  return parts.join('; ');
+}
+
 async function fillForm(w, st, d) {
   for (const id of Object.keys(FILL)) {
     await d.clickField(id);
@@ -449,7 +488,13 @@ async function body(w, st, opts) {
   st.measured.driver_lock = true;
   await sleepFor(w, 600);
 
-  await waitWebContent(w, d);
+  try {
+    await waitWebContent(w, d);
+  } catch (e) {
+    // Record what the eyes looked at before the clean-up closes Chrome (diagnosis only).
+    if (/no_web_content/.test(e.message || '')) st.diagnostic = await webDiagnostic(w, st, d);
+    throw e;
+  }
   await fillForm(w, st, d);             // 5
   await measureIdle(w, st, d);          // 8
   await takeover(w, st, d, opts.buffer); // 6
@@ -457,6 +502,28 @@ async function body(w, st, opts) {
 }
 
 // ---------- abort and clean-up ----------
+// Whether `eyeshands --port P status` ({ code, stdout }) got a real answer from the port: exit 0
+// with a JSON object, or exit 1 with the port's own refusal. Exit 3 (no such port, unreachable, not
+// a port reply), a timeout or a crash (any other code), and output that is not JSON are no answer.
+export function portAnswered(r) {
+  let j;
+  try { j = JSON.parse(String(r?.stdout ?? '').trim()); } catch { return false; }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
+  if (r.code === 0) return true;
+  return r.code === 1 && j.ok === false && typeof j.error === 'string' && !/^unreachable\b|not an Eyes & Hands port reply/.test(j.error);
+}
+
+// The port still answers after the unload: a real answer on each of `tries` checks, `everyMs`
+// apart. One check with no answer means it closed (a port can take a moment to go away).
+export const PORT_RECHECKS = 4;
+export async function portStillOpen(w, port, { tries = PORT_RECHECKS, everyMs = 500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    if (!(await w.portOpen(port))) return false;
+    if (i < tries - 1) await sleepFor(w, everyMs);
+  }
+  return true;
+}
+
 // Undoes what the run made, every step in its own try, in this order: the session (abort, then
 // disarm by closing it), the fake detector, the test tag (harness.removeEventTag), the Spoon (unload, then check the global is gone and
 // the port closed), a left awake hold, a left lock entry (only the run's exact entry), the throwaway
@@ -482,7 +549,7 @@ export async function cleanup(w, st) {
     if (!st.loaded) return;
     const r = await w.unloadSpoon({ restoreTag: st.restoreTag });
     if (!r || r.gone !== true) problems.push(`clean-up spoon: ${GLOBAL} is still loaded`);
-    if (st.port && await w.portOpen(st.port)) problems.push(`clean-up spoon: the port ${st.port} still answers`);
+    if (st.port && await portStillOpen(w, st.port)) problems.push(`clean-up spoon: the port ${st.port} still answers`);
   });
   await step('awake', async () => {
     if (!st.loaded) return;
@@ -543,5 +610,5 @@ export async function runLive(w, opts = {}) {
     st.problems = await cleanup(w, st);
   }
   if (st.problems.length && outcome.status !== 'fail') outcome = { status: 'fail', reason: st.problems.join('; ') };
-  return { ...outcome, measured: st.measured, problems: st.problems };
+  return { ...outcome, measured: st.measured, problems: st.problems, ...(st.diagnostic ? { diagnostic: st.diagnostic } : {}) };
 }
