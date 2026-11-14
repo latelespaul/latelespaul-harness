@@ -354,4 +354,6 @@ EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=~/.config/eyeshands/driver.lock node --test
 
 ## Licence
 
-TODO(licence): the maintainer has not chosen a licence yet, so this repository has no LICENSE file. Until one exists, ask the maintainer before you reuse this code. Hammerspoon itself has the MIT (Massachusetts Institute of Technology) licence. The disk image has a `Licenses` folder with both texts.
+Eyes & Hands has the MIT (Massachusetts Institute of Technology) licence. The full text is in the [LICENSE](../../LICENSE) file at the root of this repository. You may use, change and share the code. Keep the copyright notice and the licence text with each copy.
+
+Hammerspoon keeps its own MIT licence. The disk image has a `Licenses` folder with both texts.

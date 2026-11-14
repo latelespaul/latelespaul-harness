@@ -814,7 +814,7 @@ These decisions belong to the maintainer. Each one has a recommendation.
 
 1. **Developer ID.** Buy the Apple Developer Program membership? Recommendation: no, not for version 1 (part 16).
 2. **Homebrew tap repo.** Create a public repo `<account>/homebrew-tap` for the formula? Recommendation: yes, at PR 14.
-3. **Licence.** This repo has no LICENSE file, so others have no right to reuse it. A public product needs one. Recommendation: MIT, the same as Hammerspoon. Decide before PR 13.
+3. **Licence.** This repo had no LICENSE file, so others had no right to reuse it. A public product needs one. Recommendation: MIT, the same as Hammerspoon. Decided 2026-11-14: MIT; the root LICENSE file holds the text.
 4. **Default browser model.** Eyes and hands become the default for every agent. When a person is present, hands wait or ask. May agents still use the CDP agent Chrome (browser module) for work that needs no cursor? Recommendation: yes, as the fallback while the person is present; the rule goes into PR 16. The skill's channel router (PR #23, merged) already makes desktop the default and lists when CDP qualifies. PR 16 aligns AGENTS.md and the module notes with it.
 5. **Live rollout.** Enabling Eyes & Hands on the live Mac needs one Hammerspoon restart. Recommendation: run the harness install once after PRs 2, 3 and 12, outside job-hunt's window. It defers the restart while an owner holds awake mode or a port arm (PR #24).
 6. **Stop hotkey.** `ctrl+alt+cmd+escape` as the default? Check that no existing config uses it.
