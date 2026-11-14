@@ -66,7 +66,9 @@ def to_master(text):
 
 def main():
     text = " ".join(sys.argv[1:]).strip()
-    if text and to_master(text):
+    if not text:
+        return 1
+    if to_master(text):
         return 0
     prof = profile_dir()
     if prof and os.path.exists(os.path.join(prof, "telegram", "ALERTS_TO_MASTER")) and os.environ.get("TG_NOTIFY_DIRECT") != "1":
