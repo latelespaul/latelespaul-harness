@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { startFixture } from './test/fixture-server.mjs';
 import {
   DETECTOR, EVENT_TAG, FILL, GLOBAL, OWNER, SELECT, Skip, TEST_TAG_BASE, UPLOAD, WHO, cleanup, compareFill, eventProblems,
-  gate, guiJobsRunning, holdFileFrom, holdReason, judge, lockIsOurs, preflight, runLive, testTagFrom,
+  WEB_CONTENT_WAIT_MS, gate, guiJobsRunning, holdFileFrom, holdReason, judge, lockIsOurs, preflight, runLive, testTagFrom,
 } from './test/live-lib.mjs';
 import { lua } from './test/live-world.mjs';
 
@@ -554,6 +554,63 @@ test('runLive: job-hunt arming during the run aborts the job, ends inconclusive 
   assert.ok(f.names().includes('unloadSpoon'));
   assert.ok(f.names().includes('session.close'));
   assert.deepEqual(f.st.rm, ['/tmp/eh-live-x']);
+});
+
+// A fresh Chrome profile: the eyes say no_web_content for the first `misses` fields calls.
+function slowWebContent(f, misses) {
+  const call = f.session.call;
+  let left = misses;
+  const seen = [];
+  f.session.call = async (cmd, args) => {
+    if (cmd === 'eh.eyes.fields' && left > 0) {
+      left -= 1;
+      seen.push(f.st.t);
+      return { ok: true, result: { ok: false, reason: 'no_web_content', hint: 'no AXWebArea yet' } };
+    }
+    return call(cmd, args);
+  };
+  return seen;
+}
+
+test('runLive: the first fill waits for the web content of a fresh Chrome, then passes', async () => {
+  const f = fakeWorld();
+  const seen = slowWebContent(f, 6);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'pass', JSON.stringify(out));
+  assert.equal(seen.length, 6);
+  assert.ok(seen.at(-1) - seen[0] < WEB_CONTENT_WAIT_MS, 'the retries stay inside the wait');
+  // The wait ends before the first click of the fill.
+  const cmds = f.calls.filter(c => c[0] === 'call').map(c => c[1]);
+  assert.ok(cmds.lastIndexOf('eh.eyes.fields', cmds.indexOf('eh.hands.click')) > cmds.indexOf('eh.hands.focus'));
+  assert.deepEqual(out.problems, []);
+});
+
+test('runLive: no web content after the wait fails with no_web_content and clicks nothing', async () => {
+  const f = fakeWorld();
+  const seen = slowWebContent(f, Infinity);
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /^eyes fields: no_web_content: no AXWebArea yet/);
+  assert.ok(seen.length > 1, 'it retried');
+  assert.ok(seen.at(-1) - seen[0] >= WEB_CONTENT_WAIT_MS, 'it gave up only after the wait');
+  assert.ok(seen.at(-1) - seen[0] < WEB_CONTENT_WAIT_MS + 1000, 'and not much later');
+  assert.ok(!f.calls.some(c => c[0] === 'call' && c[1] === 'eh.hands.click'));
+  assert.deepEqual(out.problems, [], 'the clean-up still ran');
+  assert.ok(f.names().includes('session.close'));
+});
+
+test('runLive: another eyes refusal before the fill is not waited on', async () => {
+  const f = fakeWorld();
+  const call = f.session.call;
+  let n = 0;
+  f.session.call = async (cmd, args) => {
+    if (cmd === 'eh.eyes.fields') { n += 1; return { ok: true, result: { ok: false, reason: 'not_running' } }; }
+    return call(cmd, args);
+  };
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /eyes fields: not_running/);
+  assert.equal(n, 2, 'one call from the wait, one from the fill');
 });
 
 test('runLive: a real takeover during the fill ends inconclusive, not failed', async () => {

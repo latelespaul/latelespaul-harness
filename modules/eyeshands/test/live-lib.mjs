@@ -258,6 +258,20 @@ function driver(w, st) {
   return { watch, call, act, fields, clickField };
 }
 
+// A brand-new Chrome profile can take a few seconds to show its web area to the eyes after
+// AXManualAccessibility goes on: poll the fields until they stop saying no_web_content.
+export const WEB_CONTENT_WAIT_MS = 10000;
+export async function waitWebContent(w, d, { timeoutMs = WEB_CONTENT_WAIT_MS, everyMs = 500 } = {}) {
+  const end = w.now() + timeoutMs;
+  for (;;) {
+    await d.watch();
+    const res = await d.call('eh.eyes.fields', { target: TARGET });
+    if (res.ok !== false || res.reason !== 'no_web_content') return res;
+    if (w.now() >= end) throw new Error(`eyes fields: ${res.reason}: ${res.hint || ''}`);
+    await sleepFor(w, everyMs);
+  }
+}
+
 async function fillForm(w, st, d) {
   for (const id of Object.keys(FILL)) {
     await d.clickField(id);
@@ -435,6 +449,7 @@ async function body(w, st, opts) {
   st.measured.driver_lock = true;
   await sleepFor(w, 600);
 
+  await waitWebContent(w, d);
   await fillForm(w, st, d);             // 5
   await measureIdle(w, st, d);          // 8
   await takeover(w, st, d, opts.buffer); // 6
