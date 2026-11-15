@@ -49,13 +49,13 @@ const hasProfile = (command, profile) => String(command).split(/\s+/).includes(`
 export function realWorld(env = process.env) {
   const HS = firstFile(['/opt/homebrew/bin/hs', '/usr/local/bin/hs']) || 'hs';
   const HCRON = firstFile([join(homedir(), '.local/bin/hcron')]) || 'hcron';
-  const hs = async (code, timeout = 10000) => {
-    const r = await run(HS, ['-c', code], { timeout });
+  const hs = async (code, timeout = 10000, cliSeconds) => {
+    const r = await run(HS, [...(cliSeconds ? ['-t', String(cliSeconds)] : []), '-c', code], { timeout });
     if (r.code !== 0) throw new Error(`hs -c failed (${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
     return r.stdout.trim();
   };
-  const hsJson = async (code, timeout) => {
-    const out = await hs(code, timeout);
+  const hsJson = async (code, timeout, cliSeconds) => {
+    const out = await hs(code, timeout, cliSeconds);
     try { return JSON.parse(out); } catch { throw new Error(`hs -c gave no JSON: ${out.slice(0, 300)}`); }
   };
   const ps = async args => (await run('/bin/ps', args)).stdout;
@@ -148,7 +148,7 @@ export function realWorld(env = process.env) {
     // The no_web_content diagnostic (live-webdiag.lua): read-only, bounded, so a longer timeout.
     webDiag: pid => {
       if (!Number.isInteger(pid) || pid <= 0) throw new Error(`not a pid: ${pid}`);
-      return hsJson(`return hs.json.encode(dofile(${lua(WEBDIAG)})({ pid = ${pid}, test = ${lua(GLOBAL)}, target = ${lua(TARGET)} }))`, 45000);
+      return hsJson(`return hs.json.encode(dofile(${lua(WEBDIAG)})({ pid = ${pid}, test = ${lua(GLOBAL)}, target = ${lua(TARGET)} }))`, 45000, 40);
     },
 
     // Run step 2: a throwaway Chrome with no debugging port, found later by its profile path.
