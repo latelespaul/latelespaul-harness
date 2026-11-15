@@ -168,7 +168,7 @@ Rules for each step:
 | Value took | `eyes_value` | the email reads back exactly |
 | Focus went to the right place | `eyes_focused` | typing landed in "Phone", not "Email" |
 | Success or error text | `eyes_text` | "Saved", "Invalid date", "Thank you for applying" |
-| Something popped up | `eyes_dialog`, new fields in `eyes_fields` | cookie banner, "Leave site?", file picker |
+| Something popped up | `eyes_dialog`, `dialog_open` or new fields in `eyes_fields` | cookie banner, "Leave site?", file picker |
 | A wall | `wall` in `eyes_text` | CAPTCHA, login, OTP |
 | A checkbox state | `checked` in the field record | Chrome shows no AX value for checkboxes; the eyes read the pixels |
 | Visual-only content | `eyes_shot` (read it as an image) | charts, canvas apps, odd layouts |

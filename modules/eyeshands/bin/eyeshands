@@ -365,13 +365,15 @@ TOOLS = {
                     "limits": LIMITS_SCHEMA}, ["target"]),
                     "The form fields of the target's front window: url, title, window, viewport and fields[] (id, role, "
                     "label, value, placeholder, required, focused, enabled, dom, rect, onscreen, checked). An id is "
-                    "valid until the next eyes_fields." + EYES_RULE),
+                    "valid until the next eyes_fields. dialog_open: true means a native sheet or dialog (a file chooser) "
+                    "covers the page; the fields are the page's under it, and eyes_dialog reads the sheet. A browser page "
+                    "that cannot be read past the sheet refuses dialog_open." + EYES_RULE),
     "eyes_value": ("eh.eyes.value", "eyes", obj({"target": TARGET, "id": {"type": "string", "description": "an id from eyes_fields"},
                                                  "dom": {"type": "string", "description": "the HTML id (the fallback for a stale id)"}},
                                                 ["target"]),
                    "One field record, read live: check a value after typing. Give id, dom, or both." + EYES_RULE),
     "eyes_text": ("eh.eyes.text", "eyes", obj({"target": TARGET, "limits": LIMITS_SCHEMA}, ["target"]),
-                  "The visible text of the target's front window: lines[], frames[], url, title, and wall (human, "
+                  "The visible text of the target's front window: lines[], frames[], url, title, dialog_open (as in eyes_fields), and wall (human, "
                   "hcaptcha, recaptcha, captcha, otp, unusual). When wall is not empty, hands on this page refuse until a "
                   "new eyes_text shows no wall: never solve a wall; send eyes_shot to the person." + EYES_RULE),
     "eyes_focused": ("eh.eyes.focused", "eyes", obj({"target": TARGET}, ["target"]),

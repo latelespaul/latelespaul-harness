@@ -207,6 +207,60 @@ test('the walk root: a browser waits briefly for its web tree; an app without on
   assert.equal(out[6], 'no_accessibility');
 });
 
+test('a native sheet or dialog in front: page reads use the browser window under it and say dialog_open', { skip }, () => {
+  // A Chrome page window (a web area with one button) with the file chooser's "Open" sheet and its
+  // "Go to folder" sheet, a separate dialog window, and a standard window without a web area.
+  // o: focus (the AXFocusedWindow id), main (the AXMainWindow id), wins (AXWindows ids), empty (the
+  // web area has no children yet: no text, no button), nosheet (no sheets on the page window).
+  const APP = `function app(o) local ref = function(id) return id and { ["$ref"] = id } or nil end
+      local sheets = o.nosheet and {} or { { _id = "open", role = "AXSheet", AXTitle = "Open", rect = { 100, 20, 600, 400 },
+        children = { { _id = "goto", role = "AXSheet", AXDescription = "Go to folder", rect = { 150, 60, 500, 120 },
+          children = { { role = "AXTextField", AXDescription = "Folder", rect = { 160, 80, 300, 20 } } } } } } }
+      local kids = o.empty and {} or { { role = "AXStaticText", AXValue = "Upload your CV" }, { role = "AXButton", AXTitle = "Choose file", AXDOMIdentifier = "cv", rect = { 10, 60, 100, 20 } } }
+      local win = { _id = "win", role = "AXWindow", AXSubrole = "AXStandardWindow", AXTitle = "Upload", rect = { 0, 0, 800, 600 },
+        children = { { role = "AXWebArea", AXURL = "http://127.0.0.1:53111/upload", rect = { 0, 50, 800, 550 }, children = kids } } }
+      for _, s in ipairs(sheets) do win.children[#win.children + 1] = s end
+      AXAPPS[6] = ax({ role = "AXApplication", AXFocusedWindow = ref(o.focus), AXMainWindow = ref(o.main),
+        AXWindows = { ["$refs"] = o.wins or { "win" } }, children = { win,
+        { _id = "dlg", role = "AXWindow", AXSubrole = "AXDialog", AXTitle = "Open", rect = { 200, 100, 400, 300 },
+          children = { { role = "AXTextField", AXDescription = "File name", rect = { 210, 120, 300, 20 } } } },
+        { _id = "side", role = "AXWindow", AXSubrole = "AXStandardWindow", AXTitle = "DevTools", rect = { 800, 0, 400, 600 } } } }) end
+    TARGETS.chrome = { ok = true, name = "chrome", bundle = "com.google.Chrome", pid = 6 }; E = eyes()
+    function page(r) return { ok = r.ok, title = r.title, url = r.url, dialog_open = r.dialog_open, n = r.fields and #r.fields } end`;
+  const C = 'target = "chrome"';
+  const out = ok(drive([
+    `${APP}; app({ focus = "open" }); return page(E.fields({ ${C} }, "o"))`,
+    `app({ focus = "goto" }); local r = E.fields({ ${C} }, "o"); return { page(r), r.fields[1].dom, r.window }`,
+    `app({ focus = "goto" }); local r = E.text({ ${C} }, "o"); return { r.lines, r.dialog_open }`,
+    `app({ focus = "dlg", main = "win", wins = { "dlg", "win" }, nosheet = true }); return page(E.fields({ ${C} }, "o"))`,
+    `app({ focus = "dlg", wins = { "dlg", "win", "side" }, nosheet = true }); return page(E.fields({ ${C} }, "o"))`,
+    `app({ focus = "side", main = "win", wins = { "side", "win" }, nosheet = true }); return page(E.fields({ ${C} }, "o"))`,
+    `app({ focus = "goto", empty = true }); local t0 = CLOCK; local r = E.fields({ ${C} }, "o"); return { r.reason, r.hint, CLOCK - t0 }`,
+    `app({ focus = "side", wins = { "side" }, nosheet = true }); return E.fields({ ${C} }, "o").reason`,
+    `app({ focus = "goto" }); return E.value({ ${C}, dom = "cv" }, "o").label`,
+    `app({ focus = "goto" }); local t = E.tree({ ${C} }, "o").tree; return { t.role, t.desc }`,
+    `app({ focus = "goto" }); return E.dialog({ ${C} }, "o").open`,
+    `${FORM}; E = eyes(); return page(E.fields({ ${T} }, "runner"))`,
+  ]));
+  const upload = { ok: true, title: 'Upload', url: 'http://127.0.0.1:53111/upload', dialog_open: true, n: 1 };
+  assert.deepEqual(out[0], upload, 'the focused sheet is not the page: the window it hangs off is');
+  assert.deepEqual(out[1], [upload, 'cv', [0, 0, 800, 600]], 'a sheet on a sheet ("Go to folder") still finds the page window');
+  assert.deepEqual(out[2], [['Upload your CV'], true], 'text reads the page under the sheet too');
+  assert.deepEqual(out[3], upload, 'a dialog window: AXMainWindow is the page');
+  assert.deepEqual(out[4], upload, 'no AXMainWindow: the first AXStandardWindow in AXWindows');
+  const { dialog_open: _, ...nopanel } = upload;
+  assert.deepEqual(out[5], nopanel,
+    'a focused window without a web area: the browser tries AXMainWindow; no sheet, no dialog_open');
+  assert.deepEqual(out[6], ['dialog_open', 'a native sheet or dialog is in front of the page: read it with eyes_dialog', 7 * 150],
+    'no readable page behind the sheet: an honest dialog_open, not no_web_content');
+  assert.equal(out[7], 'no_web_content', 'no sheet and no web content anywhere is still no_web_content');
+  assert.equal(out[8], 'Choose file', 'value reads the page under the sheet');
+  assert.deepEqual(out[9], ['AXSheet', 'Go to folder'], 'tree keeps the focused window: the sheet');
+  assert.equal(out[10], true);
+  assert.deepEqual(out[11], { ok: true, title: 'Fixture form', url: 'http://127.0.0.1:53111/form', dialog_open: true, n: 9 },
+    'a sheet attached to the focused page window also counts as open');
+});
+
 test('text, focused, dialog, tree and frontmost on the fixture', { skip }, () => {
   const [text, focused, none, dialog, tree, deep, front, nofront] = ok(drive([
     `${FORM}; E = eyes(); return E.text({ ${T} }, "runner")`,
