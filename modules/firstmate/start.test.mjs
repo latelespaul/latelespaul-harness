@@ -155,12 +155,25 @@ test('--register with FIRSTMATE_AUTOSTART=0 removes the job, and is fine when th
   assert.equal(s.run(['--register']).status, 0);
 });
 
-test('--register without the cron module still registers, with a note', () => {
-  const s = sandbox({ modules: 'firstmate' });
-  const r = s.run(['--register']);
+test('--register without the cron module leaves the shared jobs file alone, with a note', () => {
+  // The jobs file syncs through the profile: another machine's job must not get this one's paths.
+  const s = sandbox();
+  s.run(['--register']);
+  const before = readFileSync(join(s.d, 'jobs.json'), 'utf8');
+  writeFileSync(join(s.d, 'harness.env'), readFileSync(join(s.d, 'harness.env'), 'utf8').replace('MODULES="firstmate cron"', 'MODULES="firstmate"'));
+  let r = s.run(['--register']);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /cron module/);
-  assert.ok(s.jobs()['firstmate-start']);
+  assert.equal(readFileSync(join(s.d, 'jobs.json'), 'utf8'), before);
+  // Nor is the job removed there when autostart is off.
+  writeFileSync(join(s.d, 'harness.env'), readFileSync(join(s.d, 'harness.env'), 'utf8').replace('FIRSTMATE_AUTOSTART=1', 'FIRSTMATE_AUTOSTART=0'));
+  r = s.run(['--register']);
+  assert.equal(r.status, 0);
+  assert.equal(readFileSync(join(s.d, 'jobs.json'), 'utf8'), before);
+  // And a machine with no jobs file yet gets none.
+  const fresh = sandbox({ modules: 'firstmate' });
+  assert.equal(fresh.run(['--register']).status, 0);
+  assert.ok(!existsSync(join(fresh.d, 'jobs.json')));
 });
 
 test('--status reports the autostart job', () => {

@@ -51,10 +51,16 @@ start|--once)
   old=$agents_dir/com.$LABEL_PREFIX.firstmate.plist
   [[ -f $old ]] && { act rm -f $old; dry || print "removed the old firstmate LaunchAgent $old (hcron starts it now)." }
   command -v node >/dev/null || { print "Note: no node, so the hcron job $job was not checked (brew install node)."; exit 0 }
+  # The jobs file lives in the profile, which syncs to every machine. A machine without the cron
+  # module never runs it, so adding or removing the job there would only rewrite (with this
+  # machine's paths) or delete the job another machine runs. Leave it alone.
+  if ! enabled cron; then
+    print "Note: autostart needs the cron module (add cron to MODULES and re-install); the shared hcron job $job was left alone."
+    exit 0
+  fi
   if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then
     # hcron add updates the job in place (and keeps a pause), so re-running is safe.
     act hcron add $job --cron '*/5 * * * *' --cmd "/bin/zsh $mod/start.sh --once" --catchup --timeout 2m --project firstmate
-    enabled cron || print "Note: the hcron job $job only runs once the cron module is on (add cron to MODULES)."
   elif has_job; then
     act hcron rm $job
   fi
