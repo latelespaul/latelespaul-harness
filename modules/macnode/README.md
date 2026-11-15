@@ -134,7 +134,8 @@ vm$ echo $?
 - hcron runs the service under `caffeinate -i`, so the Mac does not idle-sleep while it serves.
 
 ## Files
-- `mac-node.mjs`: the CLI (both sides). `actions.mjs`: the allowlist. `install.sh`: both roles.
+- `mac-node.mjs`: the CLI (both sides). `actions.mjs`: the allowlist. `lock.mjs`: the pid lock for
+  `serve.pid` and `drain.pid`. `install.sh`: both roles.
 - Tests: `node --test modules/macnode/*.test.mjs`. They use a fake ssh (`test/fake-ssh.mjs`, which
   runs the bridge on its own stdin and stdout, as sshd would) and stub `hsx`, `awake`, `hcron` and
   `jobhunt` in a throwaway folder. They never run real ssh, Hammerspoon or Chrome.
