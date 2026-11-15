@@ -1,0 +1,20 @@
+# Per-repo no-mistakes settings. no-mistakes reads commands and agent settings from the
+# default-branch copy of this file, so a pushed branch cannot change them.
+
+# The Test step runs the same offline suite as .github/workflows/test.yml, and nothing else.
+# CI=1 and an unset EYESHANDS_LIVE keep modules/eyeshands/test/live.test.mjs (real mouse and
+# keyboard on a throwaway Chrome) skipped: live GUI tests must never run in validation.
+commands:
+  test: "env -u EYESHANDS_LIVE CI=1 node --test $(find modules scripts -name '*.test.mjs' | sort)"
+
+# The Test agent still runs after the command; these limits stop it from choosing a live run.
+test:
+  instructions: |
+    Validate offline only. The configured test command is the whole test suite for this repository.
+    Never run modules/eyeshands/test/live.test.mjs, never set EYESHANDS_LIVE, and never start
+    Chrome or any other browser.
+    Never post mouse or keyboard input, take screenshots, call hs, hsx, eyeshands, awake or
+    Hammerspoon, or drive any app on this Mac. The operator may be using the screen.
+    Drive scenarios only through node tests, fake tools and a throwaway HOME, the way the existing
+    *.test.mjs files do. A scenario that needs the real screen, mouse or keyboard is "untested";
+    say so with that reason.
