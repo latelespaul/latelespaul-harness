@@ -151,13 +151,10 @@ case $mode in
   elif [[ -n $(owner) ]] && ! session_up; then exit 0; fi
   exit 1 ;;
 --uninstall)
+  if (( linux )); then act mkdir -p $state/watchdog; act touch $state/watchdog/uninstalled; fi
   stop_agents
   (( linux )) || for n in $all; do act rm -f $agents_dir/$(label $n).plist; done
-  if (( linux )); then
-    act mkdir -p $state/watchdog
-    act touch $state/watchdog/uninstalled
-    print "The watchdog now does nothing here; remove its line from crontab (crontab -e) if you added it."
-  fi
+  (( linux )) && print "The watchdog now does nothing here; remove its line from crontab (crontab -e) if you added it."
   (( polling )) && [[ $(owner) == $host ]] && set_owner ""
   print "Telegram bot removed from $host."
   exit 0 ;;
@@ -209,6 +206,7 @@ if (( ! linux )); then
 else
   tmux_up || same=0
 fi
+act rm -f $state/watchdog/uninstalled
 if [[ $mode == install && $same == 1 ]]; then
   if (( ! polling )) && ! bot_running; then
     print "Telegram session (polling off) already running on $host; left it alone."
@@ -239,7 +237,6 @@ elif [[ -s $state/.env ]] && polled_elsewhere; then
 fi
 
 act mkdir -p $state/logs $state/watchdog $TELEGRAM_WORKDIR
-act rm -f $state/watchdog/uninstalled
 write_file $HOME/.claude/telegram-settings.json "$settings"
 link_memory $TELEGRAM_WORKDIR
 
