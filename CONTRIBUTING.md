@@ -31,7 +31,9 @@ what they fix reaches you on the next sync. Agents follow this file too (AGENTS.
    existing one), then re-syncs `local` (if the live checkout runs it) so the change runs right away.
    If the repo is set up for [no-mistakes](https://github.com/kunchenguid/no-mistakes) (firstmate
    installs it), you can also run the branch through its gate for review, tests and lint; that adds
-   to `upstream.sh pr`'s checks, it doesn't replace them.
+   to `upstream.sh pr`'s checks, it doesn't replace them. `.no-mistakes.yaml` pins its test step to
+   the offline suite CI runs and forbids live runs: live GUI tests (`modules/eyeshands/test/live.test.mjs`)
+   post real mouse and keyboard input, so they must never run in validation.
 
 ## What makes a good PR here
 - **One change per PR.** A skill and a script refactor are two PRs. Small PRs get merged, and if one
