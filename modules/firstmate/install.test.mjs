@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const INSTALL = fileURLToPath(new URL('./install.sh', import.meta.url));
 
-function sandbox() {
+function sandbox(modules = 'firstmate') {
   const d = realpathSync(mkdtempSync(join(tmpdir(), 'fm-install-test-')));
   const home = join(d, 'home'), fm = join(d, 'firstmate'), bin = join(d, 'bin');
   for (const p of [home, bin]) mkdirSync(p, { recursive: true });
@@ -24,8 +24,8 @@ function sandbox() {
   }
   mkdirSync(join(fm, '.git'), { recursive: true });   // "already cloned": the installer leaves it alone
   const envFile = join(d, 'harness.env');
-  writeFileSync(envFile, `FIRSTMATE_DIR="${fm}"\nMODULES="firstmate"\nFIRSTMATE_TELEGRAM=0\nLABEL_PREFIX="test"\nPROFILE_DIR="${d}/profile"\n`);
-  // HCRON_JOBS keeps hcron off the real profile (the cron module is off, so it is never written anyway).
+  writeFileSync(envFile, `FIRSTMATE_DIR="${fm}"\nMODULES="${modules}"\nFIRSTMATE_TELEGRAM=0\nLABEL_PREFIX="test"\nPROFILE_DIR="${d}/profile"\n`);
+  // HCRON_JOBS keeps hcron off the real profile (with the cron module off it is never written anyway).
   const env = { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HARNESS_ENV: envFile, HCRON_JOBS: join(d, 'jobs.json'), TMPDIR: d };
   const run = (args = []) => spawnSync('/bin/zsh', [INSTALL, ...args], { env, encoding: 'utf8' });
   return { d, home, run };
@@ -52,4 +52,13 @@ test('an existing zsh startup file is left alone', () => {
   const r = s.run(['--dry-run']);
   assert.doesNotMatch(r.stdout, /comment only/);
   assert.ok(!existsSync(join(s.home, '.zshrc')));
+});
+
+test('start hint: the "or wait" hcron line only when the cron module is on', () => {
+  const off = sandbox().run(['--dry-run']);
+  assert.match(off.stdout, /autostart needs the cron module/, off.stdout + off.stderr);
+  assert.doesNotMatch(off.stdout, /or wait: hcron/);
+  const on = sandbox('firstmate cron').run(['--dry-run']);
+  assert.match(on.stdout, /or wait: hcron job firstmate-start/, on.stdout + on.stderr);
+  assert.doesNotMatch(on.stdout, /autostart needs the cron module/);
 });

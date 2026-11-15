@@ -80,7 +80,8 @@ fi
 if [[ $mode == --start ]]; then
   zsh $mod/start.sh
 elif ! tmux has-session -t "=$FIRSTMATE_SESSION" 2>/dev/null; then
-  if [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate now with: $0 --start  (or wait: hcron job firstmate-start starts it within 5 minutes, once per boot)"
+  if [[ $FIRSTMATE_AUTOSTART == 1 ]] && enabled cron; then print "Start firstmate now with: $0 --start  (or wait: hcron job firstmate-start starts it within 5 minutes, once per boot)"
+  elif [[ $FIRSTMATE_AUTOSTART == 1 ]]; then print "Start firstmate with: $0 --start  (autostart needs the cron module: without it no hcron job starts firstmate after a reboot)"
   else print "Start firstmate with: $0 --start  (FIRSTMATE_AUTOSTART=0: start it again after a reboot)"; fi
 fi
 true
