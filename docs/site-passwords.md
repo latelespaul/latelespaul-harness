@@ -42,7 +42,8 @@ else
   if [[ -z $pw ]]; then
     print -u2 "no password made; not storing"
   else
-    print -r -- "add-generic-password -a \"$USER\" -s \"$svc\" -w \"$pw\"" | security -i >/dev/null 2>&1
+    print -r -- "add-generic-password -a \"$USER\" -s \"$svc\" -w \"$pw\"" \
+      | perl -e 'alarm 20; exec @ARGV' security -i >/dev/null 2>&1
     security find-generic-password -a "$USER" -s "$svc" >/dev/null 2>&1 \
       || print -u2 "$svc not stored; stop"
   fi
@@ -51,6 +52,8 @@ fi
 ```
 
 If either error shows, stop. Do not use the account and do not report it as made.
+A locked keychain makes `security -i` wait for an unlock prompt. The `perl` line stops it after
+20 seconds, so the "not stored" error shows and the agent does not hang.
 
 Step 5, into the field that has the focus (`paste: false` keeps the value off the clipboard). If the
 lookup fails or gives an empty value, the python line stops with an error and sends nothing to the
