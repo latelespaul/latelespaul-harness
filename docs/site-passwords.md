@@ -56,7 +56,7 @@ A locked keychain makes `security -i` wait for an unlock prompt. The `perl` line
 20 seconds, so the "not stored" error shows and the agent does not hang.
 
 Step 5, into the field that has the focus (`paste: false` keeps the value off the clipboard). If the
-lookup fails or gives an empty value, the python line stops with an error and sends nothing to the
+lookup fails or gives an empty value, the python line stops with an error. It sends nothing to the
 typing tool, so the tool types nothing:
 
 ```zsh
