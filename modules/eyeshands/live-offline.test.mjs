@@ -637,6 +637,38 @@ test('runLive: no web content after the wait records the diagnostic of the throw
   assert.deepEqual(out.problems, []);
 });
 
+test('runLive: no web content in the middle of the fill also records the diagnostic, with the step and the page', async () => {
+  const f = fakeWorld();
+  f.st.webDiag = PICKER_DIAG;
+  const call = f.session.call;
+  let n = 0;
+  // The web area is there for the wait and the first fields; then (say a popup takes focus) it is gone.
+  f.session.call = async (cmd, args) => {
+    if (cmd === 'eh.eyes.fields' && ++n > 3) return { ok: true, result: { ok: false, reason: 'no_web_content', hint: 'gone' } };
+    return call(cmd, args);
+  };
+  const out = await runLive(f.world);
+  assert.equal(out.status, 'fail');
+  assert.match(out.reason, /^eyes fields: no_web_content: gone/);
+  assert.equal(out.diagnostic.step, 'fill email', 'the third field of the fill');
+  assert.match(out.diagnostic.summary, /^at fill email; /);
+  assert.equal(out.diagnostic.page.seq, 9);
+  assert.equal(out.diagnostic.page.values.name, FILL.name);
+  assert.ok(Array.isArray(out.diagnostic.page.last_events));
+  // Other failures record none.
+  const g = fakeWorld({ stopCommand: async () => ({ stopped: false }) });
+  const other = await runLive(g.world);
+  assert.equal(other.status, 'fail');
+  assert.equal(other.diagnostic, undefined);
+  assert.ok(!g.names().includes('webDiag'));
+});
+
+test('cleanup: an error in the test Spoon\'s stop() is a problem of its own', async () => {
+  const f = fakeWorld({ unloadSpoon: async () => ({ gone: true, stop_error: 'hands.lua:1: boom' }) });
+  const problems = await cleanup(f.world, { loaded: true, port: 'eyeshands-test-abcd', jobhuntBefore: '{"state":"idle"}' });
+  assert.deepEqual(problems, ['clean-up spoon: its stop() failed: hands.lua:1: boom']);
+});
+
 test('runLive: a diagnostic that fails records its error and keeps the no_web_content failure', async () => {
   const f = fakeWorld({ webDiag: async () => { throw new Error('hs -c failed (-1): timeout'); } });
   slowWebContent(f, Infinity);

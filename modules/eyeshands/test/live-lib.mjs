@@ -247,6 +247,7 @@ function driver(w, st) {
   };
   // Clicks a field by its HTML id; scrolls it into view first when the hands say offscreen.
   const clickField = async (dom, expect = []) => {
+    st.step = `${st.step?.split(' ')[0] || 'fill'} ${dom}`;
     for (let i = 0; i < 4; i++) {
       const f = (await fields()).find(x => x.dom === dom);
       if (!f) throw new Error(`the eyes found no field with dom ${dom}`);
@@ -278,11 +279,16 @@ export async function waitWebContent(w, d, { timeoutMs = WEB_CONTENT_WAIT_MS, ev
 // tree of the front window, the Chrome pids of the profile, and a one-line summary. Read-only; each
 // part records its own error, so the diagnostic never hides the failure it explains.
 export async function webDiagnostic(w, st, d) {
-  const out = { chrome_pid: st.chromePid ?? null };
+  const out = { chrome_pid: st.chromePid ?? null, step: st.step ?? null };
   const part = async (name, fn) => { try { out[name] = await fn(); } catch (e) { out[`${name}_error`] = e.message || String(e); } };
   await part('chrome_pids', () => w.chromePids(st.profile));
   await part('ax', () => w.webDiag(st.chromePid));
   await part('eyes_tree', () => d.call('eh.eyes.tree', { target: TARGET, depth: 5, max_nodes: 400 }));
+  // How far the fill got, from the page's own report (DOM values and the last events).
+  await part('page', async () => {
+    const r = st.fx?.report?.();
+    return r ? { seq: r.seq, values: r.values, contact: r.contact, agree: r.agree, file: r.file, last_events: list(r.log).slice(-8) } : null;
+  });
   out.summary = webSummary(out);
   return out;
 }
@@ -292,7 +298,7 @@ export function webSummary(dg) {
   const ax = dg?.ax;
   if (!ax) return `no AX diagnostic${dg?.ax_error ? ` (${dg.ax_error})` : ''}`;
   if (ax.error) return ax.error;
-  const parts = [];
+  const parts = dg.step ? [`at ${dg.step}`] : [];
   if (ax.resolved && ax.resolved.pid !== dg.chrome_pid) parts.push(`the Spoon resolves the target to pid ${ax.resolved.pid ?? '-'} (${ax.resolved.reason || 'ok'}), not the Chrome pid ${dg.chrome_pid}`);
   const wins = list(ax.windows);
   parts.push(`${wins.length} AX window(s): ${wins.map(x => `${x.index} "${x.title ?? ''}" ${x.subrole || x.role || '?'}${x.focused ? ' focused' : ''}${x.main ? ' main' : ''}`).join(', ') || 'none'}`);
@@ -488,16 +494,16 @@ async function body(w, st, opts) {
   st.measured.driver_lock = true;
   await sleepFor(w, 600);
 
-  try {
-    await waitWebContent(w, d);
-  } catch (e) {
-    // Record what the eyes looked at before the clean-up closes Chrome (diagnosis only).
-    if (/no_web_content/.test(e.message || '')) st.diagnostic = await webDiagnostic(w, st, d);
-    throw e;
-  }
+  st.driver = d;
+  st.step = 'wait';
+  await waitWebContent(w, d);
+  st.step = 'fill';
   await fillForm(w, st, d);             // 5
+  st.step = 'measure';
   await measureIdle(w, st, d);          // 8
+  st.step = 'takeover';
   await takeover(w, st, d, opts.buffer); // 6
+  st.step = 'foreign';
   await foreignAndStop(w, st, d);       // 7
 }
 
@@ -549,6 +555,7 @@ export async function cleanup(w, st) {
     if (!st.loaded) return;
     const r = await w.unloadSpoon({ restoreTag: st.restoreTag });
     if (!r || r.gone !== true) problems.push(`clean-up spoon: ${GLOBAL} is still loaded`);
+    if (r?.stop_error) problems.push(`clean-up spoon: its stop() failed: ${r.stop_error}`);
     if (st.port && await portStillOpen(w, st.port)) problems.push(`clean-up spoon: the port ${st.port} still answers`);
   });
   await step('awake', async () => {
@@ -606,6 +613,10 @@ export async function runLive(w, opts = {}) {
     outcome = e instanceof Skip ? { status: 'skip', reason: e.message }
       : e instanceof Inconclusive ? { status: 'inconclusive', reason: e.message }
         : { status: 'fail', reason: e.message || String(e) };
+    // No web content at any step: record what the eyes looked at before the clean-up closes Chrome.
+    if (outcome.status === 'fail' && /no_web_content/.test(outcome.reason) && st.driver) {
+      st.diagnostic = await webDiagnostic(w, st, st.driver).catch(err => ({ error: err.message || String(err) }));
+    }
   } finally {
     st.problems = await cleanup(w, st);
   }

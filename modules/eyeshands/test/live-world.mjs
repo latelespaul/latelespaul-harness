@@ -111,15 +111,16 @@ export function realWorld(env = process.env) {
         return hs.json.encode({ port_open = eh._s ~= nil and eh._s.port ~= nil })`, 20000);
       if (r.port_open !== true) throw new Error(`the test Spoon did not open its port ${port}`);
     },
-    // Unloads the test Spoon. Its stop() removes the Eyes & Hands event tag from the harness; when
+    // Unloads the test Spoon (stop_error: what its stop() threw, if anything). Its stop() removes the Eyes & Hands event tag from the harness; when
     // the running Spoon had it registered, it goes back in the same call, so that Spoon's input
     // stays machine input for the awake watcher.
     unloadSpoon: ({ restoreTag }) => hsJson(`local t = rawget(_G, ${lua(GLOBAL)})
-      if t then pcall(function() t:stop() end) end
+      local stopped, why = true, nil
+      if t then stopped, why = pcall(function() t:stop() end) end
       ${GLOBAL} = nil; ${DETECTOR} = nil
       local h = rawget(_G, "harness")
       if ${restoreTag ? 'true' : 'false'} and type(h) == "table" and type(rawget(h, "addEventTag")) == "function" then h.addEventTag(${EVENT_TAG}) end
-      return hs.json.encode({ gone = rawget(_G, ${lua(GLOBAL)}) == nil })`),
+      return hs.json.encode({ gone = rawget(_G, ${lua(GLOBAL)}) == nil, stop_error = (not stopped) and tostring(why) or nil })`),
     // Whether the port gave a real answer (live-lib.mjs portAnswered): exit 3 (no such port, or
     // unreachable), a timeout, a crash or a reply that is not JSON is no answer.
     portOpen: async port => {
