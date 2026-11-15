@@ -2,10 +2,12 @@
 -- list. Pure Lua 5.4: no hs.* calls, no global writes, nothing posted; hands.lua plays the list.
 -- A line-by-line port of job-hunt's plan.mjs with the same constants and the same SplitMix64 RNG,
 -- so for one seed both planners give the same events (test/planner-golden.json checks it).
--- One change: key codes come from a layout (keys(hs.keycodes.map, hs.keycodes.currentLayout()) in
--- the Spoon), not a fixed US table; with the default US layout the output equals plan.mjs. The
--- planner never guesses a key: on a layout other than US, a character with no key in the map (and
--- no base letter in it) gets keyDown/keyUp events with no key field, only chars and flags, and
+-- One change: key codes come from a layout (keys(hs.keycodes.map, hs.keycodes.currentLayout(),
+-- hs.keycodes.currentSourceID()) in the Spoon), not a fixed US table; with the default US layout the
+-- output equals plan.mjs. ABC - India and ABC - Extended (P.US_SHIFT_LAYOUTS, by input source ID)
+-- also get the US shifted symbols (@ is Shift+2). The planner never guesses a
+-- key: on a layout other than US, a character with no key in the map (no base letter in it, and not
+-- such a shifted symbol) gets keyDown/keyUp events with no key field, only chars and flags, and
 -- hands.lua posts them as Unicode-only key events without a key code. On the US layout such a
 -- character uses key code 0, as in plan.mjs.
 --
@@ -14,7 +16,7 @@
 --   local P = dofile(spoonPath .. "/planner.lua")
 --   local plan = P.plan("click", { rect = { 412, 388, 320, 32 } },
 --     { rng = P.Rng(seed), from = { x = 100, y = 200 },
---       layout = P.keys(hs.keycodes.map, hs.keycodes.currentLayout()) })
+--       layout = P.keys(hs.keycodes.map, hs.keycodes.currentLayout(), hs.keycodes.currentSourceID()) })
 --   plan.events -> { {t = 0, type = "move", x = 101, y = 201, dx = 1, dy = 1, phase = "main"}, ... }
 -- Event types: move (x, y, dx, dy, phase main|correct), down/up (x, y, clicks), flagsDown/flagsUp
 -- (key, flags), keyDown/keyUp (key or none, flags, chars = the Unicode string), scroll (dx, dy wheel
@@ -219,6 +221,11 @@ P.US_MAP = { a = 0, s = 1, d = 2, f = 3, h = 4, g = 5, z = 6, x = 7, c = 8, v = 
 P.US_SHIFTED = { ["!"] = "1", ["@"] = "2", ["#"] = "3", ["$"] = "4", ["^"] = "6", ["%"] = "5", ["+"] = "=",
   ["("] = "9", ["&"] = "7", ["_"] = "-", ["*"] = "8", [")"] = "0", ["}"] = "]", ["{"] = "[", ['"'] = "'",
   [":"] = ";", ["|"] = "\\", ["<"] = ",", ["?"] = "/", [">"] = ".", ["~"] = "`" }
+-- Layouts (input source IDs, hs.keycodes.currentSourceID()) that are not the US layout but have its
+-- Shift layer on the US symbol keys, whatever their unshifted characters (ABC - India has the rupee
+-- sign on the ` key, still with ~ on Shift).
+P.US_SHIFT_LAYOUTS = { ["com.apple.keylayout.ABC-India"] = true, ["com.apple.keylayout.USExtended"] = true }
+
 -- Keys that are the same on every layout.
 local FIXED = { [" "] = 49, ["\n"] = 36, ["\t"] = 48 }
 
@@ -252,19 +259,22 @@ Layout.__index = Layout
 --- A keyboard layout from a character -> key code map (hs.keycodes.map for the current layout; its
 --- numeric and named entries are ignored; read with rawget, since hs.keycodes.map answers any key
 --- through an __index fallback, map["H"] = 4). Letters also get their capitals on Shift. `name` is the
---- layout name (hs.keycodes.currentLayout()); without it, the map is the US layout when every
---- US_MAP entry has the same code in it. Only the US layout ("U.S." or "ABC") gets the US shifted
---- symbols; other layouts get no key for a symbol their map does not have.
+--- layout name (hs.keycodes.currentLayout()) and `id` its input source ID
+--- (hs.keycodes.currentSourceID()); without both, the map is the US layout when every US_MAP entry
+--- has the same code in it. The US layout ("U.S." or "ABC") and the layouts in US_SHIFT_LAYOUTS get
+--- the US shifted symbols on their US keys with Shift; other layouts get no key for a symbol their map
+--- does not have.
 --- With no arguments: the US layout, the same table as plan.mjs.
-function P.keys(map, name)
+function P.keys(map, name, id)
   map = map or P.US_MAP
-  local us = name == "U.S." or name == "ABC"
-  if name == nil then
+  local us = name == "U.S." or name == "ABC" or id == "com.apple.keylayout.US" or id == "com.apple.keylayout.ABC"
+  if name == nil and id == nil then
     us = true
     for c, code in pairs(P.US_MAP) do
       if rawget(map, c) ~= code then us = false; break end
     end
   end
+  local usShift = us or P.US_SHIFT_LAYOUTS[id] == true
   local chars = {}
   for c, code in pairs(map) do
     if isChar(c) and math.type(code) == "integer" then
@@ -274,10 +284,11 @@ function P.keys(map, name)
     end
   end
   for c, code in pairs(FIXED) do chars[c] = { code, false } end
-  if us then
+  if usShift then
+    -- The US key, not the map's key for the base character: on ABC - India the ` key types the rupee
+    -- sign, so the map has no `, yet Shift on that key still types ~.
     for sym, base in pairs(P.US_SHIFTED) do
-      local code = rawget(map, base)
-      if chars[sym] == nil and code ~= nil then chars[sym] = { code, true } end
+      if chars[sym] == nil then chars[sym] = { P.US_MAP[base], true } end
     end
   end
   return setmetatable({ map = map, chars = chars, us = us }, Layout)

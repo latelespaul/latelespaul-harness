@@ -273,7 +273,10 @@ function obj:start(user)
     now = hs.timer.secondsSinceEpoch,
     nowMs = function() return hs.timer.absoluteTime() / 1e6 end,
     seed = function() return math.tointeger(hs.timer.absoluteTime() // 1) or os.time() end,
-    layout = function() return P.keys(hs.keycodes.map, hs.keycodes.currentLayout()) end,
+    layout = function()
+      local id = hs.keycodes.currentSourceID and hs.keycodes.currentSourceID() or nil
+      return P.keys(hs.keycodes.map, hs.keycodes.currentLayout(), id)
+    end,
     resolve = s.targets.resolve,
     frontPid = function()
       local a = hs.application.frontmostApplication()

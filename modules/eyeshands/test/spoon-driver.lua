@@ -350,7 +350,8 @@ local fakeHs = {
     changeCount = function() return PB.change end,
   },
   mouse = { absolutePosition = function() return { x = MOUSE.x, y = MOUSE.y } end },
-  keycodes = { map = dofile(SPOON .. "/planner.lua").US_MAP, currentLayout = function() return "U.S." end },
+  keycodes = { map = dofile(SPOON .. "/planner.lua").US_MAP, currentLayout = function() return "U.S." end,
+    currentSourceID = function() return "com.apple.keylayout.US" end },
   notify = { new = function(t) return { send = function() R.notes[#R.notes + 1] = t.informativeText end } end },
   pathwatcher = { new = function(dir, fn)
     R.watched, R.watch = dir, fn
