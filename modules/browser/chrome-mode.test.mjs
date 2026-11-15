@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const MOD = dirname(fileURLToPath(import.meta.url));
+const skipMac = process.platform === 'darwin' ? false : 'macOS only (plutil)';
 const INSTALL = join(MOD, 'install.sh'), LAUNCH = join(MOD, 'chrome-launch.sh'), MODE = join(MOD, 'chrome-mode.sh');
 
 // Fake launchctl: a label is loaded while $FAKE/loaded-<label> exists; bootstrap also opens the debug
@@ -94,7 +95,7 @@ function sandbox() {
   };
 }
 
-test('agent mode: install writes the guarded plist and loads every browser', () => {
+test('agent mode: install writes the guarded plist and loads every browser', { skip: skipMac }, () => {
   const s = sandbox();
   const r = s.install();
   assert.equal(r.status, 0, r.stdout + r.stderr);

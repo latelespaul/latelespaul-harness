@@ -19,7 +19,8 @@ const LUA = [process.env.LUA, 'lua5.4', 'lua', '/opt/homebrew/opt/lua@5.4/bin/lu
   .filter(Boolean).find(b => spawnSync(b, ['-e', 'assert(_VERSION >= "Lua 5.4")']).status === 0);
 const PY = spawnSync('python3', ['-c', '1']).status === 0;
 const skipLua = LUA ? false : 'no Lua 5.4 (brew install lua@5.4)';
-const skipE2E = skipLua || (PY ? false : 'no python3');
+const skipHsx = process.platform !== 'darwin' ? 'macOS only (hsx and the fake port use CoreFoundation)' : PY ? false : 'no python3';
+const skipE2E = skipLua || skipHsx;
 
 // Runs lines through the driver; one parsed output per input line.
 function drive(lines) {
@@ -310,7 +311,7 @@ test('hsx raw relays envelopes the caller signed itself; disarm releases', { ski
   } finally { p.stop(); }
 });
 
-test('hsx exits 3 when no port answers, and 2 on bad input', { skip: PY ? false : 'no python3' }, () => {
+test('hsx exits 3 when no port answers, and 2 on bad input', { skip: skipHsx }, () => {
   const none = spawnSync(HSX, ['--port', `harness-none-${process.pid}`, 'status'], { encoding: 'utf8' });
   assert.equal(none.status, 3);
   assert.match(none.stderr, /no "harness-none-\d+" port/);
@@ -322,7 +323,7 @@ test('hsx exits 3 when no port answers, and 2 on bad input', { skip: PY ? false 
 const accessDir = () => mkdtempSync(join(tmpdir(), 'hsx-access-'));
 const access = (file, ...a) => spawnSync(HSX, ['access', ...a.slice(0, 1), '--file', file, ...a.slice(1)], { encoding: 'utf8' });
 
-test('hsx access allow and deny write a valid policy atomically, readable only by you', { skip: PY ? false : 'no python3' }, () => {
+test('hsx access allow and deny write a valid policy atomically, readable only by you', { skip: skipHsx }, () => {
   const file = join(accessDir(), 'sub', 'access.json');
   assert.equal(access(file, 'list').status, 1, 'no file: list says nothing may arm');
   const a = access(file, 'allow', 'runner', 'eyes,hands', '--apps', 'chrome', '--window', '20:00-05:00', '--manual-runs', '--max-minutes', '600');
@@ -336,7 +337,7 @@ test('hsx access allow and deny write a valid policy atomically, readable only b
   assert.match(access(file, 'list').stdout, /runner\s+off\s+eyes,hands\s+apps=chrome\s+window=20:00-05:00/);
 });
 
-test('hsx access refuses bad input and never edits an invalid file', { skip: PY ? false : 'no python3' }, () => {
+test('hsx access refuses bad input and never edits an invalid file', { skip: skipHsx }, () => {
   const file = join(accessDir(), 'access.json');
   assert.equal(access(file, 'allow', 'runner', 'hands', '--window', '25:00-01:00').status, 2);
   assert.equal(existsSync(file), false, 'nothing written');
@@ -348,7 +349,7 @@ test('hsx access refuses bad input and never edits an invalid file', { skip: PY 
   assert.equal(readFileSync(file, 'utf8'), '{"owners":{"x":{"capabilites":[]}}}');
 });
 
-test('hsx access and port.lua agree on what a valid policy is', { skip: skipLua || (PY ? false : 'no python3') }, () => {
+test('hsx access and port.lua agree on what a valid policy is', { skip: skipE2E }, () => {
   const ex = readFileSync(here('./access.example.json'), 'utf8');
   const cases = [ex, '{}', '{"owners":{}}', '{"owners":{"a":{"enabled":true,"capabilities":["eyes"],"window":"9:30-17:00"}}}',
     '{"_note":"x","owners":{"a":{"_why":"y","alert":"telegram","lock_minutes":10}}}',

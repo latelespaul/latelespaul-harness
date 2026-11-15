@@ -23,6 +23,8 @@ const FAKE = join(MOD, 'test/fake-eh-port.py');
 const PY = spawnSync('python3', ['-c', '1']).status === 0;
 const JQ = spawnSync('/bin/sh', ['-c', 'command -v jq']).stdout?.toString().trim();
 const skip = !PY ? 'no python3' : !JQ ? 'no jq' : false;
+const skipHsx = process.platform !== 'darwin' ? 'macOS only (hsx and the fake port use CoreFoundation)' : PY ? false : 'no python3';
+const skipMac = skip || skipHsx;
 const LUA = [process.env.LUA, 'lua5.4', 'lua', '/opt/homebrew/opt/lua@5.4/bin/lua', '/usr/local/opt/lua@5.4/bin/lua']
   .filter(Boolean).find(b => spawnSync(b, ['-e', 'assert(_VERSION >= "Lua 5.4")']).status === 0);
 const QUIT = 'osascript -e tell application "Hammerspoon" to quit';
@@ -50,7 +52,7 @@ function sandbox({ running = false, harnessStatus = {}, hsConfig = true, env: ex
   writeFileSync(join(d, 'harness.env'), `PROFILE_DIR="${profile}"\n`);
   // EYESHANDS_PORT and HSX_PORT: ports nobody holds unless a test starts a fake one; never the live ones.
   const env = { ...process.env, HOME: home, HARNESS_ENV: join(d, 'harness.env'),
-    PATH: `${bin}:/usr/bin:/bin`, HSX_PORT: 'eh-install-test-none',
+    PATH: `${bin}:/usr/bin:/bin`, HSX_PORT: 'eh-install-test-none', HARNESS_BACKUP: undefined,   // backups land in this HOME
     EYESHANDS_PORT: `eh-install-test-none-${randomBytes(3).toString('hex')}`, EYESHANDS_WAIT_SECS: '0', ...extra };
   const run = (...a) => spawnSync('/bin/zsh', [INSTALL, ...a], { env, encoding: 'utf8', timeout: 60000 });
   const lines = () => (existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : []);
@@ -176,7 +178,7 @@ test('running without the Spoon, but awake mode is held or a harness owner is ar
   assert.match(r.stdout, new RegExp(`restart deferred: the Eyes & Hands Spoon is not loaded yet, but awake mode is held by night-job and armed: runner\\. Run ${INSTALL} again`));
 });
 
-test('the Spoon already runs: no restart; --restart restarts, deferred while Eyes & Hands is busy', { skip }, async () => {
+test('the Spoon already runs: no restart; --restart restarts, deferred while Eyes & Hands is busy', { skip: skipMac }, async () => {
   const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
   let stop = await fakePort(s);
   try {
@@ -199,7 +201,7 @@ test('the Spoon already runs: no restart; --restart restarts, deferred while Eye
   } finally { stop(); }
 });
 
-test('the stop switch is on: --restart and --uninstall defer the restart, so the person keeps the hold', { skip }, async () => {
+test('the stop switch is on: --restart and --uninstall defer the restart, so the person keeps the hold', { skip: skipMac }, async () => {
   const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
   assert.equal(s.run('--no-restart').status, 0);
   const stop = await fakePort(s, { stop: { stopped: true, by: 'hotkey', until: '2026-11-11T10:30:00Z', retry_after_s: 1500 } });
@@ -224,7 +226,7 @@ test('--no-restart only links', { skip }, () => {
   assert.ok(existsSync(s.links.loader));
 });
 
-test('--status: ok after install with the Spoon up; exit 1 when links are missing or the port does not answer', { skip }, async () => {
+test('--status: ok after install with the Spoon up; exit 1 when links are missing or the port does not answer', { skip: skipMac }, async () => {
   const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
   let r = s.run('--status');
   assert.equal(r.status, 1);
@@ -258,7 +260,7 @@ test('--status: ok after install with the Spoon up; exit 1 when links are missin
   assert.match(r.stdout, /Hammerspoon is not running/);
 });
 
-test('--uninstall: removes only its own links, keeps the policy files, restarts (deferred) so the Spoon stops', { skip }, async () => {
+test('--uninstall: removes only its own links, keeps the policy files, restarts (deferred) so the Spoon stops', { skip: skipMac }, async () => {
   const s = sandbox({ running: true, harnessStatus: { awake: { owners: [] } } });
   assert.equal(s.run('--no-restart').status, 0);
   const access = join(s.profile, 'hammerspoon/access.json');
@@ -299,7 +301,7 @@ test('--dry-run changes nothing', { skip }, () => {
   assert.match(r.stdout, /would: osascript/);
 });
 
-test('example files: access.example.json passes the hsx policy check and enables harness-session', { skip: PY ? false : 'no python3' }, () => {
+test('example files: access.example.json passes the hsx policy check and enables harness-session', { skip: skipHsx }, () => {
   const file = join(MOD, 'access.example.json');
   const r = spawnSync('python3', ['-I', join(MOD, 'bin/hsx'), 'access', 'list', '--file', file], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
