@@ -31,6 +31,18 @@ REPO="$(cd "$MODULE/../.." && pwd -P)"
 die() { echo "build-dmg: $*" >&2; exit 1; }
 say() { echo "build-dmg: $*"; }
 
+# hdiutil_try STEP ARGS...: run hdiutil ARGS up to 3 times, 5 s apart (macOS runners sometimes report
+# "Resource busy" once). Each failed try prints hdiutil's own output; the last one stops the build.
+hdiutil_try() {
+  local step="$1" try out; shift
+  for try in 1 2 3; do
+    out="$(hdiutil "$@" 2>&1)" && return 0
+    echo "build-dmg: hdiutil $step failed (try $try of 3): ${out:-no output}" >&2
+    [ "$try" = 3 ] || sleep 5
+  done
+  die "hdiutil $step failed 3 times; giving up"
+}
+
 # verify_app APP: the official Hammerspoon, signed and notarized by its team, at the pinned version.
 verify_app() {
   local app="$1" out
@@ -127,18 +139,20 @@ build() {
   check_layout "$stage"
 
   rm -f "$out/EyesHands.dmg" "$out/EyesHands.spoon.zip" "$out/SHA256SUMS"
-  hdiutil create -quiet -volname "$VOLNAME" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out/EyesHands.dmg"
+  hdiutil_try create create -volname "$VOLNAME" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out/EyesHands.dmg"
   ( cd "$stage" && ditto -c -k --norsrc --noextattr --keepParent EyesHands.spoon "$out/EyesHands.spoon.zip" )
 
   # Check what ships: the image, mounted read-only at a temporary folder, hidden from Finder.
   mkdir "$mnt"
-  hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$mnt" "$out/EyesHands.dmg"
+  hdiutil_try attach attach -readonly -nobrowse -noautoopen -mountpoint "$mnt" "$out/EyesHands.dmg"
   verify_app "$mnt/Hammerspoon.app"
   check_layout "$mnt"
-  hdiutil detach -quiet "$mnt"
+  hdiutil_try detach detach "$mnt"
   ( cd "$out" && shasum -a 256 EyesHands.dmg EyesHands.spoon.zip > SHA256SUMS )
   say "wrote $out/EyesHands.dmg, $out/EyesHands.spoon.zip and $out/SHA256SUMS"
 }
+
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0   # sourced (the tests): define the functions only
 
 usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
