@@ -80,7 +80,7 @@ EYESHANDS_LIVE=1 EYESHANDS_HOLD_FILE=<the driver lock file> EYESHANDS_LIVE_REPOR
 ```
 - `EYESHANDS_HOLD_FILE` names the driver lock. Without it, the test uses the `hold_file` of the running Spoon. With neither, it skips, because every live run takes the driver lock.
 - `awake run` holds awake mode, so the idle lock cannot stop the run.
-- `EYESHANDS_LIVE_REPORT` (optional) writes the outcome and the measurements as a JSON (JavaScript Object Notation) file. Keep that file as the record of the run.
+- `EYESHANDS_LIVE_REPORT` (optional) writes the outcome and the measurements as a JSON (JavaScript Object Notation) file. Keep that file as the record of the run. After a `no_web_content` failure (the eyes find no web content), the report also has a `diagnostic`. It records the throwaway Chrome's AX windows, the front window the eyes pick, its tree and every web area. Without the report, the test output shows the whole diagnostic.
 - Keep your hands off the mouse and keyboard for about 60 s, then for the run (about 3 minutes).
 
 What it checks first. The test checks each item and skips with the reason. It never forces one, and it reads these states only:
