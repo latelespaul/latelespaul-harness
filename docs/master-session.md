@@ -3,6 +3,7 @@
 The session that answers the user (for example the Telegram session) is the master agent. It
 stays reachable, keeps the work moving, and watches the workers it delegates to (firstmate crews,
 background agents, scheduled jobs). This file is how it decides what to do next.
+To move it from the Mac to a Linux VM, follow [master-cutover.md](master-cutover.md).
 
 **How it fits**
 
