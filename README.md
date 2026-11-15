@@ -46,7 +46,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ~/.claude/settings.json           hooks: pull at start, learn at end (+ module fragments + your overlay)
  ~/.claude/skills|commands/*  ───> framework and profile files (profile wins on a name clash)
  ~/.claude/projects/*/memory  ───> profile memory/
- ~/Library/LaunchAgents/com.<prefix>.harness-sync.plist   sync every 2 h and at login
+ ~/Library/LaunchAgents/com.<prefix>.harness-sync.plist   sync every 2 h and at login (macOS; on Linux, a crontab line: SETUP.md)
 ```
 
 ## How it runs day to day
