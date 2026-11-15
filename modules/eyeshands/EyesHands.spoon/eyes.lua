@@ -16,9 +16,10 @@
 --   pixels    {target, points[] | rect}  colours as "#rrggbb"; `checked` for a control-sized rect
 --   shot      {target, max_px?}          path of a PNG of the target's front window, bounds
 -- A refusal is { ok=false, reason=, hint=, ... }, as in targets.lua and guards.lua.
--- fields, value, text and focused read the page window: under an open native sheet or dialog (a
--- file chooser), the browser window it covers. fields and text then add dialog_open = true; a
--- browser whose page cannot be read past the sheet refuses dialog_open, not no_web_content.
+-- In a browser, fields, value, text and focused read the page window: under an open native sheet
+-- or dialog (a file chooser), the browser window it covers. fields, value and text then add
+-- dialog_open = true; a browser whose page cannot be read past the sheet refuses dialog_open, not
+-- no_web_content. A native app reads its focused window, dialog included, as before.
 --
 -- Field records have the shape of job-hunt's jobhunt.lua, plus `onscreen`:
 --   { id, role, label, labelSource, value, placeholder, required, focused, enabled, dom, rect,
@@ -254,7 +255,7 @@ return function(deps)
     end
     return false
   end
-  -- The window that page reads (fields, value, text, focused) walk, and whether a native sheet or
+  -- The browser window that page reads (fields, value, text, focused) walk, and whether a native sheet or
   -- dialog is open in front of it. When the focused window is a sheet or dialog (Chrome's file
   -- chooser, its "Go to folder" sheet), the page is the window under it: the window the sheet
   -- hangs off (a sheet can hang off another sheet), else AXMainWindow, else the first standard
@@ -303,7 +304,7 @@ return function(deps)
     local tries = c.browser and 8 or 1
     local function filled(web) return web ~= nil and #children(web) > 0 end
     for attempt = 1, tries do
-      c.win, c.panel = pageWindow(c.app)
+      if c.browser then c.win, c.panel = pageWindow(c.app) else c.win = frontWindow(c.app) end
       c.web = c.win and findWebArea(c.win) or nil
       if c.browser and not filled(c.web) then
         local main = A(c.app, "AXMainWindow")
@@ -509,6 +510,7 @@ return function(deps)
     local function reply(d, via)
       d.ok, d.target, d.id, d.via = true, c.name, id, via
       d.viewport = c.viewport   -- the hands suggest a scroll from it for an off-screen field
+      if c.panel then d.dialog_open = true end
       return d
     end
     if hit and stillValid(hit.el) then return reply(describe(hit.el, nil, c), "id") end

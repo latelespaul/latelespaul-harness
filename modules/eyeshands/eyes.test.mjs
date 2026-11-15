@@ -237,10 +237,14 @@ test('a native sheet or dialog in front: page reads use the browser window under
     `app({ focus = "side", main = "win", wins = { "side", "win" }, nosheet = true }); return page(E.fields({ ${C} }, "o"))`,
     `app({ focus = "goto", empty = true }); local t0 = CLOCK; local r = E.fields({ ${C} }, "o"); return { r.reason, r.hint, CLOCK - t0 }`,
     `app({ focus = "side", wins = { "side" }, nosheet = true }); return E.fields({ ${C} }, "o").reason`,
-    `app({ focus = "goto" }); return E.value({ ${C}, dom = "cv" }, "o").label`,
+    `app({ focus = "goto" }); local r = E.value({ ${C}, dom = "cv" }, "o"); return { r.label, r.dialog_open }`,
     `app({ focus = "goto" }); local t = E.tree({ ${C} }, "o").tree; return { t.role, t.desc }`,
     `app({ focus = "goto" }); return E.dialog({ ${C} }, "o").open`,
     `${FORM}; E = eyes(); return page(E.fields({ ${T} }, "runner"))`,
+    `app({ focus = "dlg", main = "win", wins = { "dlg", "win" }, nosheet = true })
+     TARGETS.native = { ok = true, name = "native", bundle = "com.example.app", pid = 6 }; E = eyes()
+     local r = E.fields({ target = "native" }, "o")
+     return { r.ok, r.title, r.dialog_open == nil, r.fields and r.fields[1] and r.fields[1].label }`,
   ]));
   const upload = { ok: true, title: 'Upload', url: 'http://127.0.0.1:53111/upload', dialog_open: true, n: 1 };
   assert.deepEqual(out[0], upload, 'the focused sheet is not the page: the window it hangs off is');
@@ -254,11 +258,13 @@ test('a native sheet or dialog in front: page reads use the browser window under
   assert.deepEqual(out[6], ['dialog_open', 'a native sheet or dialog is in front of the page: read it with eyes_dialog', 7 * 150],
     'no readable page behind the sheet: an honest dialog_open, not no_web_content');
   assert.equal(out[7], 'no_web_content', 'no sheet and no web content anywhere is still no_web_content');
-  assert.equal(out[8], 'Choose file', 'value reads the page under the sheet');
+  assert.deepEqual(out[8], ['Choose file', true], 'value reads the page under the sheet and says dialog_open');
   assert.deepEqual(out[9], ['AXSheet', 'Go to folder'], 'tree keeps the focused window: the sheet');
   assert.equal(out[10], true);
   assert.deepEqual(out[11], { ok: true, title: 'Fixture form', url: 'http://127.0.0.1:53111/form', dialog_open: true, n: 9 },
     'a sheet attached to the focused page window also counts as open');
+  assert.deepEqual(out[12], [true, 'Open', true, 'File name'],
+    'a native app keeps reading its focused dialog window: its fields stay readable');
 });
 
 test('text, focused, dialog, tree and frontmost on the fixture', { skip }, () => {

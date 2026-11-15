@@ -533,6 +533,25 @@ test('where to: a field is read again before the plan; off-screen and off-window
   assert.deepEqual(out[7], { ok: false, error: 'app other-app not granted' }, 'the port checks the target first');
 });
 
+test('where to: a field under an open native sheet or dialog is refused dialog_open', { skip }, () => {
+  const p = prelude();
+  const out = ok(drive([
+    p.lua,
+    `SPOONOBJ._s.eyes.value = function() return { ok = true, rect = { 420, 300, 100, 20 }, onscreen = true, dialog_open = true } end
+     POSTED = {}; local r = {}
+     for _, a in ipairs({
+       { "eh.hands.click", ${j({ target: 'textedit', to: { field: 'f2' } })} },
+       { "eh.hands.move", ${j({ target: 'textedit', to: { field: 'f2' } })} },
+       { "eh.hands.scroll", ${j({ target: 'textedit', dy: 100, at: { field: 'f2' } })} },
+       { "eh.hands.drag", ${j({ target: 'textedit', from: { field: 'f2' }, to: { x: 500, y: 320 } })} },
+       { "eh.hands.drag", ${j({ target: 'textedit', from: { x: 500, y: 320 }, to: { field: 'f2' } })} },
+     }) do local x = hc("runner", a[1], a[2]); r[#r + 1] = { x.reason, x.hint, x.field } end
+     run(3000); return { r, #POSTED }`,
+  ]));
+  const refused = ['dialog_open', 'a native sheet or dialog covers the page: read it with eyes_dialog', 'f2'];
+  assert.deepEqual(out[1], [[refused, refused, refused, refused, refused], 0], 'no input is posted under the sheet');
+});
+
 test('hands in awake away mode: refused only when the harness cannot take our tag', { skip }, () => {
   const p = prelude();
   const click = j({ target: 'textedit', to: { rect: RECT } });

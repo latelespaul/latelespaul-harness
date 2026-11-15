@@ -302,7 +302,7 @@ Every eyes command reads the live desktop. So while the hold file is held (part 
 }
 ```
 
-**A native sheet or dialog.** A file chooser or its "Go to folder" sheet becomes the browser's focused window. `eyes_fields`, `eyes_value`, `eyes_text` and `eyes_focused` then read the browser window under it: the window the sheet hangs off, else the main window, else the first standard window. `eyes_fields` and `eyes_text` add `"dialog_open": true`. When the page cannot be read past the sheet, a browser refuses `dialog_open`, not `no_web_content`. `eyes_dialog` and `eyes_tree` still read the sheet itself.
+**A native sheet or dialog.** A file chooser or its "Go to folder" sheet becomes the browser's focused window. `eyes_fields`, `eyes_value`, `eyes_text` and `eyes_focused` then read the browser window under it: the window the sheet hangs off, else the main window, else the first standard window. `eyes_fields`, `eyes_value` and `eyes_text` add `"dialog_open": true`, and the hands refuse a `{field}` target with `dialog_open`, because the sheet covers the field. When the page cannot be read past the sheet, a browser refuses `dialog_open`, not `no_web_content`. `eyes_dialog` and `eyes_tree` still read the sheet itself. A native app (not a browser) reads its focused window, dialog included, so its dialog fields stay readable.
 
 **Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. A caller can lower a limit, but never raise it. A node below `maxDepth` skips only its own subtree. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
 
