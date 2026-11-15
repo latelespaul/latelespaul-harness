@@ -393,6 +393,32 @@ test('every shifted ASCII symbol types with Shift on its US key on a layout with
   assert.deepEqual(indiaId, [[0x40, 19, 1], [0x5f, 27, 1], [0x7e, 50, 1], [0x60, false, 0]]);
 });
 
+test('a listed layout other than ABC gets the US shifted symbols by its ID; an unlisted one does not', { skip }, () => {
+  const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
+    9: 25, 7: 26, '-': 27, 8: 28, 0: 29, ']': 30, '[': 33, "'": 39, ';': 41, '\\': 42, ',': 43, '/': 44, '.': 47, '`': 50 };
+  // Dutch and Australian are in P.US_SHIFT_LAYOUTS (test/layout-probe.swift); Swiss German is not: its
+  // Shift layer is not the US one, so a symbol its map lacks gets no guessed key.
+  const cps = [0x40, 0x5f, 0x7e, 0x7c, 0x21];
+  const [dutch, australian, swiss, dutchName] = drive([
+    call('keyfor', cps, US, 'Dutch', 'com.apple.keylayout.Dutch'),
+    call('keyfor', cps, US, 'Australian', 'com.apple.keylayout.Australian'),
+    call('keyfor', cps, { ...US, '§': 10 }, 'Swiss German', 'com.apple.keylayout.SwissGerman'),
+    call('keyfor', cps, US, 'Dutch')]);
+  const shifted = [[0x40, 19, 1], [0x5f, 27, 1], [0x7e, 50, 1], [0x7c, 42, 1], [0x21, 18, 1]];
+  assert.deepEqual(dutch, shifted, 'Dutch: Shift on the US keys');
+  assert.deepEqual(australian, shifted, 'Australian: Shift on the US keys');
+  assert.deepEqual(swiss, cps.map(c => [c, false, 0]), 'Swiss German: no guessed key');
+  assert.deepEqual(dutchName, cps.map(c => [c, false, 0]), 'the localized name alone does not count');
+  // A full plan on Dutch types an address with real key codes and Shift, the same as on U.S.
+  const text = 'ada@example.com a_b~c';
+  const [nl, us] = drive([call('plan', 'type', { text }, 7, null, US, 'Dutch', 'com.apple.keylayout.Dutch'),
+    call('plan', 'type', { text }, 7, null, US, 'U.S.', 'com.apple.keylayout.US')]);
+  const keys = p => p.events.filter(e => e.type === 'keyDown').map(e => [e.chars, e.key, e.flags]);
+  assert.deepEqual(keys(nl), keys(us));
+  assert.ok(keys(nl).every(([, key]) => typeof key === 'number'), 'every character has a key');
+});
+
 test('a map with an __index fallback (like hs.keycodes.map) still gives capitals their Shift key', { skip }, () => {
   const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
     o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
