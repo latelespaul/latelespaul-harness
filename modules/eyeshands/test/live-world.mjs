@@ -3,10 +3,10 @@
 // logic and calls only what this object offers; live.test.mjs imports this file only after the gate
 // passed (EYESHANDS_LIVE=1, no CI), so a default run starts no process at all.
 //
-// What it touches, and nothing else: Hammerspoon through `hs -c` (the read-only probe, the test
-// Spoon under the global __eyeshands_test on its own port eyeshands-test-<random>, the fake
-// detector __eyeshands_test_detector, one untagged 1-point mouse nudge), a Chrome started with a
-// temporary --user-data-dir, and a temporary folder. It never calls hs.loadSpoon or hs.reload(),
+// What it touches, and nothing else: Hammerspoon through `hs -c` (the read-only probe and web
+// diagnostic, the test Spoon under the global __eyeshands_test on its own port eyeshands-test-<random>, the fake
+// detector __eyeshands_test_detector, the run's test tag in harness.addEventTag, one 1-point mouse
+// nudge with that tag), a Chrome started with a temporary --user-data-dir, and a temporary folder. It never calls hs.loadSpoon or hs.reload(),
 // never writes in ~/.hammerspoon, and never touches job-hunt, its lock or the real ports.
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -16,11 +16,12 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { startFixture } from './fixture-server.mjs';
-import { DETECTOR, EVENT_TAG, GLOBAL, OWNER, WHO } from './live-lib.mjs';
+import { DETECTOR, EVENT_TAG, GLOBAL, OWNER, TARGET, WHO, portAnswered } from './live-lib.mjs';
 
 const here = p => fileURLToPath(new URL(p, import.meta.url));
 const SPOON = here('../EyesHands.spoon');
 const PROBE = here('./live-probe.lua');
+const WEBDIAG = here('./live-webdiag.lua');
 const EYESHANDS = here('../bin/eyeshands');
 const TMP_PREFIX = 'eh-live-';
 
@@ -36,7 +37,8 @@ function run(file, args, { timeout = 15000, input } = {}) {
     const child = execFile(file, args, { timeout, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, missing: err?.code === 'ENOENT', stdout, stderr });
     });
-    if (input !== undefined) child.stdin.end(input);
+    // Always close stdin: `hs -c` waits on an open stdin pipe and never answers.
+    child.stdin.end(input);
   });
 }
 const firstFile = list => list.find(p => p && existsSync(p));
@@ -47,16 +49,26 @@ const hasProfile = (command, profile) => String(command).split(/\s+/).includes(`
 export function realWorld(env = process.env) {
   const HS = firstFile(['/opt/homebrew/bin/hs', '/usr/local/bin/hs']) || 'hs';
   const HCRON = firstFile([join(homedir(), '.local/bin/hcron')]) || 'hcron';
-  const hs = async (code, timeout = 10000) => {
-    const r = await run(HS, ['-c', code], { timeout });
+  const hs = async (code, timeout = 10000, cliSeconds) => {
+    const r = await run(HS, [...(cliSeconds ? ['-t', String(cliSeconds)] : []), '-c', code], { timeout });
     if (r.code !== 0) throw new Error(`hs -c failed (${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
     return r.stdout.trim();
   };
-  const hsJson = async (code, timeout) => {
-    const out = await hs(code, timeout);
+  const hsJson = async (code, timeout, cliSeconds) => {
+    const out = await hs(code, timeout, cliSeconds);
     try { return JSON.parse(out); } catch { throw new Error(`hs -c gave no JSON: ${out.slice(0, 300)}`); }
   };
   const ps = async args => (await run('/bin/ps', args)).stdout;
+  const tagInt = tag => {
+    if (!Number.isInteger(tag) || tag <= 0 || tag > 0x7fffffff) throw new Error(`not a test tag: ${tag}`);
+    return String(tag);
+  };
+  // harness.addEventTag or removeEventTag: { ok, why }.
+  const tagCall = (name, tag) => hsJson(`local h = rawget(_G, "harness")
+      local f = type(h) == "table" and rawget(h, ${lua(name)})
+      if type(f) ~= "function" then return hs.json.encode({ ok = false, why = "no harness.${name}" }) end
+      local ok, why = f(${tagInt(tag)})
+      return hs.json.encode({ ok = ok == true, why = why })`);
 
   return {
     env,
@@ -99,24 +111,45 @@ export function realWorld(env = process.env) {
         return hs.json.encode({ port_open = eh._s ~= nil and eh._s.port ~= nil })`, 20000);
       if (r.port_open !== true) throw new Error(`the test Spoon did not open its port ${port}`);
     },
-    // Unloads the test Spoon. Its stop() removes the Eyes & Hands event tag from the harness; when
+    // Unloads the test Spoon (stop_error: what its stop() threw, if anything). Its stop() removes the Eyes & Hands event tag from the harness; when
     // the running Spoon had it registered, it goes back in the same call, so that Spoon's input
     // stays machine input for the awake watcher.
     unloadSpoon: ({ restoreTag }) => hsJson(`local t = rawget(_G, ${lua(GLOBAL)})
-      if t then pcall(function() t:stop() end) end
+      local stopped, why = true, nil
+      if t then stopped, why = pcall(function() t:stop() end) end
       ${GLOBAL} = nil; ${DETECTOR} = nil
       local h = rawget(_G, "harness")
       if ${restoreTag ? 'true' : 'false'} and type(h) == "table" and type(rawget(h, "addEventTag")) == "function" then h.addEventTag(${EVENT_TAG}) end
-      return hs.json.encode({ gone = rawget(_G, ${lua(GLOBAL)}) == nil })`),
-    // Exit 3 means Hammerspoon has no such port.
-    portOpen: async port => (await run(EYESHANDS, ['--port', port, '--timeout', '3', 'status'])).code !== 3,
+      return hs.json.encode({ gone = rawget(_G, ${lua(GLOBAL)}) == nil, stop_error = (not stopped) and tostring(why) or nil })`),
+    // Whether the port gave a real answer (live-lib.mjs portAnswered): exit 3 (no such port, or
+    // unreachable), a timeout, a crash or a reply that is not JSON is no answer.
+    portOpen: async port => {
+      const r = await run(EYESHANDS, ['--port', port, '--timeout', '3', 'status']);
+      const open = portAnswered(r);
+      if (r.code !== 3) console.log(`eh-live: port ${port} check: exit ${r.code}, ${open ? 'answered' : 'no answer'}: ${(r.stdout || r.stderr).trim().slice(0, 200)}`);
+      return open;
+    },
     testStatus: () => hsJson(`local t = rawget(_G, ${lua(GLOBAL)}); return hs.json.encode(t and t:status() or { running = false })`),
     setDetector: on => hs(`${DETECTOR} = ${on ? '{ hands = { status = function() return { armed = true } end } }' : 'nil'}; return "ok"`),
-    // One untagged mouse move of 1 point: a stand-in for a person touching the mouse.
-    nudge: () => hs(`local p = hs.mouse.absolutePosition()
-      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = p.x + 1, y = p.y }):post(); return "ok"`),
+    // The run's test tag: 24 random bits (live-lib.mjs testTagFrom puts them under its base).
+    random24: async () => randomBytes(3).readUIntBE(0, 3),
+    addEventTag: tag => tagCall('addEventTag', tag),
+    removeEventTag: tag => tagCall('removeEventTag', tag),
+    // One mouse move of 1 point: a stand-in for a person touching the mouse. It carries the run's
+    // test tag (registered with the harness, so the awake watcher takes it for machine input); the
+    // Spoon does not know that tag, so its hands still take it for a person. No tag: untagged.
+    nudge: tag => hs(`local p = hs.mouse.absolutePosition()
+      local e = hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = p.x + 1, y = p.y })
+      ${tag == null ? '' : `e:setProperty(hs.eventtap.event.properties.eventSourceUserData, ${tagInt(tag)})`}
+      e:post(); return "ok"`),
     releaseAwake: who => hs(`local h = rawget(_G, "harness")
       if type(h) == "table" and type(rawget(h, "awake")) == "function" then h.awake(false, { owner = ${lua(who)} }) end; return "ok"`),
+
+    // The no_web_content diagnostic (live-webdiag.lua): read-only, bounded, so a longer timeout.
+    webDiag: pid => {
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error(`not a pid: ${pid}`);
+      return hsJson(`return hs.json.encode(dofile(${lua(WEBDIAG)})({ pid = ${pid}, test = ${lua(GLOBAL)}, target = ${lua(TARGET)} }))`, 45000, 40);
+    },
 
     // Run step 2: a throwaway Chrome with no debugging port, found later by its profile path.
     startChrome: async (profile, url) => {

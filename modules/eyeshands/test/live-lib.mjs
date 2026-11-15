@@ -5,17 +5,21 @@
 //   gate(env, platform)        null when the live run may start, else why it skips
 //   preflight(w)               preconditions 1-4: { holdFile, probe } or throws Skip(reason)
 //   runLive(w, opts)           preflight, run steps 1-8, then the clean-up in a finally:
-//                              { status: pass | skip | inconclusive | fail, reason, measured, problems }
+//                              { status: pass | skip | inconclusive | fail, reason, measured, problems,
+//                                diagnostic (only after no_web_content: webDiagnostic) }
 //
 // Rules this file keeps (the person and every other driver always win):
 //   - every precondition is checked and skips with its reason; nothing is forced;
 //   - the driver lock: the hold file must be configured and free (no manual hold, no live driver);
 //     the test Spoon gets it as hold_file, so its hands lease takes the lock with the session's pid;
+//   - the takeover nudge carries the run's own test tag, registered with harness.addEventTag for the
+//     run: the awake watcher takes it for machine input (so it cannot lock the screen in away mode),
+//     while the Spoon's guards do not know it and still take it for a person;
 //   - job-hunt arming during the run aborts the job at once and ends the run as inconclusive, and so
 //     does a takeover the test did not make (a real person);
 //   - the clean-up runs in every case and only touches what the run made: its session, its Spoon
-//     global, its lock entry (exact pid, who and since), its Chrome (by pid, checked against its
-//     profile path) and its temporary folder.
+//     global, its test tag, its lock entry (exact pid, who and since), its Chrome (by pid, checked
+//     against its profile path) and its temporary folder.
 export const OWNER = 'eh-live-test';
 export const TARGET = 'chrome-test';
 export const GLOBAL = '__eyeshands_test';
@@ -23,6 +27,10 @@ export const DETECTOR = '__eyeshands_test_detector';
 export const WHO = `eyeshands-${OWNER}`;
 export const EVENT_TAG = 0x45484e44;
 export const IDLE_BUFFER_S = 20;
+// The run's test tag: "T" in the top byte and 24 random bits. It is none of the machine tags the
+// Spoon knows (its own EVENT_TAG, harness.EVENT_TAG, job-hunt's), so the hands see a person.
+export const TEST_TAG_BASE = 0x54000000;
+export const testTagFrom = n => TEST_TAG_BASE + ((Number(n) >>> 0) & 0xffffff);
 
 export class Skip extends Error {}
 export class Inconclusive extends Error {}
@@ -81,7 +89,7 @@ export function judge(probe, { hcron, holdFile } = {}) {
   if (probe.grants.screen_recording === false) return 'Hammerspoon has no Screen Recording grant';
   if (probe.session?.locked) return 'the screen is locked';
   if (probe.session?.on_console === false) return 'the session is not on the console';
-  if (probe.awake?.on && probe.awake.mode === 'away') return 'awake mode is away: an untagged test event would lock the screen';
+  if (probe.awake && probe.add_event_tag !== true) return 'the harness has awake mode but no addEventTag: the test nudge would count as a person and could lock the screen';
   const foreign = list(probe.foreign);
   if (foreign.includes('jobhunt')) return 'job-hunt holds its hands (armed or busy); never run next to it';
   const port = foreign.filter(n => String(n).startsWith('harness:'));
@@ -239,6 +247,7 @@ function driver(w, st) {
   };
   // Clicks a field by its HTML id; scrolls it into view first when the hands say offscreen.
   const clickField = async (dom, expect = []) => {
+    st.step = `${st.step?.split(' ')[0] || 'fill'} ${dom}`;
     for (let i = 0; i < 4; i++) {
       const f = (await fields()).find(x => x.dom === dom);
       if (!f) throw new Error(`the eyes found no field with dom ${dom}`);
@@ -249,6 +258,63 @@ function driver(w, st) {
     throw new Error(`could not scroll ${dom} into view`);
   };
   return { watch, call, act, fields, clickField };
+}
+
+// A brand-new Chrome profile can take a few seconds to show its web area to the eyes after
+// AXManualAccessibility goes on: poll the fields until they stop saying no_web_content.
+export const WEB_CONTENT_WAIT_MS = 10000;
+export async function waitWebContent(w, d, { timeoutMs = WEB_CONTENT_WAIT_MS, everyMs = 500 } = {}) {
+  const end = w.now() + timeoutMs;
+  for (;;) {
+    await d.watch();
+    const res = await d.call('eh.eyes.fields', { target: TARGET });
+    if (res.ok !== false || res.reason !== 'no_web_content') return res;
+    if (w.now() >= end) throw new Error(`eyes fields: ${res.reason}: ${res.hint || ''}`);
+    await sleepFor(w, everyMs);
+  }
+}
+
+// What the throwaway Chrome shows to Accessibility when the eyes find no web content: the AX
+// diagnostic (live-webdiag.lua: windows, the front window's tree, every web area), the eyes' own
+// tree of the front window, the Chrome pids of the profile, and a one-line summary. Read-only; each
+// part records its own error, so the diagnostic never hides the failure it explains.
+export async function webDiagnostic(w, st, d) {
+  const out = { chrome_pid: st.chromePid ?? null, step: st.step ?? null };
+  const part = async (name, fn) => { try { out[name] = await fn(); } catch (e) { out[`${name}_error`] = e.message || String(e); } };
+  await part('chrome_pids', () => w.chromePids(st.profile));
+  await part('ax', () => w.webDiag(st.chromePid));
+  await part('eyes_tree', () => d.call('eh.eyes.tree', { target: TARGET, depth: 5, max_nodes: 400 }));
+  // How far the fill got, from the page's own report (DOM values and the last events).
+  await part('page', async () => {
+    const r = st.fx?.report?.();
+    return r ? { seq: r.seq, values: r.values, contact: r.contact, agree: r.agree, file: r.file, last_events: list(r.log).slice(-8) } : null;
+  });
+  out.summary = webSummary(out);
+  return out;
+}
+
+// The diagnostic in one line: which window the eyes read, and where (or whether) a web area is.
+export function webSummary(dg) {
+  const ax = dg?.ax;
+  if (!ax) return `no AX diagnostic${dg?.ax_error ? ` (${dg.ax_error})` : ''}`;
+  if (ax.error) return ax.error;
+  const parts = dg.step ? [`at ${dg.step}`] : [];
+  if (ax.resolved && ax.resolved.pid !== dg.chrome_pid) parts.push(`the Spoon resolves the target to pid ${ax.resolved.pid ?? '-'} (${ax.resolved.reason || 'ok'}), not the Chrome pid ${dg.chrome_pid}`);
+  const wins = list(ax.windows);
+  parts.push(`${wins.length} AX window(s): ${wins.map(x => `${x.index} "${x.title ?? ''}" ${x.subrole || x.role || '?'}${x.focused ? ' focused' : ''}${x.main ? ' main' : ''}`).join(', ') || 'none'}`);
+  const f = ax.front || {};
+  parts.push(f.by === 'none' ? 'the eyes pick no front window' : `the eyes pick ${f.by} "${f.title ?? ''}" (${f.subrole || f.role || '?'}${f.index ? `, window ${f.index}` : ''})`);
+  const b = ax.eyes_bfs;
+  if (b) {
+    const budget = ax.eyes_budget || {};
+    parts.push(b.found ? `its web area is ${b.nodes} node(s) and ${b.ms} ms into the walk (eyes budget ${budget.max_nodes} nodes, ${budget.time_ms} ms) with ${b.children} child(ren)`
+      : `no web area in it (${b.nodes} node(s) walked${b.stopped ? `, stopped on ${b.stopped}` : ''})`);
+  }
+  const areas = list(ax.web_areas);
+  parts.push(areas.length ? `web areas: ${areas.map(a => `window ${a.window} depth ${a.depth} ${a.children} child(ren) ${a.url || ''}`.trim()).join('; ')}`
+    : `no web area in any window${ax.walk?.stopped ? ` (walk stopped on ${ax.walk.stopped})` : ''}`);
+  if (ax.app) parts.push(`AXManualAccessibility ${JSON.stringify(ax.app.manual_accessibility ?? null)}, AXEnhancedUserInterface ${JSON.stringify(ax.app.enhanced_ui ?? null)}`);
+  return parts.join('; ');
 }
 
 async function fillForm(w, st, d) {
@@ -296,17 +362,15 @@ async function measureIdle(w, st, d) {
   st.measured.tagged_resets_idle = Number(p.idle_s) < 2;
 }
 
-// Step 6: one untagged nudge stops the hands; the next call is refused; resume only after the
+// Step 6: one nudge with the run's test tag (a person to the hands) stops the hands; the next call is refused; resume only after the
 // present rule passes.
 async function takeover(w, st, d, buffer) {
-  const p = await w.probe(null);
-  if (p?.awake?.on && p.awake.mode === 'away') throw new Inconclusive('inconclusive: awake mode went away (a nudge would lock the screen)');
   await d.clickField('notes');
   await d.watch();
   const started = await d.call('eh.hands.type', { target: TARGET, text: ' The quick brown fox jumps over the lazy dog.'.repeat(4), paste: false });
   if (started.state !== 'running') throw new Error(`takeover: the typing job did not start: ${JSON.stringify(started)}`);
   await sleepFor(w, 500);
-  await w.nudge();
+  await w.nudge(st.testTag);
   const q = await w.probe(null);
   st.measured.idle_after_untagged_s = Number(q.idle_s);
   st.measured.untagged_resets_idle = Number(q.idle_s) < 2;
@@ -373,6 +437,15 @@ async function body(w, st, opts) {
   st.jobhuntBefore = pre.probe.jobhunt?.info ?? null;
   st.restoreTag = !!(pre.probe.production?.running && pre.probe.production.tag_registered);
 
+  // The run's test tag counts as machine input for the harness until the clean-up removes it. With
+  // no harness addEventTag there is no awake watcher either (judge skips otherwise): the nudge goes
+  // untagged.
+  if (pre.probe.add_event_tag) {
+    st.testTag = testTagFrom(await w.random24());   // set first: an add that fails half-way is still removed
+    const added = await w.addEventTag(st.testTag);
+    if (!added || added.ok !== true) throw new Skip(`harness.addEventTag refused the test tag: ${added?.why || JSON.stringify(added)}`);
+  }
+
   // 1. A temporary folder with an access file, a targets file and the file to upload.
   st.dir = await w.mkTemp();
   st.profile = `${st.dir}/chrome-profile`;
@@ -421,15 +494,44 @@ async function body(w, st, opts) {
   st.measured.driver_lock = true;
   await sleepFor(w, 600);
 
+  st.driver = d;
+  st.step = 'wait';
+  await waitWebContent(w, d);
+  st.step = 'fill';
   await fillForm(w, st, d);             // 5
+  st.step = 'measure';
   await measureIdle(w, st, d);          // 8
+  st.step = 'takeover';
   await takeover(w, st, d, opts.buffer); // 6
+  st.step = 'foreign';
   await foreignAndStop(w, st, d);       // 7
 }
 
 // ---------- abort and clean-up ----------
+// Whether `eyeshands --port P status` ({ code, stdout }) got a real answer from the port: exit 0
+// with a JSON object, or exit 1 with the port's own refusal. Exit 3 (no such port, unreachable, not
+// a port reply), a timeout or a crash (any other code), and output that is not JSON are no answer.
+export function portAnswered(r) {
+  let j;
+  try { j = JSON.parse(String(r?.stdout ?? '').trim()); } catch { return false; }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
+  if (r.code === 0) return true;
+  return r.code === 1 && j.ok === false && typeof j.error === 'string' && !/^unreachable\b|not an Eyes & Hands port reply/.test(j.error);
+}
+
+// The port still answers after the unload: a real answer on each of `tries` checks, `everyMs`
+// apart. One check with no answer means it closed (a port can take a moment to go away).
+export const PORT_RECHECKS = 4;
+export async function portStillOpen(w, port, { tries = PORT_RECHECKS, everyMs = 500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    if (!(await w.portOpen(port))) return false;
+    if (i < tries - 1) await sleepFor(w, everyMs);
+  }
+  return true;
+}
+
 // Undoes what the run made, every step in its own try, in this order: the session (abort, then
-// disarm by closing it), the fake detector, the Spoon (unload, then check the global is gone and
+// disarm by closing it), the fake detector, the test tag (harness.removeEventTag), the Spoon (unload, then check the global is gone and
 // the port closed), a left awake hold, a left lock entry (only the run's exact entry), the throwaway
 // Chrome (by pid, only while its command line still names the run's profile), the fixture server,
 // the temporary folder, and last the jobhunt.info() check. Returns the problems it found.
@@ -444,11 +546,17 @@ export async function cleanup(w, st) {
     await st.session.close();
   });
   await step('detector', async () => { if (st.loaded || st.detectorOn) await w.setDetector(false); });
+  await step('tag', async () => {
+    if (st.testTag == null) return;
+    const r = await w.removeEventTag(st.testTag);
+    if (!r || r.ok !== true) throw new Error(`harness.removeEventTag refused the test tag: ${r?.why || JSON.stringify(r)}`);
+  });
   await step('spoon', async () => {
     if (!st.loaded) return;
     const r = await w.unloadSpoon({ restoreTag: st.restoreTag });
     if (!r || r.gone !== true) problems.push(`clean-up spoon: ${GLOBAL} is still loaded`);
-    if (st.port && await w.portOpen(st.port)) problems.push(`clean-up spoon: the port ${st.port} still answers`);
+    if (r?.stop_error) problems.push(`clean-up spoon: its stop() failed: ${r.stop_error}`);
+    if (st.port && await portStillOpen(w, st.port)) problems.push(`clean-up spoon: the port ${st.port} still answers`);
   });
   await step('awake', async () => {
     if (!st.loaded) return;
@@ -505,9 +613,13 @@ export async function runLive(w, opts = {}) {
     outcome = e instanceof Skip ? { status: 'skip', reason: e.message }
       : e instanceof Inconclusive ? { status: 'inconclusive', reason: e.message }
         : { status: 'fail', reason: e.message || String(e) };
+    // No web content at any step: record what the eyes looked at before the clean-up closes Chrome.
+    if (outcome.status === 'fail' && /no_web_content/.test(outcome.reason) && st.driver) {
+      st.diagnostic = await webDiagnostic(w, st, st.driver).catch(err => ({ error: err.message || String(err) }));
+    }
   } finally {
     st.problems = await cleanup(w, st);
   }
   if (st.problems.length && outcome.status !== 'fail') outcome = { status: 'fail', reason: st.problems.join('; ') };
-  return { ...outcome, measured: st.measured, problems: st.problems };
+  return { ...outcome, measured: st.measured, problems: st.problems, ...(st.diagnostic ? { diagnostic: st.diagnostic } : {}) };
 }

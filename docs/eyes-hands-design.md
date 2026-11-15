@@ -750,12 +750,12 @@ WARNING: Do not run the live test while job-hunt runs or might start. Its hands 
 
 Preconditions. The test checks each one and skips with the reason. It never forces one.
 1. Hammerspoon runs, both grants are on, and `hs -c` answers (the test needs the generic port to load code).
-2. The screen is usable, and awake mode is off or present (not away), unless PR 2 is live.
+2. The screen is usable. With harness awake mode on, `harness.addEventTag` must exist (PR 2), so the takeover nudge can carry a registered tag.
 3. `jobhunt.hands.status()` shows not armed and not busy. The harness port shows no armed owner with `hands`. `hcron status` shows no running `--needs gui` job. The test reads these states only.
 4. Nobody used the Mac for the idle buffer (20 s). The test prints "Hands off the mouse and keyboard for about 60 s" and waits. Thus the present rule runs for real.
 5. The driver lock is configured and free. The lock is `EYESHANDS_HOLD_FILE`, else the running Spoon's `hold_file` (part 10). A manual hold, a live driver's pid, a borrowed hold or a file that cannot be read makes the test skip. The test Spoon gets the lock as its `hold_file`, so its hands lease takes the lock with the session's pid. The test checks the lock file after `hands_focus`.
 
-The test also skips while awake mode is away, even with PR 2 live, because the untagged takeover nudge (run step 6) would lock the screen. The probe that reads these states is `modules/eyeshands/test/live-probe.lua`. It judges the hold file with the Spoon's own `guards.lua`.
+Awake mode away does not stop the test. The takeover nudge (run step 6) carries a test tag that is new for each run. The test registers that tag with `harness.addEventTag` for the run, and the `finally` step removes it with `harness.removeEventTag`. The awake watcher therefore takes the nudge for machine input and does not lock the screen. The Spoon does not know the tag, so its hands still take the nudge for a person. The probe that reads these states is `modules/eyeshands/test/live-probe.lua`. It judges the hold file with the Spoon's own `guards.lua`.
 
 Run:
 1. Make a temporary folder with an access file (owner `eh-live-test`, target `chrome-test`) and a targets file.
@@ -764,14 +764,14 @@ Run:
    It has text, accented text, e-mail, a combo box and a select. It also has two text areas, a radio, a checkbox, a file input and an event log.
 4. Load the Spoon without a reload: `hs -c 'dofile(<worktree>/modules/eyeshands/EyesHands.spoon/init.lua)'`. Start it as `__eyeshands_test` with port `eyeshands-test-<random>`, the temporary files, no hotkeys and no menu bar item. Never call `hs.loadSpoon`, `hs.reload()` or write in `~/.hammerspoon`.
 5. Drive the fill pattern on every field. Then check four results. AX and DOM values agree. The file uploads through the native dialog. The page saw only trusted events. Mouse moves came before every click.
-6. Check takeover. One untagged nudge stops the hands, and the Spoon refuses the next call. `hands_resume` works only after the present rule passes.
+6. Check takeover. One nudge with the run's test tag (unknown to the Spoon) stops the hands, and the Spoon refuses the next call. `hands_resume` works only after the present rule passes.
 7. Check the stop command, the `present` refusal, and a fake detector in the test's own namespace for `foreign_hands`. The test never fakes the global `jobhunt`.
 8. Measure whether posted events reset `hs.host.idleTime()` (part 10).
 
 Abort and clean up:
 - If job-hunt arms during the run, the test aborts its job at once, unloads, and reports "inconclusive: job-hunt started".
 - A real takeover by the person ends the run as inconclusive, not as a failure.
-- In every case, a `finally` step does the clean-up. It aborts jobs and unloads `__eyeshands_test` (taps, timers and the port). It checks that the global is gone and the port is closed. It quits the throwaway Chrome by its process id only, then deletes the temporary folders.
+- In every case, a `finally` step does the clean-up. It aborts jobs, removes the run's test tag from the harness, and unloads `__eyeshands_test` (taps, timers and the port). It checks that the global is gone and the port is closed. It quits the throwaway Chrome by its process id only, then deletes the temporary folders.
 - The test reads `jobhunt.info()` before and after, and fails if anything changed.
 
 **A fully isolated option (documented, not set up).**
