@@ -39,6 +39,7 @@ HOME = os.path.expanduser("~")
 TG_DIR = os.path.join(HOME, ".claude/channels/telegram")
 WD_DIR = os.path.join(TG_DIR, "watchdog")
 STATE_FILE = os.path.join(WD_DIR, "state.json")
+UNINSTALLED = os.path.join(WD_DIR, "uninstalled")  # install.sh --uninstall on Linux; install removes it
 LOG_FILE = os.path.join(TG_DIR, "logs/watchdog.log")
 PROFILE = ENV.get("PROFILE_DIR", "")
 WORK_DIR = ENV.get("TELEGRAM_WORKDIR") or os.path.join(HOME, "Projects/claude-telegram")
@@ -386,6 +387,8 @@ def check_no_poll(state, token, now):
 
 def check():
     os.makedirs(WD_DIR, exist_ok=True)
+    if os.path.exists(UNINSTALLED):
+        return
     state = load_state()
     now = time.time()
     token = read_env().get("TELEGRAM_BOT_TOKEN", "")

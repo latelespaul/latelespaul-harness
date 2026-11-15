@@ -20,7 +20,7 @@ Telegram gives each bot token to one poller. Two Macs polling the same bot split
 | `install.sh` | Install on this Mac. Refuses if another Mac owns the bot |
 | `install.sh --take-over` | Move the bot here; waits until the old Mac stops polling |
 | `install.sh --status` | Owner, agent states, recent watchdog actions |
-| `install.sh --uninstall` | Remove from this Mac |
+| `install.sh --uninstall` | Remove from this machine (Linux: the crontab watchdog then does nothing until the next install) |
 
 The main `install.sh` runs this module's installer when `telegram` is in MODULES; it leaves a healthy bot alone.
 

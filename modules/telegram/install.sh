@@ -7,7 +7,7 @@
 # never polls the bot and never claims ACTIVE_HOST (prepare a new host while another one runs it).
 #   install.sh              install here (refuses if another machine owns the bot)
 #   install.sh --take-over  move the bot to this machine; the old one stops within ~10 min
-#   install.sh --uninstall  stop and remove it from this machine
+#   install.sh --uninstall  stop and remove it from this machine (Linux: the crontab watchdog then idles)
 #   install.sh --status     show who owns the bot and how it is doing (exit 1 if not healthy here)
 set -e
 # --dry-run anywhere: print actions only (same as HARNESS_DRY_RUN=1).
@@ -153,7 +153,11 @@ case $mode in
 --uninstall)
   stop_agents
   (( linux )) || for n in $all; do act rm -f $agents_dir/$(label $n).plist; done
-  (( linux )) && print "Remove the telegram watchdog line from crontab (crontab -e) if you added it."
+  if (( linux )); then
+    act mkdir -p $state/watchdog
+    act touch $state/watchdog/uninstalled
+    print "The watchdog now does nothing here; remove its line from crontab (crontab -e) if you added it."
+  fi
   (( polling )) && [[ $(owner) == $host ]] && set_owner ""
   print "Telegram bot removed from $host."
   exit 0 ;;
@@ -235,6 +239,7 @@ elif [[ -s $state/.env ]] && polled_elsewhere; then
 fi
 
 act mkdir -p $state/logs $state/watchdog $TELEGRAM_WORKDIR
+act rm -f $state/watchdog/uninstalled
 write_file $HOME/.claude/telegram-settings.json "$settings"
 link_memory $TELEGRAM_WORKDIR
 

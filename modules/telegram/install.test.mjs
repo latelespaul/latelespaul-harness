@@ -4,6 +4,7 @@
 // left alone), and the macOS path (launchd agents, plugin on) unchanged.
 // tmux, claude, bun, screen, curl and launchctl are stubs that only log their arguments. The real
 // tmux is never on PATH and TMUX is never passed in, so no test can reach a real tmux server.
+// ps is a stub with an empty process table, so the watchdog can never see or signal a real process.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -15,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const MOD = dirname(fileURLToPath(import.meta.url));
 const INSTALL = join(MOD, 'install.sh');
-const STUBBED = ['tmux', 'claude', 'bun', 'screen', 'curl', 'launchctl'];
+const STUBBED = ['tmux', 'claude', 'bun', 'screen', 'curl', 'launchctl', 'ps'];
 
 // launchd: put a launchctl stub on PATH (macOS path). polling: TELEGRAM_POLLING. tmuxUp: the stub
 // tmux reports a claude-tg session. owner: the profile's ACTIVE_HOST. token: write a clean .env.
@@ -40,7 +41,7 @@ function sandbox({ launchd = false, polling = 1, tmuxUp = false, owner = '', tok
   stub('tmux', tmuxUp
     ? 'case "$1" in list-panes) echo 4242 ;; esac\nexit 0\n'
     : 'case "$1" in has-session|list-panes|capture-pane) exit 1 ;; esac\nexit 0\n');
-  for (const t of ['claude', 'bun', 'screen', 'curl']) stub(t, 'exit 0\n');
+  for (const t of ['claude', 'bun', 'screen', 'curl', 'ps']) stub(t, 'exit 0\n');
   if (launchd) stub('launchctl', 'exit 1\n');   // nothing is loaded
   execFileSync('git', ['init', '-q', profile]);
   execFileSync('git', ['-C', profile, 'commit', '-q', '--allow-empty', '-m', 'init'],
@@ -138,12 +139,29 @@ test('run.sh, polling off: starts claude without the Telegram channel', () => {
   assert.doesNotMatch(calls, /--channels/);
 });
 
+const watchdog = (s) => spawnSync('/usr/bin/python3', ['-I', join(MOD, 'watchdog.py')], { env: s.env, encoding: 'utf8' });
+
 test('watchdog, polling off: restarts a missing session and never calls Telegram', { skip: process.platform === 'darwin' && 'Linux path' }, () => {
   const s = sandbox({ polling: 0 });
-  const r = spawnSync('/usr/bin/python3', ['-I', join(MOD, 'watchdog.py')], { env: s.env, encoding: 'utf8' });
+  const r = watchdog(s);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const calls = s.calls();
   assert.match(calls, new RegExp(`^tmux new -d -s claude-tg ${MOD}/run\\.sh$`, 'm'), calls);
   assert.doesNotMatch(calls, /^curl /m);
   assert.match(readFileSync(join(s.home, '.claude/channels/telegram/logs/watchdog.log'), 'utf8'), /polling off/);
+});
+
+test('watchdog, polling off: stays idle after --uninstall until install runs again', { skip: process.platform === 'darwin' && 'Linux path' }, () => {
+  const s = sandbox({ polling: 0 });
+  const u = s.run(['--uninstall']);
+  assert.equal(u.status, 0, u.stdout + u.stderr);
+  let r = watchdog(s);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(s.calls(), /^tmux new/m, 'no restart after uninstall');
+  const i = s.run();
+  assert.equal(i.status, 0, i.stdout + i.stderr);
+  writeFileSync(join(s.d, 'calls.log'), '');
+  r = watchdog(s);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(s.calls(), new RegExp(`^tmux new -d -s claude-tg ${MOD}/run\\.sh$`, 'm'), 'install re-arms the watchdog');
 });
