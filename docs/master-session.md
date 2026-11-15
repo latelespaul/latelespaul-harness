@@ -92,8 +92,10 @@ are not affected.
   job that skips because Hammerspoon has no Accessibility permission can stay silent for days. Look
   for an old last-run time in `hcron status`, then check `hs -c 'return harness.status()'`.
 - After the user turns Accessibility back on in System Settings, Hammerspoon still reports it off
-  until Hammerspoon restarts. Restart it with `modules/hammerspoon/install.sh --restart`, which
-  waits while a job holds awake mode or an armed owner runs.
+  until Hammerspoon restarts. Restart it with `modules/hammerspoon/install.sh --restart`. The
+  command defers: while a job holds awake mode or an armed owner runs, it prints "restart deferred"
+  and does not restart. Run it again when they finish. Then run
+  `modules/hammerspoon/install.sh --status` and make sure that Accessibility is on.
 - An awake guard alert means that a run used eyes or hands without its own awake hold. Fix that
   run (`awake run`, or `--needs gui` for an hcron job).
 
