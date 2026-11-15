@@ -1,5 +1,6 @@
 # Shared helpers for install.sh and the module installers.
 # HARNESS_DRY_RUN=1 prints actions instead of doing them; HARNESS_SKIP_LAUNCHD=1 never calls launchctl.
+# On a machine without launchd (Linux), the launchd helpers skip the same way.
 source ${${(%):-%x}:A:h}/env.sh
 
 claude_dir=$HOME/.claude
@@ -88,6 +89,7 @@ link_memory() {
 # agent unloaded. So wait until launchd has let the old job go, and retry the bootstrap a few times.
 launchd_load() {
   if [[ $HARNESS_SKIP_LAUNCHD == 1 ]]; then print -r -- "skipped loading $1 (HARNESS_SKIP_LAUNCHD=1)"; return 0; fi
+  if ! have_launchd; then print -r -- "skipped loading $1 (no launchd on this machine)"; return 0; fi
   local target=gui/$(id -u) i
   if launchd_loaded $1; then act launchctl bootout $target/$1 2>/dev/null || true; fi
   if dry; then act launchctl bootstrap $target $2; return 0; fi
@@ -101,14 +103,17 @@ launchd_load() {
 
 # launchd_unload <label>: stop a LaunchAgent if it is loaded.
 launchd_unload() {
-  [[ $HARNESS_SKIP_LAUNCHD == 1 ]] && return 0
+  { [[ $HARNESS_SKIP_LAUNCHD == 1 ]] || ! have_launchd } && return 0
   act launchctl bootout gui/$(id -u)/$1 2>/dev/null || true
 }
 
-# launchd_loaded <label>: is it loaded? (always false with HARNESS_SKIP_LAUNCHD=1)
+# launchd_loaded <label>: is it loaded? (always false with HARNESS_SKIP_LAUNCHD=1 or without launchd)
 launchd_loaded() {
-  [[ $HARNESS_SKIP_LAUNCHD != 1 ]] && launchctl print gui/$(id -u)/$1 >/dev/null 2>&1
+  [[ $HARNESS_SKIP_LAUNCHD != 1 ]] && have_launchd && launchctl print gui/$(id -u)/$1 >/dev/null 2>&1
 }
+
+# have_launchd: does this machine have launchd (macOS)? Linux has none.
+have_launchd() { command -v launchctl >/dev/null }
 
 # enabled <module>: is it listed in MODULES?
 enabled() { (( ${${(z)MODULES}[(Ie)$1]} )) }

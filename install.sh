@@ -50,7 +50,7 @@ write_env() {
     if (( ! ${+seen[$k]} )); then out+=("$k=${(qq)vals[$k]}"); fi
   done
   if [[ $HARNESS_DRY_RUN == 1 ]]; then
-    export HARNESS_ENV=$(mktemp -t harness-env)
+    export HARNESS_ENV=$(mktemp "${TMPDIR:-/tmp}/harness-env.XXXXXX")
     print -l -- $out > $HARNESS_ENV
     print "would write $env_file:"; grep -E '^[A-Z_]+=' $HARNESS_ENV | sed 's/^/  /'
   else
@@ -215,11 +215,16 @@ for d in ${(z)MEMORY_DIRS}; do link_memory $d; done
 # --- sync agent ----------------------------------------------------------------------------
 label=com.$LABEL_PREFIX.harness-sync
 plist=$agents_dir/$label.plist
-ensure_dir $agents_dir
-write_file $plist "$(render $HARNESS_DIR/templates/launchd/harness-sync.plist.tmpl)"
-if (( changed )) || ! launchd_loaded $label; then
-  launchd_load $label $plist
-  print "sync agent $label: every $SYNC_INTERVAL s and at login; log: $HARNESS_DIR/logs/sync.log"
+if ! have_launchd; then
+  # Not macOS (no launchd): nothing is written; schedule sync.sh yourself, e.g. with crontab.
+  print "note: no launchd here, so no sync agent; schedule it yourself, e.g. crontab: 17 */2 * * * zsh $HARNESS_DIR/scripts/sync.sh >> $HARNESS_DIR/logs/sync.log 2>&1"
+else
+  ensure_dir $agents_dir
+  write_file $plist "$(render $HARNESS_DIR/templates/launchd/harness-sync.plist.tmpl)"
+  if (( changed )) || ! launchd_loaded $label; then
+    launchd_load $label $plist
+    print "sync agent $label: every $SYNC_INTERVAL s and at login; log: $HARNESS_DIR/logs/sync.log"
+  fi
 fi
 
 # --- modules -------------------------------------------------------------------------------

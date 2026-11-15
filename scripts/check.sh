@@ -40,6 +40,9 @@ done
 label=com.$LABEL_PREFIX.harness-sync
 if [[ $HARNESS_SKIP_LAUNCHD == 1 ]]; then
   check "sync plist written" test -f $agents_dir/$label.plist
+elif ! have_launchd; then
+  if crontab -l 2>/dev/null | grep -q "scripts/sync\.sh"; then pass "sync.sh scheduled in crontab"
+  else warn "no launchd here and no crontab line runs scripts/sync.sh (see install.sh's note)"; fi
 else
   check "sync agent $label loaded" launchctl print gui/$(id -u)/$label
 fi
