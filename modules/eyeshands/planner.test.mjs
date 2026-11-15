@@ -345,6 +345,54 @@ test('only the US layout gets the US shifted symbols; other layouts never guess 
   assert.deepEqual([usUnmapped, gbUnmapped], [[[0x6f22, 0, 0]], [[0x6f22, false, 0]]], 'US keeps code 0, others none');
 });
 
+test('every shifted ASCII symbol types with Shift on its US key on a layout with the US Shift layer', { skip }, () => {
+  const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
+    9: 25, 7: 26, '-': 27, 8: 28, 0: 29, ']': 30, '[': 33, "'": 39, ';': 41, '\\': 42, ',': 43, '/': 44, '.': 47, '`': 50 };
+  // ABC - India (hs.keycodes.map): the US keys, but the ` key types the rupee sign; Shift on it still types ~.
+  const { '`': _grave, ...india } = { ...US, '₹': 50 };
+  const shiftedOn = { '!': 18, '@': 19, '#': 20, $: 21, '%': 23, '^': 22, '&': 26, '*': 28, '(': 25, ')': 29, _: 27,
+    '+': 24, '{': 33, '}': 30, '|': 42, ':': 41, '"': 39, '<': 43, '>': 47, '?': 44, '~': 50 };
+  const SHIFTED = Object.keys(shiftedOn).join('');
+  assert.equal(SHIFTED.length, 21, 'all 21 shifted ASCII symbols of the US keyboard');
+  // What the live fixture typed (and dropped @ and _ from), with capitals, accents and unshifted keys.
+  const text = `${SHIFTED} ada@example.com /T/6wff3wxd533_3b0l9 AL-ëÅçü`;
+  const want = [...text].map(c => {
+    if (c in shiftedOn) return [c, shiftedOn[c], 0x20000];
+    if (c === ' ') return [c, 49, 0];
+    const base = c.normalize('NFD')[0];
+    return [c, US[base.toLowerCase()], base !== base.toLowerCase() ? 0x20000 : 0];
+  });
+  const layouts = [['US map', US, null, null], ['U.S.', US, 'U.S.', 'com.apple.keylayout.US'],
+    ['ABC - India', india, 'ABC – India', 'com.apple.keylayout.ABC-India'], ['India by ID', india, null, 'com.apple.keylayout.ABC-India'],
+    ['ABC - Extended', US, 'ABC – Extended', 'com.apple.keylayout.USExtended']];
+  const out = drive(layouts.map(([, map, name, id]) => call('plan', 'type', { text }, 7, null, map, name, id)));
+  out.forEach((p, n) => {
+    const label = layouts[n][0];
+    assert.equal(typeof p, 'object', `${label}: ${p}`);
+    const downs = p.events.filter(e => e.type === 'keyDown');
+    assert.deepEqual(downs.map(e => [e.chars, e.key, e.flags]), want, `${label}: key code and Shift per character`);
+    assert.equal(downs.map(e => e.chars).join(''), text, `${label}: the Unicode strings spell the text`);
+    // The modifier state on every key event is the real one: Shift is down (by its own flagsChanged)
+    // for exactly the keys that carry the Shift flag.
+    let shift = false;
+    for (const e of p.events) {
+      if (e.type === 'flagsDown') { assert.equal(e.key, 56); shift = true; }
+      else if (e.type === 'flagsUp') { assert.equal(e.key, 56); shift = false; }
+      else assert.equal((e.flags & 0x20000) !== 0, shift, `${label}: ${e.type} ${e.chars} at ${e.t}`);
+      if (e.type === 'keyDown' || e.type === 'keyUp') assert.equal(typeof e.key, 'number', `${label}: ${e.chars} has a key`);
+    }
+  });
+  // The ID decides: a layout outside the list, or ABC - India known only by its localized name, still
+  // gets no guessed key; on ABC - India ` itself has no key (it is not on the US ` key there).
+  const cps = [0x40, 0x5f, 0x7e, 0x60];
+  const [gb, indiaName, indiaId] = drive([call('keyfor', cps, { ...US, '§': 10 }, 'British', 'com.apple.keylayout.British'),
+    call('keyfor', cps, india, 'ABC – India'), call('keyfor', cps, india, 'ABC – India', 'com.apple.keylayout.ABC-India')]);
+  assert.deepEqual(gb, [[0x40, false, 0], [0x5f, false, 0], [0x7e, false, 0], [0x60, 50, 0]]);
+  assert.deepEqual(indiaName, [[0x40, false, 0], [0x5f, false, 0], [0x7e, false, 0], [0x60, false, 0]]);
+  assert.deepEqual(indiaId, [[0x40, 19, 1], [0x5f, 27, 1], [0x7e, 50, 1], [0x60, false, 0]]);
+});
+
 test('a map with an __index fallback (like hs.keycodes.map) still gives capitals their Shift key', { skip }, () => {
   const US = { a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
     o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40, n: 45, m: 46, 1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, '=': 24,
