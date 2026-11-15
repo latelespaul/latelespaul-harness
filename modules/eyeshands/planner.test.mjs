@@ -383,7 +383,7 @@ test('every shifted ASCII symbol types with Shift on its US key on a layout with
       if (e.type === 'keyDown' || e.type === 'keyUp') assert.equal(typeof e.key, 'number', `${label}: ${e.chars} has a key`);
     }
   });
-  // The ID decides: a layout outside the list, or ABC - India known only by its localized name, still
+  // The ID decides: another layout, or ABC - India known only by its localized name, still
   // gets no guessed key; on ABC - India ` itself has no key (it is not on the US ` key there).
   const cps = [0x40, 0x5f, 0x7e, 0x60];
   const [gb, indiaName, indiaId] = drive([call('keyfor', cps, { ...US, '§': 10 }, 'British', 'com.apple.keylayout.British'),

@@ -4,8 +4,8 @@
 -- so for one seed both planners give the same events (test/planner-golden.json checks it).
 -- One change: key codes come from a layout (keys(hs.keycodes.map, hs.keycodes.currentLayout(),
 -- hs.keycodes.currentSourceID()) in the Spoon), not a fixed US table; with the default US layout the
--- output equals plan.mjs. A layout whose Shift layer macOS reports as the US one (P.US_SHIFT_LAYOUTS,
--- by input source ID) also gets the US shifted symbols (@ is Shift+2). The planner never guesses a
+-- output equals plan.mjs. ABC - India and ABC - Extended (P.US_SHIFT_LAYOUTS, by input source ID)
+-- also get the US shifted symbols (@ is Shift+2). The planner never guesses a
 -- key: on a layout other than US, a character with no key in the map (no base letter in it, and not
 -- such a shifted symbol) gets keyDown/keyUp events with no key field, only chars and flags, and
 -- hands.lua posts them as Unicode-only key events without a key code. On the US layout such a
@@ -221,39 +221,10 @@ P.US_MAP = { a = 0, s = 1, d = 2, f = 3, h = 4, g = 5, z = 6, x = 7, c = 8, v = 
 P.US_SHIFTED = { ["!"] = "1", ["@"] = "2", ["#"] = "3", ["$"] = "4", ["^"] = "6", ["%"] = "5", ["+"] = "=",
   ["("] = "9", ["&"] = "7", ["_"] = "-", ["*"] = "8", [")"] = "0", ["}"] = "]", ["{"] = "[", ['"'] = "'",
   [":"] = ";", ["|"] = "\\", ["<"] = ",", ["?"] = "/", [">"] = ".", ["~"] = "`" }
--- Layouts (input source IDs, hs.keycodes.currentSourceID()) whose Shift layer on the US symbol keys
--- gives exactly the US shifted symbols, whatever their unshifted characters (ABC - India has the rupee
--- sign on the ` key, still with ~ on Shift). From macOS itself: test/layout-probe.swift prints this list.
-P.US_SHIFT_LAYOUTS = {
-  ["com.apple.keylayout.2SetHangul"] = true, -- 2-Set Korean
-  ["com.apple.keylayout.ABC"] = true, -- ABC
-  ["com.apple.keylayout.ABC-India"] = true, -- ABC – India
-  ["com.apple.keylayout.Akan"] = true, -- Akan
-  ["com.apple.keylayout.Anjal"] = true, -- Anjal
-  ["com.apple.keylayout.Armenian-HMQWERTY"] = true, -- Armenian – HM QWERTY
-  ["com.apple.keylayout.Australian"] = true, -- Australian
-  ["com.apple.keylayout.Brazilian"] = true, -- Brazilian – Legacy
-  ["com.apple.keylayout.Canadian"] = true, -- Canadian
-  ["com.apple.keylayout.Chochenyo"] = true, -- Chochenyo
-  ["com.apple.keylayout.Dutch"] = true, -- Dutch
-  ["com.apple.keylayout.GJCRomaja"] = true, -- GongjinCheong Romaja
-  ["com.apple.keylayout.HNCRomaja"] = true, -- HNC Romaja
-  ["com.apple.keylayout.Haitian-Creole"] = true, -- Haitian Creole
-  ["com.apple.keylayout.Hausa"] = true, -- Hausa
-  ["com.apple.keylayout.Hawaiian"] = true, -- Hawaiian
-  ["com.apple.keylayout.Inuktitut-QWERTY"] = true, -- Inuktitut – QWERTY
-  ["com.apple.keylayout.Maori"] = true, -- Māori
-  ["com.apple.keylayout.NewZealand"] = true, -- New Zealand
-  ["com.apple.keylayout.NezPerce"] = true, -- Nez Perce
-  ["com.apple.keylayout.PolishPro"] = true, -- Polish
-  ["com.apple.keylayout.Rejang-QWERTY"] = true, -- Rejang – QWERTY
-  ["com.apple.keylayout.Samoan"] = true, -- Samoan
-  ["com.apple.keylayout.Tongan"] = true, -- Tongan
-  ["com.apple.keylayout.Turkish-QWERTY"] = true, -- Turkish Q – Legacy
-  ["com.apple.keylayout.US"] = true, -- U.S.
-  ["com.apple.keylayout.USExtended"] = true, -- ABC – Extended
-  ["com.apple.keylayout.UnicodeHexInput"] = true, -- Unicode Hex Input
-}
+-- Layouts (input source IDs, hs.keycodes.currentSourceID()) that are not the US layout but have its
+-- Shift layer on the US symbol keys, whatever their unshifted characters (ABC - India has the rupee
+-- sign on the ` key, still with ~ on Shift).
+P.US_SHIFT_LAYOUTS = { ["com.apple.keylayout.ABC-India"] = true, ["com.apple.keylayout.USExtended"] = true }
 
 -- Keys that are the same on every layout.
 local FIXED = { [" "] = 49, ["\n"] = 36, ["\t"] = 48 }
@@ -290,7 +261,7 @@ Layout.__index = Layout
 --- through an __index fallback, map["H"] = 4). Letters also get their capitals on Shift. `name` is the
 --- layout name (hs.keycodes.currentLayout()) and `id` its input source ID
 --- (hs.keycodes.currentSourceID()); without both, the map is the US layout when every US_MAP entry
---- has the same code in it. The US layout ("U.S." or "ABC") and every layout in US_SHIFT_LAYOUTS get
+--- has the same code in it. The US layout ("U.S." or "ABC") and the layouts in US_SHIFT_LAYOUTS get
 --- the US shifted symbols on their US keys with Shift; other layouts get no key for a symbol their map
 --- does not have.
 --- With no arguments: the US layout, the same table as plan.mjs.
