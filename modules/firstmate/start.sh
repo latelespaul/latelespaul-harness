@@ -8,7 +8,8 @@
 # itself is started here.
 #   start.sh              start the session if it is missing (exit 0 when it already runs)
 #   start.sh --once       the same, but do nothing if it already started or found it this boot
-#   start.sh --register   add the hcron job firstmate-start (FIRSTMATE_AUTOSTART=1) or remove it (0)
+#   start.sh --register   add the hcron job firstmate-start (FIRSTMATE_AUTOSTART=1) or remove it (0);
+#                         without the cron module it leaves the shared jobs file alone
 #   start.sh --status     one line: is the hcron job registered? (exit 1 if autostart and cron are on and it is not)
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
