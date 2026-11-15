@@ -24,6 +24,11 @@ Telegram gives each bot token to one poller. Two Macs polling the same bot split
 
 The main `install.sh` runs this module's installer when `telegram` is in MODULES; it leaves a healthy bot alone.
 
+## Linux and polling off
+- **Linux** (no launchd): `install.sh` runs the session in a tmux session `claude-tg` (`tmux attach -t claude-tg`, Ctrl-B D detaches). It never edits your crontab: it prints the watchdog line (and the morning-brief line) to add with `crontab -e`, and `--status` repeats it while it is missing. Keep-awake and Claude Chrome checks are macOS-only.
+- **Polling off** (`TELEGRAM_POLLING=0` in harness.env): the session runs with the plugin installed but off (`telegram-settings.json`) and without `--channels`, so this machine never polls the bot. It never reads or claims `ACTIVE_HOST`, so it installs next to the machine that runs the bot today; `--take-over` is refused. The watchdog only keeps the session running, makes no Telegram call, and stops any poller that starts under it. Use it to prepare a new host before a planned cutover; set `TELEGRAM_POLLING=1` and run `install.sh --take-over` to move the bot.
+- **Brain and hands** (`TELEGRAM_MAC_NODE=1`): CLAUDE.md tells the session that the Mac is reached only through the `mac-node` command, with its action list.
+
 ## What the watchdog handles
 | Problem | Action |
 |---|---|

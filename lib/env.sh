@@ -28,6 +28,8 @@ unset _k
 : ${BROWSER_EXTRA:=}
 : ${TELEGRAM_WORKDIR:=$PROJECTS_DIR/claude-telegram}
 : ${TELEGRAM_BRIEF_TIME:=08:30}
+: ${TELEGRAM_POLLING:=1}
+: ${TELEGRAM_MAC_NODE:=0}
 : ${FIRSTMATE_REPO:=https://github.com/kunchenguid/firstmate.git}
 : ${FIRSTMATE_UPSTREAM:=}
 : ${FIRSTMATE_DIR:=$PROJECTS_DIR/firstmate}

@@ -13,7 +13,7 @@ How it works: [README.md](README.md). `H` = HARNESS_DIR, `P` = PROFILE_DIR. Ask 
    ```
    Then add a row to `P/secrets.md`: "Telegram bot token | `~/.claude/channels/telegram/.env` (chmod 600) | read by the Telegram plugin; don't open it in chat".
    If they would rather paste it into a file, any editor works, but the line must be exactly `TELEGRAM_BOT_TOKEN=<token>` with no spaces or quotes, and they should close the file afterwards: an editor left open (TextEdit autosaves) can write an old version back over a fix.
-   Verify (prints only the mode, not the token): `stat -f %Lp ~/.claude/channels/telegram/.env` → `600`, and `grep -Eq '^TELEGRAM_BOT_TOKEN=[0-9]+:[A-Za-z0-9_-]+$' ~/.claude/channels/telegram/.env && echo clean`
+   Verify (prints only the mode, not the token): `stat -f %Lp ~/.claude/channels/telegram/.env` (Linux: `stat -c %a`) → `600`, and `grep -Eq '^TELEGRAM_BOT_TOKEN=[0-9]+:[A-Za-z0-9_-]+$' ~/.claude/channels/telegram/.env && echo clean`
 5. **Install.** `H/modules/telegram/install.sh` (or `--take-over` if another Mac had the bot). Add `telegram` to MODULES if it isn't there (`H/install.sh MODULES="... telegram"`), so CLAUDE.md and settings pick it up.
    Verify: `H/modules/telegram/install.sh --status` lists the agents as `running`.
 6. **Trust the folder (needs the user, first time only).** If the installer said Claude will ask to trust the working folder, tell them: run `! screen -r claude-tg`, choose Yes, then press Ctrl-A then D to detach. (In Claude Code, the `! ` prefix runs it in this session.)
@@ -25,3 +25,14 @@ How it works: [README.md](README.md). `H` = HARNESS_DIR, `P` = PROFILE_DIR. Ask 
    Verify: `H/modules/telegram/morning-brief.py --now` delivers a brief to Telegram.
 
 Moving the bot to another Mac later: on that Mac, do steps 2, 4 and 7 (token and pairing are per Mac), then `install.sh --take-over`.
+
+**A Linux host, prepared with polling off.** Use this to move the bot to a server (for example a VM) while the Mac still runs it. On the new host: install Bun, tmux and the plugin (step 2), set `TELEGRAM_POLLING=0` in `H/harness.env` (and `TELEGRAM_MAC_NODE=1` if it reaches the Mac through `mac-node`), then run `H/install.sh`. Add the crontab line that `install.sh` prints.
+   Verify: `H/modules/telegram/install.sh --status` exits 0 and shows `polling: off` and `bot process: not running`.
+
+**Move the token to the new host (needs the user).** Never copy it yourself; give the user these commands to run on the Mac (`<host>` is the new host's ssh name). They copy the file without showing the token:
+```
+ssh <host> 'mkdir -p ~/.claude/channels/telegram && chmod 700 ~/.claude/channels/telegram'
+scp -p ~/.claude/channels/telegram/.env <host>:.claude/channels/telegram/.env
+ssh <host> 'chmod 600 ~/.claude/channels/telegram/.env && stat -c %a ~/.claude/channels/telegram/.env'
+```
+The last command prints `600`. Copy `access.json` the same way to keep the pairing, or pair again (step 7) after the cutover. The token sits unused until polling is turned on: with `TELEGRAM_POLLING=0` nothing sends with it.
