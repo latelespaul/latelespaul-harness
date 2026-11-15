@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const INSTALL = fileURLToPath(new URL('./install.sh', import.meta.url));
+const skip = process.platform === 'darwin' ? false : 'macOS only (shasum)';
 
 // running: is Hammerspoon "running" (stub pgrep); status: what `hs` answers (an object, or null
 // for not answering).
@@ -43,7 +44,7 @@ test('not running: links the config and starts Hammerspoon, nothing to quit', ()
   assert.match(r.stdout, /Hammerspoon started/);
 });
 
-test('running the same config: no restart', () => {
+test('running the same config: no restart', { skip }, () => {
   const s = sandbox({ status: {} });
   // Held and armed too: an unchanged config needs no restart, so nothing is deferred either.
   writeFileSync(join(s.d, 'status.json'), JSON.stringify({ config: s.hash(), awake: { on: true, owners: ['job'] } }));
@@ -53,7 +54,7 @@ test('running the same config: no restart', () => {
   assert.match(r.stdout, /already runs this config \(unchanged\); not restarting/);
 });
 
-test('a changed config with nobody holding it: restarts, and says why', () => {
+test('a changed config with nobody holding it: restarts, and says why', { skip }, () => {
   const s = sandbox({ status: { config: '0'.repeat(64), awake: { on: false, owners: {} }, port: { owners: { runner: { armed: false } } } } });
   const r = s.run();
   assert.equal(r.status, 0, r.stderr);
@@ -61,14 +62,14 @@ test('a changed config with nobody holding it: restarts, and says why', () => {
   assert.match(r.stdout, /restarting Hammerspoon: the config changed/);
 });
 
-test('a running config without a fingerprint (older than this check) counts as changed', () => {
+test('a running config without a fingerprint (older than this check) counts as changed', { skip }, () => {
   const s = sandbox({ status: { awake: { on: false, owners: [] } } });
   const r = s.run();
   assert.deepEqual(s.acted(), [QUIT, OPEN]);
   assert.match(r.stdout, /restarting Hammerspoon: the running config does not report its fingerprint/);
 });
 
-test('a changed config while awake mode is held: restart deferred', () => {
+test('a changed config while awake mode is held: restart deferred', { skip }, () => {
   const s = sandbox({ status: { config: 'old', awake: { on: true, owners: ['night-ship', 'job'] } } });
   const r = s.run();
   assert.equal(r.status, 0, r.stderr);
@@ -76,19 +77,19 @@ test('a changed config while awake mode is held: restart deferred', () => {
   assert.match(r.stdout, /restart deferred: the config changed, but awake mode is held by night-ship, job\. Run .* again once they finish\./);
 });
 
-test('a changed config while a port owner is armed: restart deferred (a restart would drop the arm)', () => {
+test('a changed config while a port owner is armed: restart deferred (a restart would drop the arm)', { skip }, () => {
   const s = sandbox({ status: { awake: { on: false, owners: [] }, port: { owners: { runner: { armed: true }, idle: { armed: false } } } } });
   const r = s.run();
   assert.deepEqual(s.acted(), []);
   assert.match(r.stdout, /restart deferred: .*, but armed: runner\./);
 });
 
-test('holds and arms together are both named', () => {
+test('holds and arms together are both named', { skip }, () => {
   const s = sandbox({ status: { config: 'old', awake: { owners: ['a'] }, port: { owners: { r: { armed: true } } } } });
   assert.match(s.run().stdout, /but awake mode is held by a and armed: r\./);
 });
 
-test('not answering: the saved holds decide, live ones defer the restart', () => {
+test('not answering: the saved holds decide, live ones defer the restart', { skip }, () => {
   const live = spawn('sleep', ['30']);
   try {
     const s = sandbox();   // `hs` fails, hsx finds no port
@@ -110,7 +111,7 @@ test('not answering: the saved holds decide, live ones defer the restart', () =>
   } finally { live.kill(); }
 });
 
-test('the fingerprint changes with the harness.env values init.lua reads', () => {
+test('the fingerprint changes with the harness.env values init.lua reads', { skip }, () => {
   const s = sandbox();
   const a = s.hash();
   writeFileSync(join(s.d, 'harness.env'), `PROFILE_DIR="${join(s.d, 'profile')}"\nHS_IPC_GENERIC=0\n`);
@@ -119,7 +120,7 @@ test('the fingerprint changes with the harness.env values init.lua reads', () =>
   assert.notEqual(a, b);
 });
 
-test('--dry-run never quits or opens anything', () => {
+test('--dry-run never quits or opens anything', { skip }, () => {
   const s = sandbox({ status: { config: 'old', awake: { owners: [] } } });
   const r = s.run('--dry-run');
   assert.equal(r.status, 0, r.stderr);

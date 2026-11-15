@@ -18,7 +18,7 @@ const here = p => fileURLToPath(new URL(p, import.meta.url));
 const CLI = here('./bin/eyeshands');
 const FAKE = here('./test/fake-eh-port.py');
 const PY = spawnSync('python3', ['-c', '1']).status === 0;
-const skip = PY ? false : 'no python3';
+const skip = process.platform !== 'darwin' ? 'macOS only (hsx and the fake port use CoreFoundation)' : PY ? false : 'no python3';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'eh-mcp-'));
 const portName = () => `eyeshands-test-${randomBytes(4).toString('hex')}`;

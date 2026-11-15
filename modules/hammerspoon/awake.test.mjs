@@ -219,8 +219,8 @@ test('a run killed with SIGKILL leaves no keeper or caffeinate behind', async ()
 // ---------- init.lua: holds survive a Hammerspoon restart ----------
 const LUA = [process.env.LUA, 'lua5.4', 'lua', '/opt/homebrew/opt/lua@5.4/bin/lua', '/usr/local/opt/lua@5.4/bin/lua']
   .filter(Boolean).find(b => spawnSync(b, ['-e', 'assert(_VERSION >= "Lua 5.4")']).status === 0);
-const skipLua = LUA ? false : 'no Lua 5.4 (brew install lua@5.4)';
-const BOOT = spawnSync('/usr/sbin/sysctl', ['-n', 'kern.boottime'], { encoding: 'utf8' }).stdout.match(/sec = (\d+)/)[1];
+const skipLua = process.platform !== 'darwin' ? 'macOS only (kern.boottime)' : LUA ? false : 'no Lua 5.4 (brew install lua@5.4)';
+const BOOT = skipLua ? '' : spawnSync('/usr/sbin/sysctl', ['-n', 'kern.boottime'], { encoding: 'utf8' }).stdout.match(/sec = (\d+)/)[1];
 const now = () => Math.floor(Date.now() / 1000);
 const names = v => (Array.isArray(v) ? v : Object.keys(v));   // the stub JSON writes an empty list as {}
 

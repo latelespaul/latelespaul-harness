@@ -52,7 +52,7 @@ test('macOS keeps the darwin archives and the Homebrew hint', () => {
 
 test('--status on Linux names the package manager, not Homebrew, for a missing brew tool', () => {
   const r = run('Linux', 'x86_64', ['--status']);
-  const gh = r.stdout.split('\n').find(l => / gh /.test(` ${l} `) && l.startsWith('MISSING'));
+  const gh = r.stdout.split('\n').find(l => l.startsWith('MISSING  gh ('));   // the tool, not the "gh login" line
   if (gh) assert.match(gh, /package manager/);
   assert.doesNotMatch(r.stdout, /brew install/);
 });
