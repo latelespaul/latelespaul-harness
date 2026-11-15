@@ -4,11 +4,14 @@
 # never getUpdates, so it cannot steal messages from the running Telegram session.
 #
 # Alerts to the master session (opt-in): when <profile>/telegram/ALERTS_TO_MASTER exists and the
-# master session's screen ("claude-tg") is running, the alert is appended to
-# <profile>/logs/master-alerts.log instead of being sent. The master session watches that file and
-# fixes what it can (docs/master-session.md). If the master session is down, the alert goes to
-# Telegram as before, marked "(master session down)". TG_NOTIFY_DIRECT=1 always sends.
-import json, os, re, subprocess, sys, urllib.parse, urllib.request
+# master session is up, the alert is appended to <profile>/logs/master-alerts.log instead of being
+# sent. The master session watches that file and fixes what it can (docs/master-session.md). It counts
+# as up when its session "claude-tg" runs here (screen on macOS, tmux on Linux), or when a master
+# session on a VM pulled this Mac's alerts over mac-node in the last 10 minutes
+# ($MACNODE_DIR/alerts-pulled; the VM's heartbeat pulls every minute while its master runs). If the
+# master session is down, the alert goes to Telegram as before, marked "(master session down)".
+# TG_NOTIFY_DIRECT=1 always sends.
+import json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timezone
 
 TG_DIR = os.path.join(os.path.expanduser("~"), ".claude/channels/telegram")
@@ -26,26 +29,47 @@ def env():
     return out
 
 
-def profile_dir():
-    if os.environ.get("PROFILE_DIR"):
-        return os.environ["PROFILE_DIR"]
-    harness_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "harness.env")
+def harness_value(key, default=""):
+    """key from the environment, else from harness.env ($HARNESS_ENV or the harness's own), else default."""
+    if os.environ.get(key):
+        return os.environ[key]
+    harness_env = os.environ.get("HARNESS_ENV") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "harness.env")
     try:
         for line in open(harness_env):
-            m = re.match(r"""\s*PROFILE_DIR=['"]?([^'"\n]*)""", line)
+            m = re.match(r"""\s*""" + key + r"""=['"]?([^'"\n]*)""", line)
             if m:
-                return os.path.expanduser(m.group(1))
+                return os.path.expanduser(os.path.expandvars(m.group(1)))
     except OSError:
         pass
-    return ""
+    return default
+
+
+def profile_dir():
+    return harness_value("PROFILE_DIR")
+
+
+REMOTE_FRESH = 10 * 60  # a VM pull this recent means a master session on the VM is up
+
+
+def local_master_up():
+    cmd = ["screen", "-ls"] if sys.platform == "darwin" else ["tmux", "has-session", "-t", "=claude-tg"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return ".claude-tg" in r.stdout if sys.platform == "darwin" else r.returncode == 0
+
+
+def remote_master_up():
+    mn = harness_value("MACNODE_DIR", os.path.join(os.path.expanduser("~"), ".local/state/mac-node"))
+    try:
+        return time.time() - os.path.getmtime(os.path.join(mn, "alerts-pulled")) < REMOTE_FRESH
+    except OSError:
+        return False
 
 
 def master_up():
-    try:
-        out = subprocess.run(["screen", "-ls"], capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return ".claude-tg" in out
+    return local_master_up() or remote_master_up()
 
 
 def to_master(text):

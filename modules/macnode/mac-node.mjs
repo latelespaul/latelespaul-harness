@@ -4,6 +4,7 @@
 //   VM:  mac-node [--no-queue] [--ttl 60m] [--timeout 90s] [--json] <action> [args..]
 //          run one allowlisted action on the Mac (mac-node help lists them) and print its output
 //        mac-node status | queue | result <id> | drain [--wait] | log [-n 20] | help
+//        mac-node pull-alerts   append the Mac's new alert lines to this host's master-alerts.log
 //        mac-node bridge   the far end of the Mac's ssh: the forced command of its key on the VM
 //   Mac: mac-node serve
 //          the service (an hcron keepalive job): `ssh <VM>` in a reconnect loop, plus the allowlist runner
@@ -25,12 +26,12 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync, chmodSync,
-  realpathSync } from 'node:fs';
+  realpathSync, appendFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, summary, ACTIONS } from './actions.mjs';
+import { parse, summary, ACTIONS, CURSOR } from './actions.mjs';
 import { pidLock, alive } from './lock.mjs';
 
 const VERSION = 1;
@@ -50,7 +51,7 @@ const LINE_MAX = 16 * 1024 * 1024;                   // one JSON reply, output i
 const EXIT = { lost: 74, offline: 75, locked: 76, refused: 77 };
 
 // ---------- config: harness.env, read the way every harness script reads it ----------
-const KEYS = ['MACNODE_DIR', 'MACNODE_VM', 'MACNODE_KEY', 'MACNODE_SSH_PORT', 'MACNODE_JOBHUNT_DIR',
+const KEYS = ['PROFILE_DIR', 'MACNODE_DIR', 'MACNODE_VM', 'MACNODE_KEY', 'MACNODE_SSH_PORT', 'MACNODE_JOBHUNT_DIR',
   'MACNODE_JOBHUNT_SUBS', 'MACNODE_GH_CODE', 'MACNODE_PORTAL_PASS', 'MACNODE_REPOS', 'MACNODE_HS_OWNER'];
 function config() {
   const out = execFileSync('/bin/zsh', ['-c', 'source "$1/lib/env.sh"; shift; for k; print -r -- "$k=${(P)k}"', 'mac-node', HARNESS, ...KEYS],
@@ -63,6 +64,7 @@ function config() {
 // ---------- shared helpers ----------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => new Date().toISOString();
+const stamp = () => now().replace(/\.\d+Z$/, 'Z');   // the time format of master-alerts.log
 const newId = () => `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 const ID = /^[A-Za-z0-9-]{1,40}$/;
 function ensureDir(d) { mkdirSync(d, { recursive: true, mode: 0o700 }); chmodSync(d, 0o700); return d; }
@@ -179,6 +181,33 @@ function hands(calls, cfg, timeoutMs) {
   return p;
 }
 
+// readAlerts(cursor, cfg): the lines of <profile>/logs/master-alerts.log after the cursor, at most
+// ALERTS_MAX bytes per call (more: true says ask again). The cursor is <inode>:<offset>; a different
+// file (rotated or replaced) or a shorter one starts again at 0, so nothing written since is skipped.
+// A line still being written (no newline yet) waits for the next call. Each call also stamps
+// $MACNODE_DIR/alerts-pulled: while that is fresh, the Mac's tg-notify.py queues alerts in this log for
+// the VM's master session instead of sending them to Telegram.
+const ALERTS_MAX = 256 * 1024;
+function readAlerts(cursor, cfg) {
+  writePrivate(join(ensureDir(cfg.MACNODE_DIR), 'alerts-pulled'), `${now()}\n`);
+  const f = join(cfg.PROFILE_DIR, 'logs', 'master-alerts.log');
+  let st;
+  try { st = statSync(f, { bigint: true }); } catch { return { cursor: '0:0', lines: [], more: false }; }
+  const ino = String(st.ino), size = Number(st.size);
+  let off = 0, reset = false;
+  if (cursor === 'end') off = size;
+  else if (cursor !== 'start') {
+    const [ci, co] = cursor.split(':');
+    if (ci === ino && Number(co) <= size) off = Number(co); else reset = true;
+  }
+  const buf = Buffer.alloc(Math.min(size - off, ALERTS_MAX));
+  if (buf.length) { const fd = openSync(f, 'r'); try { readSync(fd, buf, 0, buf.length, off); } finally { closeSync(fd); } }
+  let cut = buf.lastIndexOf(0x0a) + 1;
+  if (!cut && buf.length === ALERTS_MAX) cut = buf.length;   // one overlong line: pass it on, cut
+  const lines = buf.subarray(0, cut).toString('utf8').split('\n').filter(Boolean);
+  return { cursor: `${ino}:${off + cut}`, lines, more: off + cut < size && cut > 0, ...(reset && { reset: true }) };
+}
+
 async function handle(req, cfg) {
   const p = parse(req.argv, cfg);
   if (!p.ok) return { status: 'refused', reason: p.reason };
@@ -190,6 +219,9 @@ async function handle(req, cfg) {
   if (p.run.kind === 'ping') {
     const s = await screen();
     r = { exit: 0, stdout: JSON.stringify({ pong: true, version: VERSION, screen_locked: s.locked, gui: s.gui, via: s.via }) + '\n', stderr: '' };
+  } else if (p.run.kind === 'alerts') {
+    try { r = { exit: 0, stdout: JSON.stringify(readAlerts(p.run.cursor, cfg)) + '\n', stderr: '' }; }
+    catch (e) { r = { exit: 1, stdout: '', stderr: `alerts: ${e.code || e.message}` }; }
   } else if (p.run.kind === 'hands') r = await hands(p.run.calls, cfg, p.run.timeoutMs);
   else r = await run(p.run.file, p.run.args, { cwd: p.run.cwd, timeoutMs: p.run.timeoutMs });
   return { status: r.exit === 0 ? 'ok' : 'failed', ...r };
@@ -410,6 +442,56 @@ async function drain(dir, wait) {
   return 'done';
 }
 
+// pull-alerts (VM): append the Mac's new alert lines to this host's <profile>/logs/master-alerts.log, as
+// "<time> [mac] <text>", then save the cursor in $MACNODE_DIR/alerts.cursor. The first pull starts at
+// the end: older Mac alerts already went to Telegram or to a master session on the Mac. Offline or lost
+// changes nothing, so the next pull catches up from the same cursor. The heartbeat runs it every minute
+// while the master session is up (modules/telegram/heartbeat.sh). One puller at a time (alerts-pull.pid).
+const ALERT_LINE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (.*)$/;
+function tagAlert(line) {
+  const clean = line.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 4000);
+  const m = ALERT_LINE.exec(clean);
+  return m ? `${m[1]} [mac] ${m[2]}\n` : `${stamp()} [mac] ${clean}\n`;
+}
+async function pullAlerts(cfg) {
+  const dir = ensureDir(cfg.MACNODE_DIR);
+  const lock = join(dir, 'alerts-pull.pid');
+  if (!pidLock(lock)) { console.log('a pull is already running'); return 0; }
+  try {
+    const cf = join(dir, 'alerts.cursor');
+    let cursor = existsSync(cf) ? readFileSync(cf, 'utf8').trim() : 'end';
+    if (!CURSOR.test(cursor)) { console.error(`mac-node pull-alerts: bad cursor in ${cf}; starting at the end`); cursor = 'end'; }
+    const out = join(cfg.PROFILE_DIR, 'logs', 'master-alerts.log');
+    let total = 0;
+    for (let round = 0; round < 50; round++) {
+      const id = newId(), t0 = Date.now(), argv = ['alerts', 'since', cursor];
+      const vlog = e => log(dir, { side: 'vm', id, action: summary(argv), ms: Date.now() - t0, ...e });
+      const link = await findLink(dir);
+      if (!link) { vlog({ status: 'mac-offline' }); console.error('mac-offline: no Mac alerts pulled; the next pull catches up'); return EXIT.offline; }
+      const r = await send(link, { v: VERSION, id, argv }, 45_000);
+      if (r.lost) { vlog({ status: 'lost' }); console.error('mac-link-lost: no Mac alerts pulled; the next pull catches up'); return EXIT.lost; }
+      const resp = r.resp;
+      vlog({ status: resp.status, ...(resp.exit !== undefined && { exit: resp.exit }), ...(resp.reason && { reason: resp.reason }) });
+      const body = resp.status === 'ok' ? tryJson(resp.stdout) : null;
+      if (!body || !CURSOR.test(String(body.cursor)) || !Array.isArray(body.lines)) {
+        console.error(`mac-node pull-alerts: the Mac answered ${resp.status}: ${resp.reason || String(resp.stderr || '').trim() || 'no alerts reply'}`);
+        return resp.status === 'refused' ? EXIT.refused : 1;
+      }
+      const lines = body.lines.filter(l => typeof l === 'string' && l.trim());
+      if (lines.length) {
+        mkdirSync(dirname(out), { recursive: true });
+        appendFileSync(out, lines.map(tagAlert).join(''), { mode: 0o600 });
+      }
+      writePrivate(cf, `${body.cursor}\n`);
+      cursor = body.cursor;
+      total += lines.length;
+      if (!body.more) break;
+    }
+    console.log(`pulled ${total} Mac alert${total === 1 ? '' : 's'}`);
+    return 0;
+  } finally { try { unlinkSync(lock); } catch {} }
+}
+
 function print(resp, json) {
   if (json) { process.stdout.write(JSON.stringify(resp) + '\n'); return; }
   if (resp.stdout) process.stdout.write(resp.stdout);
@@ -467,7 +549,7 @@ function duration(s) {
 
 function help() {
   console.log(`usage: mac-node [--no-queue] [--ttl 60m] [--timeout 90s] [--json] <action> [args..]
-       mac-node status | queue | result <id> | drain [--wait] | log [-n 20] | serve | bridge | help
+       mac-node status | queue | result <id> | drain [--wait] | log [-n 20] | pull-alerts | serve | bridge | help
 actions (checked on the VM, then again on the Mac):`);
   for (const a of ACTIONS) console.log(`  ${a.use.padEnd(48)} ${a.about}${a.gui ? ' [GUI: needs an unlocked screen, never queued]' : ''}`);
   console.log('exit: action exit code | 74 link lost | 75 mac-offline (queued unless GUI) | 76 locked | 77 refused');
@@ -491,6 +573,7 @@ async function main(args) {
     case undefined: case 'help': help(); return 0;
     case 'serve': await serve(); return null;
     case 'bridge': await bridge(); return null;
+    case 'pull-alerts': return pullAlerts(config());
     case 'drain': {
       const r = await drain(dir(), rest.includes('--wait'));
       if (r === 'busy') console.log('a drainer is already running');

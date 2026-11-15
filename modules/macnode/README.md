@@ -86,6 +86,21 @@ the Mac. The VM gets only the output of the actions it asked for.
 | `gh-code <company> [max-age-min]` | `node $MACNODE_GH_CODE` (off while empty) |
 | `portal-pass <portal-id> [--create]` | `node $MACNODE_PORTAL_PASS` (off while empty; GUI) |
 | `git pull <repo>` | `git -C <path> pull --ff-only` for a name in `MACNODE_REPOS` |
+| `alerts since <start\|end\|cursor>` | nothing; reads the new lines of `<profile>/logs/master-alerts.log` |
+
+## Mac alerts for a master session on the VM
+`mac-node pull-alerts` on the VM asks for `alerts since <cursor>` and appends the answer to the VM's
+own `<profile>/logs/master-alerts.log`, as `<time> [mac] <text>`. The heartbeat
+(`modules/telegram/heartbeat.sh`) runs it every minute while the master session and the link are up.
+- **Cursor**: `<inode>:<byte offset>` in the Mac's log, kept in `$MACNODE_DIR/alerts.cursor` on the
+  VM. The first pull starts at the end: older Mac alerts already went to Telegram or to a master on
+  the Mac. A rotated or shorter log starts again at 0. A line with no newline yet waits for the next pull.
+- **Nothing lost**: the cursor moves only after `pull-alerts` writes the lines. Offline (exit 75) or
+  lost (74) changes nothing, and the queue never holds a pull: the next pull catches up from the same cursor.
+- **The Mac side**: each `alerts since` stamps `$MACNODE_DIR/alerts-pulled`. While it is under 10
+  minutes old, the Mac's `tg-notify.py` queues alerts in its log for the VM instead of sending them.
+- At most 256 KB per answer; `pull-alerts` asks again while the Mac says there is more. The VM
+  replaces control characters and cuts each line at 4000 characters.
 
 Arguments must be plain words: letters, digits and `._:@/=,+-`, or `--flags`. No `..` path parts, no
 spaces (a company name may have spaces), no shell characters. JSON arguments are parsed and limited
@@ -115,13 +130,14 @@ vm$ echo $?
   command with a bare environment.
 - **What a stolen key can do**: it can only start a bridge. Its holder could then pose as the Mac: get
   the requests the VM sends while that bridge is the newest, and send back false results. It cannot run
-  anything on the VM or reach the Mac. Remove the key's line from `~/.ssh/authorized_keys` to cut it off.
+  anything on the VM or reach the Mac. It could also feed false lines into the VM master's alert log
+  through `pull-alerts`. Remove the key's line from `~/.ssh/authorized_keys` to cut it off.
 - **`ssh -F none`**: only this key and these options, whatever `~/.ssh/config` says.
 - **Private sockets and state**: the bridge makes its socket with mode 600, and `$MACNODE_DIR` is mode
   700 on both sides. Anyone who can act as the VM user can send requests: this is the trust boundary.
   The allowlist limits what such a request can do.
 - **Logs** (`$MACNODE_DIR/requests.log`, JSON lines, rotated at 5 MB): time, id, an action summary,
-  outcome, exit code and duration. Never the output, the hands arguments (they can hold typed text)
+  outcome, exit code and duration. Never the output (so never an alert's text), the hands arguments (they can hold typed text)
   or a secret. Results of queued requests (`results/`, mode 600) do hold the output, because the
   caller needs it. `link.log` on each side records when the link comes up and goes down.
 

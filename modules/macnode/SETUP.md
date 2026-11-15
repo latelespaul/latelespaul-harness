@@ -135,6 +135,18 @@ Run each command on the VM unless the step says Mac. Exit codes: 0 or the action
    **Proof:** `"status": "ok"`: a non-GUI request runs on a locked Mac. `mac-node log -n 5` shows no
    new hands line: the GUI request from step 4 was never queued, so nothing retried it.
 
+## Mac alerts to a master session on the VM
+
+1. On both machines: `touch <profile>/telegram/ALERTS_TO_MASTER`.
+2. On the VM, add the heartbeat line from the top of `modules/telegram/heartbeat.sh` to the crontab
+   (`crontab -e`). It pulls the Mac's alerts every minute while the master session and the link are up.
+3. Test by hand on the VM: `mac-node pull-alerts`.
+   **Proof:** `pulled 0 Mac alerts` (the first pull starts at the end), and the Mac now has
+   `~/.local/state/mac-node/alerts-pulled`.
+4. On the Mac: `python3 modules/cron/tg-notify.py "relay test"`. Then on the VM: `mac-node pull-alerts`.
+   **Proof:** `pulled 1 Mac alert`, and `tail -1 <profile>/logs/master-alerts.log` on the VM ends in
+   `[mac] relay test`.
+
 ## Troubleshooting
 - Mac: `tail ~/.local/state/mac-node/link.log` shows each ssh start and exit with ssh's last error
   line, and `link: up (bridge v1)` when the bridge answered. `Permission denied (publickey)` means

@@ -28,6 +28,8 @@ Moving the bot to another Mac later: on that Mac, do steps 2, 4 and 7 (token and
 
 **A Linux host, prepared with polling off.** Use this to move the bot to a server (for example a VM) while the Mac still runs it. On the new host: install Bun, tmux and the plugin (step 2), set `TELEGRAM_POLLING=0` in `H/harness.env` (and `TELEGRAM_MAC_NODE=1` if it reaches the Mac through `mac-node`), then run `H/install.sh`. Add the crontab line that `install.sh` prints.
    Verify: `H/modules/telegram/install.sh --status` exits 0 and shows `polling: off` and `bot process: not running`.
+   For the master session's alerts on that host, create `P/telegram/ALERTS_TO_MASTER` and add the heartbeat line from the top of `H/modules/telegram/heartbeat.sh` to the crontab (`crontab -e`).
+   Verify: `zsh H/modules/telegram/heartbeat.sh && cat P/logs/master-heartbeat.state` lists `master`, `firstmate` (and `mac-node`) with `up` or `down`.
 
 **Move the token to the new host (needs the user).** Never copy it yourself; give the user these commands to run on the Mac (`<host>` is the new host's ssh name). They copy the file without showing the token:
 ```

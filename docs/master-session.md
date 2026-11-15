@@ -78,11 +78,34 @@ hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stal
 The user may not want every alert. Create `<profile>/telegram/ALERTS_TO_MASTER` (an empty file) to
 send them to the master session instead. Then `modules/cron/tg-notify.py` (used by hcron, the stall
 watch, the Hammerspoon awake guard and the Eyes & Hands loader) appends each alert to
-`<profile>/logs/master-alerts.log` while the master session's screen (`claude-tg`) runs. The master
-session watches that file, fixes what it can and tells the user only about real blockers. If the
-master session is down, the alert goes to Telegram as before, marked "(master session down)".
-`TG_NOTIFY_DIRECT=1` always sends. The Telegram watchdog and the morning brief send on their own and
-are not affected.
+`<profile>/logs/master-alerts.log` while the master session (`claude-tg`) runs: a screen session on
+macOS, a tmux session on Linux. The master session watches that file, fixes what it can and tells the
+user only about real blockers. If the master session is down, the alert goes to Telegram as before,
+marked "(master session down)". `TG_NOTIFY_DIRECT=1` always sends. The Telegram watchdog and the
+morning brief send on their own and are not affected.
+
+**Master session on a VM (virtual machine), Mac as the hands**
+```
+ Mac                                              VM
+ tg-notify.py ─► Mac master-alerts.log            heartbeat.sh (crontab, every minute)
+  (queues while a VM pulled < 10 min ago)          ├─ master claude-tg, firstmate, mac-node link
+        ▲                                          │   a change ─► tg-notify.py ─► VM master-alerts.log
+        └──── mac-node alerts since <cursor> ◄─────┴─ master and link up: mac-node pull-alerts
+                                                        appends "<time> [mac] <text>" to the same log
+```
+- On the VM, create `<profile>/telegram/ALERTS_TO_MASTER` and add the heartbeat line from
+  `modules/telegram/heartbeat.sh` to the crontab (`crontab -e`). Nothing installs it for you.
+- Each run checks the master session, firstmate's tmux session and, with the `macnode` module, the
+  link to the Mac. It writes one line only when one of them changes (down, or up again). The line
+  goes through `tg-notify.py`, so it reaches Telegram only when the master session itself is down.
+- While the master session and the link are up, it runs `mac-node pull-alerts`. The Mac's new alert
+  lines land in the VM's log with a `[mac]` tag. The cursor (`~/.local/state/mac-node/alerts.cursor`
+  on the VM) moves only after `pull-alerts` writes the lines, so a Mac that was away catches up on reconnect.
+- The Mac keeps `ALERTS_TO_MASTER` too. Its `tg-notify.py` counts the VM's master session as up while
+  a pull came in the last 10 minutes (`~/.local/state/mac-node/alerts-pulled` on the Mac). When the
+  VM master or the link is down for longer, Mac alerts go to Telegram again, marked "(master session down)".
+- Alerts from hcron, the stall watch and anything else on the VM that calls `tg-notify.py` reach the
+  VM's log the same way.
 
 **Handling an alert**
 - Do not forward a raw alert to the user. Find its cause, fix it, and log what you did. Tell the
