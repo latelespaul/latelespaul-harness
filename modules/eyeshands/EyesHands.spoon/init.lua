@@ -411,9 +411,7 @@ function obj:stop()
   -- A held button or key is released and the clipboard put back before anything else closes.
   pcall(s.hands.unload)
   for name, o in pairs(s.core.policyInfo().owners) do if o.armed then s.core.disarm(name, "unloaded") end end
-  -- port:delete() alone leaves the message port answering until Lua garbage collection frees the
-  -- userdata, so the reference is dropped and a collection run here: the name is free on return.
-  if s.port then pcall(function() s.port:delete() end); s.port = nil; collectgarbage() end
+  if s.port then pcall(function() s.port:delete() end) end
   for _, t in ipairs(s.timers) do pcall(function() t:stop() end) end
   for _, w in ipairs({ s.accessWatch, s.cafWatch }) do pcall(function() w:stop() end) end
   if s.hotkey then pcall(function() s.hotkey:delete() end) end
