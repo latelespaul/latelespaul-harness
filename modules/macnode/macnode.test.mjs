@@ -49,8 +49,11 @@ exec "$@"
   exe(join(p.jh, 'bin', 'jobhunt'), `#!/bin/sh\necho "jobhunt $* (cwd $(pwd))" >> "${p.calls}"\necho "applied=3 queued=5 failed=0"\n`);
   exe(join(p.bin, 'ssh-fake'), `#!/bin/sh\nexec "${process.execPath}" "${join(HERE, 'test', 'fake-ssh.mjs')}" "$@"\n`);
   writeFileSync(join(d, 'mac.env'), `MACNODE_ROLE=mac\nMACNODE_DIR="${p.mac}"\nMACNODE_VM="tester@vm.invalid"
-MACNODE_KEY="${p.home}/.ssh/mac-node_ed25519"\nMACNODE_JOBHUNT_DIR="${p.jh}"\nMACNODE_JOBHUNT_SUBS="status"\nMACNODE_REPOS="tools=${d}/norepo"\n`);
-  writeFileSync(join(d, 'vm.env'), `MACNODE_ROLE=vm\nMACNODE_DIR="${p.vm}"\n`);
+MACNODE_KEY="${p.home}/.ssh/mac-node_ed25519"\nMACNODE_JOBHUNT_DIR="${p.jh}"\nMACNODE_JOBHUNT_SUBS="status"\nMACNODE_REPOS="tools=${d}/norepo"
+PROFILE_DIR="${d}/mac-prof"\n`);
+  writeFileSync(join(d, 'vm.env'), `MACNODE_ROLE=vm\nMACNODE_DIR="${p.vm}"\nPROFILE_DIR="${d}/vm-prof"\n`);
+  p.macAlerts = join(d, 'mac-prof', 'logs', 'master-alerts.log');
+  p.vmAlerts = join(d, 'vm-prof', 'logs', 'master-alerts.log');
   // Beats every 300 ms; a bridge that hears nothing for 1.5 s exits.
   const base = { PATH: `${p.bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: p.home,
     MACNODE_BACKOFF_MS: '150', MACNODE_POLL_MS: '150', MACNODE_BEAT_MS: '300', MACNODE_DEAD_MS: '1500' };
@@ -123,13 +126,15 @@ test('allowlist: each named action parses; anything else is refused', () => {
   for (const argv of [['ping'], ['eyes', 'status'], ['hands', 'call', 'eyes.fields'], ['hands', 'call', 'hands.click', '{"x":1}'],
     ['hands', 'batch', '[{"cmd":"a.b"},{"cmd":"c","args":{"k":1}}]'], ['chrome-mode', 'personal'], ['chrome-mode', 'personal', 'desktop'],
     ['jobhunt', 'status'], ['jobhunt', 'status', '--json'], ['hcron', 'status'], ['hcron', 'pause', 'all'], ['hcron', 'run', 'job-1'],
-    ['gh-code', 'Acme Corp', '30'], ['portal-pass', 'amazon', '--create'], ['git', 'pull', 'harness']])
+    ['gh-code', 'Acme Corp', '30'], ['portal-pass', 'amazon', '--create'], ['git', 'pull', 'harness'],
+    ['alerts', 'since', 'start'], ['alerts', 'since', 'end'], ['alerts', 'since', '1234:56']])
     assert.ok(parse(argv).ok, `${argv.join(' ')}: ${parse(argv).reason}`);
   for (const argv of [['rm', '-rf', '/'], ['sh', '-c', 'id'], ['git', 'push'], ['git', 'pull', '../etc'], ['hcron', 'rm', 'x'],
     ['hcron', 'run', 'all'], ['hcron', 'status', 'extra'], ['jobhunt', 'status;id'], ['jobhunt', 'status', '$(id)'], ['jobhunt', 'x', 'a/../b'],
     ['chrome-mode', 'personal', 'root'], ['chrome-mode', '../x'], ['hands', 'call', 'x', '[1]'], ['hands', 'call', 'x', 'nope'],
     ['hands', 'batch', '[]'], ['hands', 'batch', '[{"cmd":"x","sh":"id"}]'], ['gh-code', 'Acme', '99999'], ['portal-pass', 'a', '--show'],
-    ['eyes', 'status', 'x'], [], ['ping', ...Array(20).fill('x')], 'ping'])
+    ['eyes', 'status', 'x'], [], ['ping', ...Array(20).fill('x')], 'ping',
+    ['alerts'], ['alerts', 'since'], ['alerts', 'since', '../x'], ['alerts', 'since', '1:2:3'], ['alerts', 'since', '-1:0'], ['alerts', 'since', 'end', 'x']])
     assert.equal(parse(argv).ok, false, `${JSON.stringify(argv)} should be refused`);
 });
 
@@ -378,4 +383,77 @@ test('serve refuses to start without the VM settings', async t => {
   assert.equal(r.code, 2);
   assert.match(r.err, /set MACNODE_VM in harness.env/);
   assert.ok(!existsSync(p.sshLog), 'no ssh was started');
+});
+
+// ---------- Mac alerts for a master session on the VM ----------
+const vmAlertLines = p => existsSync(p.vmAlerts) ? readFileSync(p.vmAlerts, 'utf8').split('\n').filter(Boolean) : [];
+const macAlert = (p, text) => { mkdirSync(dirname(p.macAlerts), { recursive: true }); writeFileSync(p.macAlerts, text, { flag: 'a' }); };
+
+test('pull-alerts: starts at the end, then copies each new Mac alert once, tagged [mac], and logs both sides', async t => {
+  const p = sandbox();
+  const serve = await startMac(p);
+  t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
+  macAlert(p, '2026-11-15T10:00:00Z old alert, handled on the Mac already\n');
+  let r = await vm(p, ['pull-alerts']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /pulled 0 Mac alerts/);
+  assert.deepEqual(vmAlertLines(p), []);
+  assert.ok(existsSync(join(p.mac, 'alerts-pulled')), 'the Mac knows a VM master pulled just now');
+  assert.match(readFileSync(join(p.vm, 'alerts.cursor'), 'utf8'), /^\d+:\d+\n$/);
+  macAlert(p, '2026-11-15T10:01:00Z hcron: job x failed\n2026-11-15T10:02:00Z awake guard: run y\nno time on this one\n');
+  r = await vm(p, ['pull-alerts']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /pulled 3 Mac alerts/);
+  const got = vmAlertLines(p);
+  assert.deepEqual(got.slice(0, 2), ['2026-11-15T10:01:00Z [mac] hcron: job x failed', '2026-11-15T10:02:00Z [mac] awake guard: run y']);
+  assert.match(got[2], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ \[mac\] no time on this one$/);
+  macAlert(p, '2026-11-15T10:03:00Z half a line, still being writ');   // no newline yet: it waits
+  r = await vm(p, ['pull-alerts']);
+  assert.match(r.stdout, /pulled 0 Mac alerts/);
+  macAlert(p, 'ten\n');
+  r = await vm(p, ['pull-alerts']);
+  assert.match(r.stdout, /pulled 1 Mac alert\b/);
+  assert.equal(vmAlertLines(p).pop(), '2026-11-15T10:03:00Z [mac] half a line, still being written');
+  assert.ok(logLines(p.vm).some(l => l.action.startsWith('alerts since ') && l.status === 'ok'));
+  assert.ok(logLines(p.mac).some(l => l.action.startsWith('alerts since ') && l.status === 'ok'));
+  assert.ok(logLines(p.mac).every(l => !JSON.stringify(l).includes('hcron: job x')), 'logs never hold the alert text');
+});
+
+test('pull-alerts: Mac offline -> exit 75 and nothing lost; on reconnect it catches up; a replaced log starts again at 0', async t => {
+  const p = sandbox();
+  let serve = await startMac(p);
+  t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
+  assert.equal((await vm(p, ['pull-alerts'])).code, 0);
+  await stopMac(serve);
+  await until('the bridge to remove its socket', () => linkSocks(p).length === 0, 3000);
+  macAlert(p, '2026-11-15T11:00:00Z raised while the link was down\n');
+  const off = await vm(p, ['pull-alerts']);
+  assert.equal(off.code, 75, off.stderr);
+  assert.match(off.stderr, /mac-offline/);
+  assert.deepEqual(vmAlertLines(p), []);
+  assert.equal(queueLen(p), 0, 'pulls are never queued: the next pull catches up');
+  serve = await startMac(p);
+  let r = await vm(p, ['pull-alerts']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(vmAlertLines(p), ['2026-11-15T11:00:00Z [mac] raised while the link was down']);
+  // The Mac's log is rotated: a new file (another inode), shorter than the cursor. It starts again at 0.
+  rmSync(p.macAlerts);
+  macAlert(p, '2026-11-15T11:05:00Z first line of the new log\n');
+  r = await vm(p, ['pull-alerts']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(vmAlertLines(p).pop(), '2026-11-15T11:05:00Z [mac] first line of the new log');
+});
+
+test('alerts since: a bad cursor is refused on the VM and, unchecked, by the Mac', async t => {
+  const p = sandbox();
+  const serve = await startMac(p);
+  t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
+  const r = await vm(p, ['alerts', 'since', '../etc/passwd']);
+  assert.equal(r.code, 77);
+  const u = await vm(p, ['--unchecked', 'alerts', 'since', '../etc/passwd']);
+  assert.equal(u.code, 77);
+  assert.match(u.stderr, /refused: alerts since: want start, end or a cursor/);
+  const ok = await vm(p, ['alerts', 'since', 'start']);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.deepEqual(JSON.parse(ok.stdout), { cursor: '0:0', lines: [], more: false });
 });

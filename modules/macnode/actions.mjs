@@ -6,12 +6,15 @@
 // parse(argv, cfg) -> { ok: true, action, gui, run } | { ok: false, reason }
 //   cfg null: check names and args only (the VM side).
 //   cfg set:  also resolve the program, its args and folder from the Mac's harness.env (the Mac side).
-//   run: { kind: 'exec', file, args, cwd, timeoutMs }, { kind: 'hands', calls, timeoutMs } or { kind: 'ping' }
+//   run: { kind: 'exec', file, args, cwd, timeoutMs }, { kind: 'hands', calls, timeoutMs }, { kind: 'ping' }
+//        or { kind: 'alerts', cursor, timeoutMs }
 // summary(argv): a short, log-safe description (no typed text, no tool output).
 
 export const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;          // ids: hcron jobs, chrome profiles, repos
 const WORD = /^[A-Za-z0-9][A-Za-z0-9._:@\/=,+-]{0,199}$/;         // a plain argument
 const FLAG = /^--?[A-Za-z0-9][A-Za-z0-9-]{0,39}(=[A-Za-z0-9._:@\/,+-]{0,160})?$/;
+// An alerts cursor: start, end, or <inode>:<byte offset> of the Mac's master-alerts.log.
+export const CURSOR = /^(start|end|\d{1,20}:\d{1,20})$/;
 const COMPANY = /^[A-Za-z0-9][A-Za-z0-9 .&_'-]{0,63}$/;
 const MAX_JSON = 16 * 1024;
 const MAX_ARGS = 16;
@@ -32,6 +35,7 @@ export const ACTIONS = [
   { name: 'gh-code', use: 'gh-code <company> [max-age-min]', about: 'the Greenhouse email code tool (MACNODE_GH_CODE)' },
   { name: 'portal-pass', use: 'portal-pass <portal-id> [--create]', about: 'type a portal password from the Keychain (MACNODE_PORTAL_PASS)', gui: true },
   { name: 'git pull', use: 'git pull <repo>', about: 'fast-forward pull of a repo named in MACNODE_REPOS' },
+  { name: 'alerts since', use: 'alerts since <start|end|cursor>', about: "new lines of the Mac's master-alerts.log (the VM's pull-alerts uses it)" },
 ];
 const byName = Object.fromEntries(ACTIONS.map(a => [a.name, a]));
 
@@ -144,6 +148,10 @@ export function parse(argv, cfg = null) {
       if (!path) return refuse(`git pull ${args[0]}: not a repo named in MACNODE_REPOS on this Mac`);
       return ok(exec('git', ['-C', path, 'pull', '--ff-only', '-q'], { timeoutMs: 5 * MIN }));
     }
+
+    case 'alerts since':
+      if (args.length !== 1 || !CURSOR.test(args[0])) return bad('want start, end or a cursor <inode>:<offset>');
+      return ok({ kind: 'alerts', cursor: args[0], timeoutMs: 15_000 });
   }
   return refuse('not on the allowlist');
 }
