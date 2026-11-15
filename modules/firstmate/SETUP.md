@@ -16,6 +16,7 @@
    |---|---|---|
    | git, tmux, gh, node, jq | Homebrew (`brew install <name>`) | Homebrew's current |
    | curl | ships with macOS | - |
+   | perl with Time::HiRes (firstmate's timeout helpers) | ships with macOS; on Linux a separate package (`sudo dnf install perl-Time-HiRes`); checked, not installed | - |
    | gh-axi, chrome-devtools-axi, tasks-axi, quota-axi | `npm i -g <name>@<pin>`; a first install also runs `<name> setup hooks` (not tasks-axi, quota-axi) | 0.1.46, 0.1.44, 0.2.6, 0.1.69 |
    | lavish-axi (optional: visual plans and reports) | `npm i -g lavish-axi@0.1.92`; a first install also runs `lavish-axi setup hooks` | 0.1.92 |
    | treehouse | GitHub release archive (macOS or Linux), SHA-256 checked, into `~/.local/bin` | 3.1.8 |
