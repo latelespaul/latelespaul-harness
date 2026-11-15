@@ -52,6 +52,22 @@ to the full harness path when you add the job:
 hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stall-watch.sh" --timeout 2m
 ```
 
+**Nudging a worker in tmux**
+- Submit with `C-m`, not `Enter`. `tmux send-keys -t <pane> "<text>" Enter` sometimes leaves the
+  text typed but not sent in a Claude Code input box, and the stall watch then flags the worker as
+  idle. Type the text with `tmux send-keys -t <pane> -l "<text>"`, then send `tmux send-keys -t <pane> C-m`.
+- Send `/clear` as its own message, then send the brief as a second message. If you send them
+  together, `/clear` clears the input and drops the brief.
+- A large session file (about 60 megabytes or more) can make `claude --continue` hang at startup.
+  The launchers here fall back to a fresh start only when a resume exits within 30 s, not when it
+  hangs. If a restarted worker shows no prompt after about 30 s, stop it and start it without
+  `--continue`.
+- On a heavily loaded Mac, monitors and watchers can miss their confirm window and stop. Check the
+  load average (`uptime`) before you decide that the watcher is broken.
+- A relaunch tool can refuse a worker whose tmux window is gone. It cannot prove that no agent
+  still runs there. Find the worker's process first (`ps`). Do not recreate the window only to get
+  past that check.
+
 ## Alerts to the master session
 
 The user may not want every alert. Create `<profile>/telegram/ALERTS_TO_MASTER` (an empty file) to
