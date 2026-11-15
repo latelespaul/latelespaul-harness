@@ -144,10 +144,13 @@ nothing else polls the bot (a `getUpdates` call that never marks messages read).
 stopped, that check passes at once. It renders the settings with the plugin on, starts the tmux
 session `claude-tg`, waits 20 s and prints `Telegram bot is running on <vm-host>.`
 
-It always prints `This machine now owns the bot. Waiting for any other machine to stop polling...` first.
-This line is normal. The Mac poller still runs only if `Telegram bot is running on <vm-host>.` does not
-appear within about 30 s (the check failed and the command waits for its 10 s retry). Then go back to C2
-on the Mac.
+It always prints `This machine now owns the bot. Waiting for ... to stop polling...` first. The `...`
+is `any other machine`, or the Mac host if C1 could not push. This line is normal. The Mac poller
+still runs only if no further line appears within about 30 s (the check failed and the command waits
+for its 10 s retry). Then go back to C2 on the Mac.
+
+If C4 prints `Session started; the bot connects once any startup prompt is answered (...)`, the poller
+check passed. Run `tmux attach -t claude-tg` and answer the prompt (as in C6). Do not go back to C2.
 
 **C5. Verify that exactly one poller runs.**
 
