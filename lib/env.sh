@@ -44,7 +44,6 @@ unset _k
 : ${MACNODE_ROLE:=}
 : ${MACNODE_DIR:=$HOME/.local/state/mac-node}
 : ${MACNODE_VM:=}
-: ${MACNODE_VM_DIR:=}
 : ${MACNODE_KEY:=$HOME/.ssh/mac-node_ed25519}
 : ${MACNODE_SSH_PORT:=22}
 : ${MACNODE_JOBHUNT_DIR:=$PROJECTS_DIR/job-hunt}

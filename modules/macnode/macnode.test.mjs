@@ -1,13 +1,14 @@
 // node --test modules/macnode/macnode.test.mjs
 // mac-node end to end, offline: the Mac service (`mac-node serve`) and the VM client run as two
 // processes with their own harness.env and state folders in a throwaway folder. The SSH link is
-// test/fake-ssh.mjs (MACNODE_SSH), which only pipes a local Unix socket: no real ssh, no network.
+// test/fake-ssh.mjs (MACNODE_SSH), which runs the VM's forced command (`mac-node bridge`) on its own
+// stdin/stdout, as sshd would: no real ssh, no network.
 // hsx, awake, hcron and bin/jobhunt are stub scripts that record their calls, so Hammerspoon, the
 // screen, Chrome and the real scheduler are never touched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, realpathSync, chmodSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, realpathSync, chmodSync, rmSync, unlinkSync, statSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,13 +48,15 @@ exec "$@"
   exe(join(p.bin, 'hcron'), `#!/bin/sh\necho "hcron $*" >> "${p.calls}"\necho "fake hcron: $* ok"\n`);
   exe(join(p.jh, 'bin', 'jobhunt'), `#!/bin/sh\necho "jobhunt $* (cwd $(pwd))" >> "${p.calls}"\necho "applied=3 queued=5 failed=0"\n`);
   exe(join(p.bin, 'ssh-fake'), `#!/bin/sh\nexec "${process.execPath}" "${join(HERE, 'test', 'fake-ssh.mjs')}" "$@"\n`);
-  writeFileSync(join(d, 'mac.env'), `MACNODE_ROLE=mac\nMACNODE_DIR="${p.mac}"\nMACNODE_VM="tester@vm.invalid"\nMACNODE_VM_DIR="${p.vm}"
+  writeFileSync(join(d, 'mac.env'), `MACNODE_ROLE=mac\nMACNODE_DIR="${p.mac}"\nMACNODE_VM="tester@vm.invalid"
 MACNODE_KEY="${p.home}/.ssh/mac-node_ed25519"\nMACNODE_JOBHUNT_DIR="${p.jh}"\nMACNODE_JOBHUNT_SUBS="status"\nMACNODE_REPOS="tools=${d}/norepo"\n`);
   writeFileSync(join(d, 'vm.env'), `MACNODE_ROLE=vm\nMACNODE_DIR="${p.vm}"\n`);
+  // Beats every 300 ms; a bridge that hears nothing for 1.5 s exits.
   const base = { PATH: `${p.bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: p.home,
-    FAKE_SSH_LOG: p.sshLog, FAKE_SSH_DOWN: p.down, MACNODE_SSH: join(p.bin, 'ssh-fake'), MACNODE_BACKOFF_MS: '150', MACNODE_POLL_MS: '150' };
-  p.macEnv = { ...base, HARNESS_ENV: join(d, 'mac.env') };
+    MACNODE_BACKOFF_MS: '150', MACNODE_POLL_MS: '150', MACNODE_BEAT_MS: '300', MACNODE_DEAD_MS: '1500' };
   p.vmEnv = { ...base, HARNESS_ENV: join(d, 'vm.env') };
+  p.macEnv = { ...base, HARNESS_ENV: join(d, 'mac.env'), MACNODE_SSH: join(p.bin, 'ssh-fake'),
+    FAKE_SSH_LOG: p.sshLog, FAKE_SSH_DOWN: p.down, FAKE_SSH_CLI: CLI, FAKE_SSH_ENV: JSON.stringify(p.vmEnv) };
   p.SECRET = SECRET;
   return p;
 }
@@ -148,13 +151,18 @@ test('brief test 1: eyes status, hcron status and jobhunt status answer from the
     const acts = logLines(dir).filter(l => l.side === side && l.status === 'ok').map(l => l.action);
     for (const a of ['eyes status', 'hcron status', 'jobhunt status']) assert.ok(acts.includes(a), `${side} log has ${a}: ${acts}`);
   }
-  // The link: dedicated key, no ~/.ssh/config, exit on a failed forward, socket into the VM's link folder.
+  // The link: dedicated key, no ~/.ssh/config, no forwarding of any kind; the session itself is the link.
   const args = JSON.parse(readFileSync(p.sshLog, 'utf8').trim().split('\n')[0]);
-  assert.deepEqual(args.slice(0, 3), ['-F', 'none', '-N']);
-  for (const o of ['BatchMode=yes', 'ExitOnForwardFailure=yes', 'ServerAliveInterval=5', 'IdentitiesOnly=yes']) assert.ok(args.includes(o), o);
+  assert.deepEqual(args.slice(0, 3), ['-F', 'none', '-T']);
+  for (const o of ['BatchMode=yes', 'ServerAliveInterval=5', 'IdentitiesOnly=yes']) assert.ok(args.includes(o), o);
+  for (const f of ['-N', '-R', '-L', '-D', '-W', '-A']) assert.ok(!args.includes(f), `no ${f}`);
   assert.equal(args[args.indexOf('-i') + 1], `${p.home}/.ssh/mac-node_ed25519`);
-  assert.match(args[args.indexOf('-R') + 1], new RegExp(`^${p.vm}/link/[a-z0-9]+-[0-9a-f]{4}\\.sock:${p.mac}/runner\\.sock$`));
-  assert.equal(args.at(-1), 'tester@vm.invalid');
+  assert.deepEqual(args.slice(-2), ['tester@vm.invalid', 'bridge']);
+  // The bridge serves the VM's clients on a private socket in the VM's own link folder.
+  const sock = linkSocks(p)[0];
+  assert.match(sock, /^[a-z0-9]+-[0-9a-f]{4}\.sock$/);
+  assert.equal(statSync(join(p.vm, 'link', sock)).mode & 0o777, 0o600);
+  assert.match(readFileSync(join(p.mac, 'link.log'), 'utf8'), /link: up \(bridge v1\)/);
 });
 
 test('brief test 2: a denied action is refused and logged, on the VM and (unchecked) by the Mac itself', async t => {
@@ -215,14 +223,13 @@ test('brief test 3: link killed -> mac-offline within 10 s and queued; it runs o
   const serve = await startMac(p);
   t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
   writeFileSync(p.down, '');                 // the VM is unreachable from now on
-  process.kill(currentSsh(p), 'SIGKILL');    // the link dies hard: its socket file stays behind, stale
-  await sleep(100);
-  assert.equal(linkSocks(p).length, 1, 'the stale socket is still there');
+  process.kill(currentSsh(p), 'SIGKILL');    // the link dies hard
   const r = await vm(p, ['hcron', 'pause', 'all']);
   assert.equal(r.code, 75, r.stderr);
   assert.ok(r.ms < 10_000, `mac-offline took ${r.ms} ms`);
   const id = /queued (\S+);/.exec(r.stderr)[1];
-  assert.equal(linkSocks(p).length, 0, 'the stale socket was removed');
+  await until('the bridge to remove its socket', () => linkSocks(p).length === 0, 3000);
+  assert.match(readFileSync(join(p.vm, 'link.log'), 'utf8'), /down: the Mac closed the link/);
   assert.ok(existsSync(join(p.vm, 'queue', `${id}.json`)));
   assert.equal((await vm(p, ['result', id])).code, 75);
   assert.ok(logLines(p.vm).some(l => l.id === id && l.status === 'mac-offline' && l.queued));
@@ -236,28 +243,60 @@ test('brief test 3: link killed -> mac-offline within 10 s and queued; it runs o
   assert.equal(res.status, 'ok');
   assert.match(res.stdout, /fake hcron: pause all ok/);
   assert.equal((calls(p).match(/hcron pause all/g) || []).length, 1, 'ran exactly once');
-  assert.equal(queueLen(p), 0);
+  await until('the queue entry to go', () => queueLen(p) === 0, 2000);
   assert.ok(logLines(p.mac).some(l => l.id === id && l.queued && l.status === 'ok'));
   assert.ok(logLines(p.vm).some(l => l.id === id && l.via === 'queue' && l.status === 'ok'));
 });
 
-test('a queued GUI request that meets a locked screen is recorded as locked and dropped', async t => {
+test('GUI actions are never queued: offline gives mac-offline at once, and nothing runs on reconnect', async t => {
   const p = sandbox();
   const serve = await startMac(p);
   t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
   writeFileSync(p.down, '');
   process.kill(currentSsh(p), 'SIGKILL');
-  const r = await vm(p, ['hands', 'call', 'hands.click']);
-  assert.equal(r.code, 75);
-  const id = /queued (\S+);/.exec(r.stderr)[1];
-  writeFileSync(p.locked, '');               // the Mac wakes up locked
+  await until('the link to drop', () => linkSocks(p).length === 0, 3000);
+  for (const argv of [['hands', 'call', 'hands.click'], ['hands', 'batch', '[{"cmd":"a"}]'], ['portal-pass', 'acme']]) {
+    const r = await vm(p, argv);
+    assert.equal(r.code, 75, r.stderr);
+    assert.equal(r.stderr.trim(), 'mac-offline (not queued: GUI action)');
+    assert.ok(r.ms < 10_000);
+  }
+  assert.equal(queueLen(p), 0, 'nothing queued');
+  assert.ok(logLines(p.vm).filter(l => l.status === 'mac-offline' && l.reason === 'not queued: GUI action').length === 3);
+  const other = await vm(p, ['hcron', 'status']);   // a non-GUI action still queues
+  assert.equal(other.code, 75);
+  const id = /queued (\S+);/.exec(other.stderr)[1];
   unlinkSync(p.down);
-  await until('the result', () => existsSync(join(p.vm, 'results', `${id}.json`)), 9000);
-  assert.equal(JSON.parse(readFileSync(join(p.vm, 'results', `${id}.json`), 'utf8')).status, 'locked');
-  await sleep(600);
-  assert.equal((calls(p).match(/hsx status/g) || []).length, 1, 'checked once, not retried');
-  assert.doesNotMatch(calls(p), /hsx arm/);
-  assert.equal(queueLen(p), 0);
+  await until('the queued job result', () => existsSync(join(p.vm, 'results', `${id}.json`)), 9000);
+  await sleep(300);
+  assert.doesNotMatch(calls(p), /hsx arm|hsx session|portal-pass/, 'no GUI action ran after reconnect');
+});
+
+test('a GUI job found in the queue anyway is dropped unrun', async t => {
+  const p = sandbox();
+  const serve = await startMac(p);
+  t.after(async () => { await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
+  mkdirSync(join(p.vm, 'queue'), { recursive: true });
+  const job = { id: 'old-gui-1', argv: ['hands', 'call', 'hands.click'], created: new Date().toISOString(), expires: new Date(Date.now() + 60_000).toISOString() };
+  writeFileSync(join(p.vm, 'queue', 'old-gui-1.json'), JSON.stringify(job));
+  assert.equal((await vm(p, ['drain'])).code, 0);
+  assert.equal(JSON.parse(readFileSync(join(p.vm, 'results', 'old-gui-1.json'), 'utf8')).status, 'dropped');
+  assert.doesNotMatch(calls(p), /hsx/);
+});
+
+test('a Mac that goes silent (asleep, network gone) is offline within 10 s; the bridge exits; the link returns', async t => {
+  const p = sandbox();
+  const serve = await startMac(p);
+  t.after(async () => { try { process.kill(serve.pid, 'SIGCONT'); } catch {} await stopMac(serve); rmSync(p.d, { recursive: true, force: true }); });
+  process.kill(serve.pid, 'SIGSTOP');        // no beats, no answers; the ssh session itself stays open
+  const r = await vm(p, ['--no-queue', 'ping']);
+  assert.equal(r.code, 75, r.stderr);
+  assert.ok(r.ms < 10_000, `took ${r.ms} ms`);
+  await until('the bridge to give up', () => linkSocks(p).length === 0, 5000);
+  assert.match(readFileSync(join(p.vm, 'link.log'), 'utf8'), /down: no word from the Mac for 2s/);
+  process.kill(serve.pid, 'SIGCONT');        // the Mac wakes: its ssh has ended, so it dials again
+  await until('a live link again', async () => (await vm(p, ['status'])).stdout.includes('link: up'), 8000);
+  assert.equal((await vm(p, ['ping'])).code, 0);
 });
 
 test('a queued request expires after its ttl when the Mac never comes back', async t => {
@@ -271,14 +310,22 @@ test('a queued request expires after its ttl when the Mac never comes back', asy
   await until('the drainer to exit', () => !existsSync(join(p.vm, 'drain.pid')), 3000);
 });
 
-test('a socket that accepts but never greets (a dead Mac behind a live sshd) counts as offline within 10 s', async t => {
+test('a socket that never greets, and a stale one that refuses, count as offline within 10 s', async t => {
   const p = sandbox();
   const zombie = createServer(() => {}).listen(join(p.vm, 'link', 'zz-0000.sock'));
   t.after(() => { zombie.close(); rmSync(p.d, { recursive: true, force: true }); });
+  // A socket file whose listener died without cleaning up (SIGKILL): connecting is refused.
+  const stale = join(p.vm, 'link', 'zy-0000.sock');
+  const holder = spawn(process.execPath, ['-e', `require('net').createServer().listen(${JSON.stringify(stale)}, () => console.log('up'))`]);
+  await new Promise(r => holder.stdout.once('data', r));
+  holder.kill('SIGKILL');
+  await new Promise(r => holder.once('close', r));
+  assert.ok(existsSync(stale));
   const r = await vm(p, ['--no-queue', 'ping'], {});   // the real timings: 3 s hello, 8 s in all
   assert.equal(r.code, 75);
   assert.ok(r.ms < 10_000, `took ${r.ms} ms`);
   assert.match(r.stderr, /^mac-offline/);
+  assert.ok(!existsSync(stale), 'the stale socket was removed');
 });
 
 test('a second serve on the same Mac exits and leaves the first one serving', async t => {
