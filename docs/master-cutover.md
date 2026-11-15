@@ -52,7 +52,8 @@ E=$P/telegram/cutover/$(date +%F); mkdir -p $E
 **P0. The VM is ready with polling off.** Run on the VM:
 
 ```sh
-grep -E '^TELEGRAM_(POLLING|MAC_NODE)=' $H/harness.env      # TELEGRAM_POLLING=0, TELEGRAM_MAC_NODE=1
+grep -E '^TELEGRAM_(POLLING|MAC_NODE)=' $H/harness.env      # TELEGRAM_POLLING='0', TELEGRAM_MAC_NODE='1'
+                                                           # (install.sh --env-only adds the quotes)
 $H/modules/telegram/install.sh --status; echo "exit $?"     # polling: off, tmux session claude-tg running,
                                                            # bot process: not running, exit 0
 grep -c '"telegram@claude-plugins-official": false' ~/.claude/telegram-settings.json   # 1
@@ -65,7 +66,7 @@ crontab -l | grep -F modules/telegram/watchdog.py           # the watchdog line 
 
 Run on the Mac: `$H/modules/telegram/install.sh --status; echo "exit $?"` → `owner: <mac-host>`,
 `bot process: running`, `exit 0`. On the Mac, `$H/modules/macnode/install.sh --status` → `serve:
-running` and `link: up`.
+running (pid N)` and a last event that shows `link: up`, for example `link: last event link: up (bridge v1)`.
 
 **P1-P6. The six tests.** The exact steps and proofs for tests 1-4 are in
 [the macnode setup steps](../modules/macnode/SETUP.md) ("Mac test steps").
@@ -125,7 +126,7 @@ pgrep -fl 'bun server.ts'                 # nothing from the claude-tg session
 
 ```sh
 $H/install.sh --env-only TELEGRAM_POLLING=1
-grep '^TELEGRAM_POLLING=' $H/harness.env   # TELEGRAM_POLLING=1
+grep '^TELEGRAM_POLLING=' $H/harness.env   # TELEGRAM_POLLING='1'
 ```
 
 Go straight to C4. With polling on, the VM watchdog sees that ACTIVE_HOST does not name the VM yet.
@@ -143,7 +144,10 @@ nothing else polls the bot (a `getUpdates` call that never marks messages read).
 stopped, that check passes at once. It renders the settings with the plugin on, starts the tmux
 session `claude-tg`, waits 20 s and prints `Telegram bot is running on <vm-host>.`
 
-If it prints `Waiting for ... to stop polling`, the Mac poller still runs: go back to C2 on the Mac.
+It always prints `This machine now owns the bot. Waiting for any other machine to stop polling...` first.
+This line is normal. The Mac poller still runs only if `Telegram bot is running on <vm-host>.` does not
+appear within about 30 s (the check failed and the command waits for its 10 s retry). Then go back to C2
+on the Mac.
 
 **C5. Verify that exactly one poller runs.**
 
@@ -197,6 +201,7 @@ Proof: `$H/modules/telegram/install.sh --status; echo "exit $?"` → `owner: <ma
 
 ```sh
 $H/install.sh --env-only TELEGRAM_POLLING=0
+grep '^TELEGRAM_POLLING=' $H/harness.env   # TELEGRAM_POLLING='0'
 $H/modules/telegram/install.sh          # tmux claude-tg again, plugin off, no poller
 $H/modules/telegram/install.sh --status # polling: off, bot process: not running, exit 0
 ```
@@ -246,7 +251,7 @@ If the total is over 120 s, find the slow step before you ask for the OK.
 ```
 18:00:00  C1  Mac: install.sh --uninstall     -> "Telegram bot removed from <mac-host>."   (~8 s)
 18:00:10  C2  Mac: --status                   -> bot process: not running
-18:00:15  C3  VM : --env-only POLLING=1        -> TELEGRAM_POLLING=1
+18:00:15  C3  VM : --env-only POLLING=1        -> TELEGRAM_POLLING='1'
 18:00:20  C4  VM : install.sh --take-over     -> "Telegram bot is running on <vm-host>."  (~35 s)
 18:00:55  C5  VM : --status exit 0, Mac: --status exit 0, owner <vm-host> on both
 18:01:10  C6  user sends "hello" -> the VM session answers                    down: ~70 s
