@@ -168,7 +168,7 @@ Rules for each step:
 | Value took | `eyes_value` | the email reads back exactly |
 | Focus went to the right place | `eyes_focused` | typing landed in "Phone", not "Email" |
 | Success or error text | `eyes_text` | "Saved", "Invalid date", "Thank you for applying" |
-| Something popped up | `eyes_dialog`, new fields in `eyes_fields` | cookie banner, "Leave site?", file picker |
+| Something popped up | `eyes_dialog`, `dialog_open` or new fields in `eyes_fields` | cookie banner, "Leave site?", file picker |
 | A wall | `wall` in `eyes_text` | CAPTCHA, login, OTP |
 | A checkbox state | `checked` in the field record | Chrome shows no AX value for checkboxes; the eyes read the pixels |
 | Visual-only content | `eyes_shot` (read it as an image) | charts, canvas apps, odd layouts |
@@ -215,6 +215,7 @@ A refused call returns `ok: false`, a `reason` and a `hint`. Read the reason and
 | `busy` | Your previous job still runs | Wait for it, or `hands_abort` |
 | `focus` | The target is not the front window, or the point is not on it | `hands_focus`, then look again |
 | `offscreen` | The rect is outside the viewport | `hands_scroll` by the suggested `dy` |
+| `dialog_open` | A native sheet or dialog (a file chooser) covers the page, so the hands will not aim at a field under it | Read it with `eyes_dialog`, finish or close it, then call `eyes_fields` again |
 | `not_on_target` | A pixel point or rect is outside the target window | Use a point inside the window |
 | `wall` (MCP only) | `eyes_text` showed a wall on this page | Section 4: hand off with `eyes_shot`. Later, call `eyes_text` on the target in `seen_via` to clear it |
 | `locked` | The screen is locked or asleep, or the session is not on the console | Stop and report. Never retry in a loop |

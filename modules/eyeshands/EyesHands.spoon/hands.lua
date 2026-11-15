@@ -364,6 +364,10 @@ return function(deps)
       if type(spec.field) ~= "string" then return nil, refuse("bad_args", name .. ".field must be an id from eyes_fields") end
       local d = deps.field({ target = a.target, id = spec.field }, caller.owner)
       if type(d) ~= "table" or not d.ok then return nil, d end
+      if d.dialog_open then
+        return nil, refuse("dialog_open", "a native sheet or dialog covers the page: read it with eyes_dialog",
+          { field = spec.field })
+      end
       local r = d.rect
       if type(r) ~= "table" or not (r[3] and r[3] > 0 and r[4] > 0) then
         return nil, refuse("offscreen", "the field has no size on the screen", { field = spec.field })

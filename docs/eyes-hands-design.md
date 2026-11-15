@@ -265,9 +265,9 @@ Every eyes command needs the `eyes` capability and a granted target. `shot` and 
 |---|---|---|---|
 | `eyes_status` | `status` (no secret) | none | Grants, session, present state, policy summary, hands state, foreign drivers, stop state |
 | `eyes_targets` | `eh.targets` (no secret) | none | Each target: name, bundle, profile, running, pid |
-| `eyes_fields` | `eh.eyes.fields` | `target`, optional `match` `{role, label, dom}`, `limits` | `url`, `title`, `window`, `viewport`, `fields[]`, `nodes`, `truncated` |
+| `eyes_fields` | `eh.eyes.fields` | `target`, optional `match` `{role, label, dom}`, `limits` | `url`, `title`, `window`, `viewport`, `fields[]`, `nodes`, `truncated`, `dialog_open` |
 | `eyes_value` | `eh.eyes.value` | `target`, `id` or `dom` | One field record, read live |
-| `eyes_text` | `eh.eyes.text` | `target` | `lines[]`, `frames[]`, `url`, `title`; the CLI adds `wall` |
+| `eyes_text` | `eh.eyes.text` | `target` | `lines[]`, `frames[]`, `url`, `title`, `dialog_open`; the CLI adds `wall` |
 | `eyes_focused` | `eh.eyes.focused` | `target` | `focused` (a field record or false) and its `id` |
 | `eyes_dialog` | `eh.eyes.dialog` | `target` | `open`, `dialogs[]` (sheets, file panels, system dialogs) |
 | `eyes_tree` | `eh.eyes.tree` | `target`, `depth`, `max_nodes` | A pruned AX tree for apps without form fields |
@@ -301,6 +301,8 @@ Every eyes command reads the live desktop. So while the hold file is held (part 
   "nodes": 412, "truncated": null
 }
 ```
+
+**A native sheet or dialog.** A file chooser or its "Go to folder" sheet becomes the browser's focused window. `eyes_fields`, `eyes_value`, `eyes_text` and `eyes_focused` then read the browser window under it: the window the sheet hangs off, else the main window, else the first standard window. `eyes_fields`, `eyes_value` and `eyes_text` add `"dialog_open": true`, and the hands refuse a `{field}` target with `dialog_open`, because the sheet covers the field. When the page cannot be read past the sheet, a browser refuses `dialog_open`, not `no_web_content`. `eyes_dialog` and `eyes_tree` still read the sheet itself. A native app (not a browser) reads its focused window, dialog included, so its dialog fields stay readable.
 
 **Limits.** AX walks stop at `maxDepth` 80, `maxNodes` 8000 or 4000 ms, as in `jobhunt.lua`. A stopped walk sets `truncated` to `depth`, `nodes` or `time`. A caller can lower a limit, but never raise it. A node below `maxDepth` skips only its own subtree. Each walk has a time limit, because Hammerspoon's main thread also runs the takeover tap.
 

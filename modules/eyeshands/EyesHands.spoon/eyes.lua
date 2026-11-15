@@ -16,6 +16,10 @@
 --   pixels    {target, points[] | rect}  colours as "#rrggbb"; `checked` for a control-sized rect
 --   shot      {target, max_px?}          path of a PNG of the target's front window, bounds
 -- A refusal is { ok=false, reason=, hint=, ... }, as in targets.lua and guards.lua.
+-- In a browser, fields, value, text and focused read the page window: under an open native sheet
+-- or dialog (a file chooser), the browser window it covers. fields, value and text then add
+-- dialog_open = true; a browser whose page cannot be read past the sheet refuses dialog_open, not
+-- no_web_content. A native app reads its focused window, dialog included, as before.
 --
 -- Field records have the shape of job-hunt's jobhunt.lua, plus `onscreen`:
 --   { id, role, label, labelSource, value, placeholder, required, focused, enabled, dom, rect,
@@ -227,6 +231,7 @@ return function(deps)
     return t
   end
 
+  -- The focused window as AX gives it: dialog and tree read this, so they see an open sheet.
   local function frontWindow(app)
     for _, k in ipairs({ "AXFocusedWindow", "AXMainWindow" }) do
       local w = A(app, k)
@@ -235,6 +240,46 @@ return function(deps)
     local list = A(app, "AXWindows")
     local w = type(list) == "table" and list[1]
     return isEl(w) and w or nil
+  end
+  -- A native sheet or dialog: an AXSheet, or a window whose subrole is not AXStandardWindow (a
+  -- window without a subrole counts as standard).
+  local function isPanel(w)
+    if A(w, "AXRole") == "AXSheet" then return true end
+    local sub = str(A(w, "AXSubrole"))
+    return sub ~= nil and sub ~= "" and sub ~= "AXStandardWindow"
+  end
+  local function isPageWindow(w) return isEl(w) and A(w, "AXRole") == "AXWindow" and not isPanel(w) end
+  local function hasSheet(win)
+    for _, ch in ipairs(children(win)) do
+      if A(ch, "AXRole") == "AXSheet" then return true end
+    end
+    return false
+  end
+  -- The browser window that page reads (fields, value, text, focused) walk, and whether a native sheet or
+  -- dialog is open in front of it. When the focused window is a sheet or dialog (Chrome's file
+  -- chooser, its "Go to folder" sheet), the page is the window under it: the window the sheet
+  -- hangs off (a sheet can hang off another sheet), else AXMainWindow, else the first standard
+  -- window in AXWindows. A sheet attached to the picked window also counts as open.
+  local function pageWindow(app)
+    local win, panel = frontWindow(app), false
+    if win and isPanel(win) then
+      panel = true
+      local under, p = nil, A(win, "AXParent")
+      for _ = 1, 8 do
+        if not isEl(p) or A(p, "AXRole") == "AXApplication" then break end
+        if isPageWindow(p) then under = p; break end
+        p = A(p, "AXParent")
+      end
+      if not under and isPageWindow(A(app, "AXMainWindow")) then under = A(app, "AXMainWindow") end
+      if not under then
+        local list = A(app, "AXWindows")
+        for _, w in ipairs(type(list) == "table" and list or {}) do
+          if isPageWindow(w) and str(A(w, "AXSubrole")) == "AXStandardWindow" then under = w; break end
+        end
+      end
+      win = under or win
+    end
+    return win, panel or (win ~= nil and hasSheet(win))
   end
   -- The first AXWebArea under the window (the active tab), breadth first.
   local function findWebArea(win)
@@ -253,17 +298,29 @@ return function(deps)
     return nil
   end
   -- Adds the walk root to ctx: the web area when there is one (a browser waits briefly for it,
-  -- because Chrome fills its tree after the first request), else the front window.
+  -- because Chrome fills its tree after the first request), else the page window. A browser whose
+  -- page window has no web content tries AXMainWindow before it refuses.
   local function openRoot(c)
     local tries = c.browser and 8 or 1
+    local function filled(web) return web ~= nil and #children(web) > 0 end
     for attempt = 1, tries do
-      c.win = frontWindow(c.app)
+      if c.browser then c.win, c.panel = pageWindow(c.app) else c.win = frontWindow(c.app) end
       c.web = c.win and findWebArea(c.win) or nil
-      if c.web and #children(c.web) > 0 then break end
+      if c.browser and not filled(c.web) then
+        local main = A(c.app, "AXMainWindow")
+        if isEl(main) and main ~= c.win then
+          local web = findWebArea(main)
+          if filled(web) then c.win, c.web, c.panel = main, web, c.panel or hasSheet(main) end
+        end
+      end
+      if filled(c.web) then break end
       if attempt < tries then deps.sleepMs(150) end
     end
     if not c.win then return refuse("no_window", "the target has no window") end
-    if c.browser and not (c.web and #children(c.web) > 0) then
+    if c.browser and not filled(c.web) then
+      if c.panel then
+        return refuse("dialog_open", "a native sheet or dialog is in front of the page: read it with eyes_dialog")
+      end
       return refuse("no_web_content", "no web content in the target's front window")
     end
     c.root = c.web or c.win
@@ -281,6 +338,7 @@ return function(deps)
     out.window, out.viewport = rectOf(c.win), c.viewport
     out.url = c.web and str(A(c.web, "AXURL")) or nil
     out.title = str(A(c.win, "AXTitle"))
+    if c.panel then out.dialog_open = true end   -- a native sheet or dialog covers the page
     return out
   end
 
@@ -452,6 +510,7 @@ return function(deps)
     local function reply(d, via)
       d.ok, d.target, d.id, d.via = true, c.name, id, via
       d.viewport = c.viewport   -- the hands suggest a scroll from it for an off-screen field
+      if c.panel then d.dialog_open = true end
       return d
     end
     if hit and stillValid(hit.el) then return reply(describe(hit.el, nil, c), "id") end
