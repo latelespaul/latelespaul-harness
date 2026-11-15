@@ -1,11 +1,14 @@
 #!/usr/bin/python3
-"""Telegram channel watchdog. Run every minute by launchd (com.<prefix>.telegram-watchdog).
+"""Telegram channel watchdog. Run every minute by launchd (com.<prefix>.telegram-watchdog) on
+macOS, or by a crontab line on Linux (no launchd), where the session is the tmux session claude-tg.
 
 Checks that the Telegram Claude session is alive, single, polling and answering,
-repairs it by restarting the com.<prefix>.telegram agent, and tells the user
+repairs it by restarting the com.<prefix>.telegram agent (or the tmux session), and tells the user
 on Telegram directly (Bot API, independent of Claude) whenever it acts.
-Only the Mac named in $PROFILE_DIR/telegram/ACTIVE_HOST (on the profile's remote) runs
-the bot; any other Mac stops its copy so two pollers never split the messages.
+Only the machine named in $PROFILE_DIR/telegram/ACTIVE_HOST (on the profile's remote) runs
+the bot; any other machine stops its copy so two pollers never split the messages.
+With TELEGRAM_POLLING=0 it only keeps the session running: it never calls Telegram, ignores
+ACTIVE_HOST, and stops any poller that starts under the session.
 """
 import calendar
 import fcntl
@@ -13,6 +16,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -29,11 +34,12 @@ def harness_env(*keys):
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
 
-ENV = harness_env("PROFILE_DIR", "LABEL_PREFIX", "TELEGRAM_WORKDIR", "BROWSER_PORT")
+ENV = harness_env("PROFILE_DIR", "LABEL_PREFIX", "TELEGRAM_WORKDIR", "BROWSER_PORT", "TELEGRAM_POLLING")
 HOME = os.path.expanduser("~")
 TG_DIR = os.path.join(HOME, ".claude/channels/telegram")
 WD_DIR = os.path.join(TG_DIR, "watchdog")
 STATE_FILE = os.path.join(WD_DIR, "state.json")
+UNINSTALLED = os.path.join(WD_DIR, "uninstalled")  # install.sh --uninstall on Linux; install removes it
 LOG_FILE = os.path.join(TG_DIR, "logs/watchdog.log")
 PROFILE = ENV.get("PROFILE_DIR", "")
 WORK_DIR = ENV.get("TELEGRAM_WORKDIR") or os.path.join(HOME, "Projects/claude-telegram")
@@ -47,6 +53,12 @@ PLIST = os.path.join(HOME, f"Library/LaunchAgents/{LABEL}.plist")
 UID = os.getuid()
 TARGET = f"gui/{UID}/{LABEL}"
 OWNER_CHECK_EVERY = 10 * 60
+POLLING = ENV.get("TELEGRAM_POLLING", "1") != "0"
+# No launchd (Linux): the session is a tmux session that runs run.sh.
+LAUNCHD = sys.platform == "darwin"
+SESSION = "claude-tg"
+RUN_SH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "run.sh")
+TMUX = shutil.which("tmux") or "tmux"
 
 PENDING_GRACE = 180       # unread messages on Telegram for this long -> poller is deaf
 NO_BOT_GRACE = 120        # no bot process for this long -> session failed to start
@@ -108,6 +120,8 @@ def tg(token, method, params=None, timeout=15):
 
 
 def notify(token, text):
+    if not POLLING:  # polling off: this machine never talks to the bot
+        return
     for cid in chat_ids():
         try:
             tg(token, "sendMessage", {"chat_id": cid, "text": "🛠 Telegram watchdog: " + text})
@@ -134,7 +148,18 @@ def descendants(procs, root):
     return found
 
 
+def tmux(*args):
+    return subprocess.run([TMUX, *args], capture_output=True, text=True)
+
+
 def agent_pid():
+    """(pid of the session's root process, whether the session exists)."""
+    if not LAUNCHD:
+        r = tmux("list-panes", "-t", f"={SESSION}", "-F", "#{pane_pid}")
+        if r.returncode != 0:
+            return None, False
+        first = (r.stdout.split() or [""])[0]
+        return (int(first) if first.isdigit() else None), True
     r = subprocess.run(["launchctl", "print", TARGET], capture_output=True, text=True)
     if r.returncode != 0:
         return None, False
@@ -197,6 +222,9 @@ def kill_strays(procs, tree):
 
 
 def screen_text():
+    if not LAUNCHD:
+        r = tmux("capture-pane", "-p", "-t", f"={SESSION}")
+        return r.stdout if r.returncode == 0 else ""
     path = os.path.join(WD_DIR, "screen.txt")
     try:
         subprocess.run(["/usr/bin/screen", "-S", "claude-tg", "-p", "0", "-X", "hardcopy", path],
@@ -265,7 +293,11 @@ def restart(state, token, reason, fresh=False, tell=True):
     if fresh:
         open(os.path.join(WD_DIR, "fresh-next"), "w").close()
     log(f"RESTART ({'fresh' if fresh else 'resume'}): {reason}")
-    if agent_pid()[1]:
+    if not LAUNCHD:
+        if agent_pid()[1]:
+            tmux("kill-session", "-t", f"={SESSION}")
+        tmux("new", "-d", "-s", SESSION, RUN_SH)
+    elif agent_pid()[1]:
         subprocess.run(["launchctl", "kickstart", "-k", TARGET], capture_output=True)
     else:
         subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", PLIST], capture_output=True)
@@ -285,7 +317,10 @@ def restart(state, token, reason, fresh=False, tell=True):
 
 
 def this_host():
-    return subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+    """The same name install.sh writes to ACTIVE_HOST: scutil on macOS, else hostname -s."""
+    if LAUNCHD:
+        return subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+    return socket.gethostname().split(".")[0]
 
 
 def owner(state, now):
@@ -330,25 +365,55 @@ def check_browser(state, token, now):
     notify(token, "Claude Chrome stopped responding, so I restarted it. Your logins are kept.")
 
 
+def check_no_poll(state, token, now):
+    """Polling off: keep the session running, and stop any poller under it. No Telegram calls."""
+    pid, loaded = agent_pid()
+    if not loaded or pid is None:
+        restart(state, token, "the Telegram session (polling off) was not running", tell=False)
+        return
+    procs = processes()
+    tree = descendants(procs, pid) | {pid}
+    killed = kill_strays(procs, tree)
+    if killed:
+        log(f"killed stray Telegram processes: {killed}")
+    for p in tree:
+        if p in procs and "server.ts" in procs[p][1]:
+            try:
+                os.kill(p, 15)
+                log(f"polling is off, but a Telegram poller ({p}) ran under the session; stopped it")
+            except ProcessLookupError:
+                pass
+
+
 def check():
     os.makedirs(WD_DIR, exist_ok=True)
+    if os.path.exists(UNINSTALLED):
+        return
     state = load_state()
     now = time.time()
     token = read_env().get("TELEGRAM_BOT_TOKEN", "")
     state["last_run"] = now
 
+    if not POLLING:
+        check_no_poll(state, token, now)
+        save_state(state)
+        return
+
     host, own = this_host(), owner(state, now)
     if own != host:
         if agent_pid()[1]:
-            for label in (LABEL, AWAKE_LABEL):
-                subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
-            log(f"bot is owned by {own or 'no Mac'}; stopped the copy on {host}")
-            notify(token, f"the bot now runs on {own or 'no Mac'}, so {host} stopped its copy.")
+            if LAUNCHD:
+                for label in (LABEL, AWAKE_LABEL):
+                    subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
+            else:
+                tmux("kill-session", "-t", f"={SESSION}")
+            log(f"bot is owned by {own or 'no machine'}; stopped the copy on {host}")
+            notify(token, f"the bot now runs on {own or 'no machine'}, so {host} stopped its copy.")
         save_state(state)
         return
 
     awake = f"gui/{UID}/{AWAKE_LABEL}"
-    if subprocess.run(["launchctl", "print", awake], capture_output=True).returncode != 0:
+    if LAUNCHD and subprocess.run(["launchctl", "print", awake], capture_output=True).returncode != 0:
         subprocess.run(["launchctl", "bootstrap", f"gui/{UID}",
                         os.path.join(HOME, f"Library/LaunchAgents/{AWAKE_LABEL}.plist")], capture_output=True)
 
@@ -434,8 +499,11 @@ def check():
                           "Your messages wait until then; I'll retry every 30 min.")
             state["limit_alert"] = now
         if now - state.get("limit_retry", 0) > 30 * 60:
-            subprocess.run(["/usr/bin/screen", "-S", "claude-tg", "-p", "0", "-X", "stuff", "\x1b"],
-                           capture_output=True)
+            if LAUNCHD:
+                subprocess.run(["/usr/bin/screen", "-S", "claude-tg", "-p", "0", "-X", "stuff", "\x1b"],
+                               capture_output=True)
+            else:
+                tmux("send-keys", "-t", f"={SESSION}", "Escape")
             state["limit_retry"] = now
             log("usage-limit menu on screen; pressed Esc to retry")
         save_state(state)

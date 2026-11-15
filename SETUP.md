@@ -31,7 +31,7 @@ Offer to install everything missing in one go (ask once, list what you will run)
 
 Only install the module rows for modules the user picks in step 2; it is fine to come back to them after the interview. The firstmate module's installer adds the rest of firstmate's toolchain itself.
 `gh` not logged in: ask them to run `! gh auth login` (browser flow; they handle it).
-On Linux (a server or VM, no GUI) there is no Xcode, Homebrew or launchd: install git, jq, tmux, gh and node with the system package manager. install.sh then writes no sync LaunchAgent; it prints a crontab line for `scripts/sync.sh` to add instead, and `scripts/check.sh` checks for that line. Only the core and the firstmate module are meant for Linux.
+On Linux (a server or VM, no GUI) there is no Xcode, Homebrew or launchd: install git, jq, tmux, gh and node with the system package manager. install.sh then writes no sync LaunchAgent; it prints a crontab line for `scripts/sync.sh` to add instead, and `scripts/check.sh` checks for that line. Only the core, the firstmate module and the telegram module (bun and tmux; see `modules/telegram/README.md`) are meant for Linux.
 
 **Verify:** `command -v git jq gh claude python3 && gh auth status`
 

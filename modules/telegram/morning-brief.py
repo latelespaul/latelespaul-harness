@@ -92,9 +92,13 @@ def main():
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     if "--now" not in sys.argv:
         owner = open(os.path.join(HERE, "ACTIVE_HOST")).read().strip()
-        me = subprocess.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+        # The name install.sh writes to ACTIVE_HOST: scutil on macOS, else hostname -s (Linux).
+        if sys.platform == "darwin":
+            me = subprocess.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+        else:
+            me = socket.gethostname().split(".")[0]
         if owner != me:
-            log(f"skipped: bot owner is {owner or 'nobody'}, this Mac is {me or socket.gethostname()}")
+            log(f"skipped: bot owner is {owner or 'nobody'}, this machine is {me or socket.gethostname()}")
             return
     prompt = open(os.path.join(HERE, "morning-brief.md")).read()
     prompt = time.strftime("Today is %A, %d %B %Y (%Z).\n\n") + prompt

@@ -12,7 +12,7 @@ set -e
 setopt extended_glob
 here=${0:A:h}
 keys=(PROJECTS_DIR PROFILE_DIR PROFILE_REMOTE GH_USER LABEL_PREFIX MODULES MEMORY_DIRS SYNC_INTERVAL
-  FRAMEWORK_PUSH BROWSER_PORT BROWSER_EXTRA TELEGRAM_WORKDIR TELEGRAM_BRIEF_TIME
+  FRAMEWORK_PUSH BROWSER_PORT BROWSER_EXTRA TELEGRAM_WORKDIR TELEGRAM_BRIEF_TIME TELEGRAM_POLLING TELEGRAM_MAC_NODE
   FIRSTMATE_REPO FIRSTMATE_UPSTREAM FIRSTMATE_DIR FIRSTMATE_SESSION FIRSTMATE_TELEGRAM)
 typeset -A vals
 yes=0 env_only=0 no_modules=0
@@ -149,6 +149,10 @@ for d in skills commands agents projects; do ensure_dir $claude_dir/$d; done
 notes=()
 for m in $mods; do
   [[ -f $HARNESS_DIR/modules/$m/claude-notes.md.tmpl ]] && notes+=("$(render $HARNESS_DIR/modules/$m/claude-notes.md.tmpl)")
+  # A module's claude-notes.zsh prints extra notes that depend on harness.env (empty = none).
+  if [[ -f $HARNESS_DIR/modules/$m/claude-notes.zsh ]]; then
+    extra=$(zsh $HARNESS_DIR/modules/$m/claude-notes.zsh); [[ -n $extra ]] && notes+=("$extra")
+  fi
 done
 MODULE_NOTES=${(F)notes:-"- None enabled (core only). Add them with MODULES in harness.env."}
 render_keys+=(MODULE_NOTES)
