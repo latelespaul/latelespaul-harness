@@ -135,6 +135,15 @@ for t in $tools; do
   esac
 done
 
+# Firstmate's timeout and process helpers run perl with Time::HiRes. macOS's perl has it; a minimal
+# Linux perl (Oracle Linux, RHEL) ships it as a separate package. Reported, never installed (needs sudo).
+if ! perl -MTime::HiRes -e 1 >/dev/null 2>&1; then
+  if (( linux )); then hires_hint="your package manager, e.g. sudo dnf install perl-Time-HiRes"; else hires_hint="brew install perl"; fi
+  print -r -- "MISSING  perl Time::HiRes (install: $hires_hint)"; rc=1
+elif [[ $mode == --status ]]; then
+  print -r -- "ok       perl Time::HiRes"
+fi
+
 if [[ $mode == install ]]; then
   (( ${path[(Ie)$HOME/.local/bin]} )) || print "Note: ~/.local/bin is not on PATH, so treehouse and no-mistakes won't be found. Add to ~/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi

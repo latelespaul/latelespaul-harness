@@ -11,12 +11,16 @@ import { fileURLToPath } from 'node:url';
 
 const TOOLS = fileURLToPath(new URL('./tools.sh', import.meta.url));
 
-function run(os, arch, args = ['--dry-run']) {
+function run(os, arch, args = ['--dry-run'], { noHires = false } = {}) {
   const d = realpathSync(mkdtempSync(join(tmpdir(), 'fm-tools-test-')));
   const bin = join(d, 'bin'), home = join(d, 'home');
   for (const p of [bin, home]) mkdirSync(p, { recursive: true });
   writeFileSync(join(bin, 'uname'), `#!/bin/sh\ncase "$1" in -s) echo ${os} ;; -m) echo ${arch} ;; *) echo ${os} ;; esac\n`);
   chmodSync(join(bin, 'uname'), 0o755);
+  if (noHires) {   // a perl without Time::HiRes, like a minimal Oracle Linux install
+    writeFileSync(join(bin, 'perl'), '#!/bin/sh\ncase "$1" in -MTime::HiRes) exit 2 ;; esac\nexec /usr/bin/perl "$@"\n');
+    chmodSync(join(bin, 'perl'), 0o755);
+  }
   writeFileSync(join(d, 'harness.env'), '');
   // Only system folders after the fake: no brew, npm, treehouse or no-mistakes, so each takes its install path.
   const env = { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HARNESS_ENV: join(d, 'harness.env') };
@@ -51,4 +55,11 @@ test('--status on Linux names the package manager, not Homebrew, for a missing b
   const gh = r.stdout.split('\n').find(l => / gh /.test(` ${l} `) && l.startsWith('MISSING'));
   if (gh) assert.match(gh, /package manager/);
   assert.doesNotMatch(r.stdout, /brew install/);
+});
+
+test('perl Time::HiRes: ok when present, MISSING with a package-manager hint on Linux when not', () => {
+  assert.match(run('Linux', 'x86_64', ['--status']).stdout, /^ok {7}perl Time::HiRes$/m);
+  const r = run('Linux', 'x86_64', ['--status'], { noHires: true });
+  assert.match(r.stdout, /^MISSING {2}perl Time::HiRes \(install: your package manager, e\.g\. sudo dnf install perl-Time-HiRes\)$/m);
+  assert.equal(r.status, 1);
 });
