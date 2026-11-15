@@ -432,7 +432,7 @@ test('the Spoon opens its own port, writes no global, never loads hs.ipc, and an
   assert.ok(!log.includes(k), 'the audit log never holds a secret');
 });
 
-test('the stop command disarms every owner without a secret; unload closes the port and removes the tag', { skip }, () => {
+test('the stop command disarms every owner without a secret; unload closes and collects the port and removes the tag', { skip }, () => {
   const dir = tmp();
   writeFileSync(join(dir, 'access.json'), ACCESS);
   const k = secret();
@@ -441,15 +441,20 @@ test('the stop command disarms every owner without a secret; unload closes the p
     `return call({ cmd = "stop" })`,
     `return call({ cmd = "status" }).result.access.owners.runner.armed`,
     `return SPOONOBJ._s.guards.stopInfo()`,
-    `local name = SPOONOBJ._s.cfg.port; SPOONOBJ:stop(); local on = 0
+    `local name = SPOONOBJ._s.cfg.port; collectgarbage("stop"); SPOONOBJ:stop(); local on, live = 0, 0
      for _, t in ipairs(R.timers) do if t.on then on = on + 1 end end
-     return { closed = R.closed[name] == true, timers = on, tags = TAGS, gone = SPOONOBJ._s == nil, status = SPOONOBJ:status() }`,
+     for _, n in pairs(R.live) do if n == name then live = live + 1 end end
+     collectgarbage("restart")
+     return { closed = R.closed[name] == true, live = live, timers = on, tags = TAGS, gone = SPOONOBJ._s == nil, status = SPOONOBJ:status() }`,
   ]));
   assert.equal(out[0], true);
   assert.deepEqual(out[1], { ok: true, result: { stopped: true, disarmed: ['runner'] } });
   assert.equal(out[2], false);
   assert.deepEqual(out[3], { stopped: false }, 'the stop command holds no 30-minute refusal; the hotkey does');
   assert.equal(out[4].closed, true);
+  // hs.libipc's delete() leaves a port that handled a message open until its object is collected,
+  // so stop() must drop the object and collect it itself (the automatic collector is off here).
+  assert.equal(out[4].live, 0, 'stop() drops the port object and collects it');
   assert.equal(out[4].timers, 0);
   assert.deepEqual(out[4].tags, [`add:${0x45484E44}`, `remove:${0x45484E44}`]);
   assert.equal(out[4].gone, true);

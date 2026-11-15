@@ -411,7 +411,13 @@ function obj:stop()
   -- A held button or key is released and the clipboard put back before anything else closes.
   pcall(s.hands.unload)
   for name, o in pairs(s.core.policyInfo().owners) do if o.armed then s.core.disarm(name, "unloaded") end end
-  if s.port then pcall(function() s.port:delete() end) end
+  -- hs.libipc's delete() does not close a port that has handled a message: the port keeps
+  -- answering until its object is garbage collected. So drop the only reference and collect.
+  if s.port then
+    pcall(function() s.port:delete() end)
+    s.port = nil
+    collectgarbage("collect")
+  end
   for _, t in ipairs(s.timers) do pcall(function() t:stop() end) end
   for _, w in ipairs({ s.accessWatch, s.cafWatch }) do pcall(function() w:stop() end) end
   if s.hotkey then pcall(function() s.hotkey:delete() end) end

@@ -200,6 +200,8 @@ end
 
 -- ---- the fake hs ---------------------------------------------------------------------------------
 R = { ports = {}, closed = {}, hotkeys = {}, menus = {}, notes = {}, touched = {}, timers = {} }
+-- Port objects the Spoon still holds; weak keys, so an object nothing else holds leaves on a collect.
+R.live = setmetatable({}, { __mode = "k" })
 local function sh(cmd) local f = io.popen(cmd); local out = f:read("a"); f:close(); return out end
 local function q(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 local function app(pid, name, bundle)
@@ -376,7 +378,9 @@ package.preload["hs.libipc"] = function()
   return { localPort = function(name, fn)
     if PORT_TAKEN then error("port name in use") end
     R.ports[name] = fn
-    return { delete = function() R.closed[name] = true end }
+    local p = { delete = function() R.closed[name] = true end }
+    R.live[p] = name
+    return p
   end }
 end
 package.preload["hs.ipc"] = function() R.ipcLoaded = true; return {} end
