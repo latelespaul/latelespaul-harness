@@ -3,7 +3,8 @@
 # same list on session start, tmux backend). The firstmate installer runs this; it works alone too.
 #   tools.sh            install what is missing or older than the pin below (never sudo)
 #   tools.sh --status   list each tool as ok/old/MISSING with its version (exit 1 if a required one is not ok)
-# npm and GitHub-release tools are pinned; brew tools get whatever Homebrew has (no pins there).
+# npm and GitHub-release tools are pinned; brew tools get whatever Homebrew has (no pins there;
+# on Linux the script only names the system package manager for them).
 # Pins are what the harness was tested with; firstmate's own floors are lower (bootstrap says if they rise).
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
