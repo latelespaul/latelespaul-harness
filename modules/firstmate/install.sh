@@ -50,6 +50,19 @@ if [[ -n $FIRSTMATE_UPSTREAM ]] && ! git -C $FIRSTMATE_DIR remote get-url upstre
   act git -C $FIRSTMATE_DIR remote add upstream $FIRSTMATE_UPSTREAM
 fi
 
+# run-firstmate.sh is an interactive login zsh (#!/bin/zsh -il). With no zsh startup file at all
+# (a fresh Linux account), zsh stops at its new-user menu instead of running it, so the tmux
+# session waits for a key forever. A ~/.zshrc holding only a comment is what that menu's own
+# "(0)" choice writes; an existing startup file is never touched.
+zdot=${ZDOTDIR:-$HOME}
+if [[ ! -e $zdot/.zshenv && ! -e $zdot/.zprofile && ! -e $zdot/.zshrc && ! -e $zdot/.zlogin ]]; then
+  if dry; then print -r -- "would write $zdot/.zshrc (a comment only)"
+  else
+    print -r -- "# Created by the harness firstmate module so zsh skips its new-user menu." > $zdot/.zshrc
+    print -r -- "wrote $zdot/.zshrc (a comment only), so zsh's new-user menu does not block firstmate's session"
+  fi
+fi
+
 # The skill is rendered (it names this user's paths), so it is a real folder, not a link.
 ensure_dir $claude_dir/skills/firstmate
 write_file $claude_dir/skills/firstmate/SKILL.md "$(render $mod/skill/SKILL.md.tmpl)"
