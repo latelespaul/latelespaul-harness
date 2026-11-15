@@ -3,7 +3,8 @@
 # same list on session start, tmux backend). The firstmate installer runs this; it works alone too.
 #   tools.sh            install what is missing or older than the pin below (never sudo)
 #   tools.sh --status   list each tool as ok/old/MISSING with its version (exit 1 if a required one is not ok)
-# npm and GitHub-release tools are pinned; brew tools get whatever Homebrew has (no pins there).
+# npm and GitHub-release tools are pinned; brew tools get whatever Homebrew has (no pins there;
+# on Linux the script only names the system package manager for them).
 # Pins are what the harness was tested with; firstmate's own floors are lower (bootstrap says if they rise).
 set -e
 (( ${argv[(Ie)--dry-run]} )) && { export HARNESS_DRY_RUN=1; argv=(${argv:#--dry-run}) }
@@ -20,16 +21,23 @@ tools=(
   treehouse:release:3.1.8:1 no-mistakes:release:1.84.0:1
   claude:claude:-:1
 )
-# Release tools: repo, binary folder, and the SHA-256 of each pinned macOS archive (from the
+# Release tools: repo, binary folder, and the SHA-256 of each pinned macOS and Linux archive (from the
 # release's checksums.txt), so a download is checked against a hash kept here, not one fetched with it.
 typeset -A repo=(treehouse kunchenguid/treehouse no-mistakes kunchenguid/no-mistakes)
 typeset -A bindir=(treehouse $HOME/.local/bin no-mistakes $HOME/.no-mistakes/bin)
 typeset -A sha=(
-  treehouse-arm64   007c55c26e0bd8b672b1a917465f06c3f89d93a66cd171364ffb65743d268601
-  treehouse-amd64   6be7f71cc8c6a1fbf40311af8ee3c45459c72afbab2c93dc2f80a183427bcbeb
-  no-mistakes-arm64 2e5f838303ab727edccd1a60a4834068024606c68ae7d97fdc0fdeecd7bd4d90
-  no-mistakes-amd64 88b1a481924488f55456b3f96070f739b109e19555232e4f8be0a7ebae7c08ac
+  treehouse-darwin-arm64   007c55c26e0bd8b672b1a917465f06c3f89d93a66cd171364ffb65743d268601
+  treehouse-darwin-amd64   6be7f71cc8c6a1fbf40311af8ee3c45459c72afbab2c93dc2f80a183427bcbeb
+  treehouse-linux-arm64    3d1c02c8ab13049709ace66be51d99b72fe7b6d0b73d0d0efd90f226e1aa87d1
+  treehouse-linux-amd64    bd6227d909ba8046263ae5d4e072ccbcf43010cac9d7289b1262126510edfeed
+  no-mistakes-darwin-arm64 2e5f838303ab727edccd1a60a4834068024606c68ae7d97fdc0fdeecd7bd4d90
+  no-mistakes-darwin-amd64 88b1a481924488f55456b3f96070f739b109e19555232e4f8be0a7ebae7c08ac
+  no-mistakes-linux-arm64  8d8cefd927b7f921c207e4dd6c575081dc255dc068f0205f74b52e482bf2f7ab
+  no-mistakes-linux-amd64  b0fb8a9df412c5fa1fb92a3584ffa1d4d5b4d6e0d1738efa2f8b88320f8bf1c2
 )
+# On Linux there is no Homebrew: brew tools come from the system package manager instead.
+linux=0
+[[ $(uname -s) == Linux ]] && linux=1
 # Not installed here: Claude Code's own installer is an unpinned curl | bash, so we only print it.
 claude_install='curl -fsSL https://claude.ai/install.sh | bash'
 
@@ -42,24 +50,27 @@ version() {
 
 install_hint() {  # <name> <how> <pin>
   case $2 in
-    brew) print "brew install $1" ;;
+    brew) if (( linux )); then print "your package manager, e.g. sudo dnf install $1"; else print "brew install $1"; fi ;;
     npm) print "npm i -g $1@$3" ;;
     release) print "$self  (pinned v$3 from github.com/${repo[$1]})" ;;
-    system) print "it ships with macOS; brew install $1" ;;
+    system) if (( linux )); then print "your package manager, e.g. sudo dnf install $1"; else print "it ships with macOS; brew install $1"; fi ;;
     claude) print $claude_install ;;
   esac
 }
 
 # release_install <name> <pin>: download the pinned archive, check its hash, put the binary in place.
 release_install() {
-  local name=$1 pin=$2 arch dir=${bindir[$1]} tmp file url
-  case $(uname -m) in arm64) arch=arm64 ;; x86_64) arch=amd64 ;; *) print "unsupported CPU $(uname -m) for $name"; return 1 ;; esac
-  file=$name-v$pin-darwin-$arch.tar.gz
+  local name=$1 pin=$2 os arch dir=${bindir[$1]} tmp file url sum
+  case $(uname -s) in Darwin) os=darwin ;; Linux) os=linux ;; *) print "unsupported system $(uname -s) for $name"; return 1 ;; esac
+  case $(uname -m) in arm64|aarch64) arch=arm64 ;; x86_64) arch=amd64 ;; *) print "unsupported CPU $(uname -m) for $name"; return 1 ;; esac
+  file=$name-v$pin-$os-$arch.tar.gz
   url=https://github.com/${repo[$name]}/releases/download/v$pin/$file
-  if dry; then print -r -- "would download $url, check sha256 ${sha[$name-$arch]}, install to $dir/$name"; return 0; fi
+  if dry; then print -r -- "would download $url, check sha256 ${sha[$name-$os-$arch]}, install to $dir/$name"; return 0; fi
   tmp=$(mktemp -d)
   curl -fsSL --max-filesize 100000000 $url -o $tmp/$file || { rm -rf $tmp; print "download failed: $url"; return 1 }
-  [[ $(shasum -a 256 $tmp/$file) == ${sha[$name-$arch]}\ * ]] || { rm -rf $tmp; print "checksum mismatch for $file; not installed"; return 1 }
+  # macOS has shasum; Linux usually has only sha256sum. Both print "<hash>  <file>".
+  if command -v shasum >/dev/null; then sum=$(shasum -a 256 $tmp/$file); else sum=$(sha256sum $tmp/$file); fi
+  [[ $sum == ${sha[$name-$os-$arch]}\ * ]] || { rm -rf $tmp; print "checksum mismatch for $file; not installed"; return 1 }
   tar -xzf $tmp/$file -C $tmp $name || { rm -rf $tmp; print "could not unpack $file"; return 1 }
   mkdir -p $dir
   install -m 755 $tmp/$name $dir/$name
@@ -77,7 +88,8 @@ release_install() {
 rc=0 brew_ok=1 npm_ok=1
 command -v brew >/dev/null || brew_ok=0
 if [[ $mode == install ]]; then
-  (( brew_ok )) || print "Homebrew is missing; install it from https://brew.sh (it asks for your password), then re-run $self."
+  if (( linux )); then (( brew_ok )) || print "No Homebrew (Linux): tools marked brew below come from your package manager instead."
+  else (( brew_ok )) || print "Homebrew is missing; install it from https://brew.sh (it asks for your password), then re-run $self."; fi
 fi
 for t in $tools; do
   name=${t%%:*} rest=${t#*:}; how=${rest%%:*} rest=${rest#*:}; pin=${rest%%:*} req=${rest#*:}
@@ -102,7 +114,9 @@ for t in $tools; do
   [[ $state == ok ]] && continue
   case $how in
     brew)
-      if (( brew_ok )); then act brew install $name || rc=1; else print "skipped $name: needs Homebrew"; rc=1; fi ;;
+      if (( brew_ok )); then act brew install $name || rc=1
+      elif (( linux )); then print "skipped $name: install it with your package manager (e.g. sudo dnf install $name)"; rc=1
+      else print "skipped $name: needs Homebrew"; rc=1; fi ;;
     npm)
       if ! command -v npm >/dev/null; then print "skipped $name: needs node/npm"; rc=1; continue; fi
       # A global prefix you cannot write (e.g. /usr/local from a pkg install) would need sudo; we don't.

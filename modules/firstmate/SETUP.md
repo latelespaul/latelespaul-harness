@@ -18,11 +18,11 @@
    | curl | ships with macOS | - |
    | gh-axi, chrome-devtools-axi, tasks-axi, quota-axi | `npm i -g <name>@<pin>`; a first install also runs `<name> setup hooks` (not tasks-axi, quota-axi) | 0.1.46, 0.1.44, 0.2.6, 0.1.69 |
    | lavish-axi (optional: visual plans and reports) | `npm i -g lavish-axi@0.1.92`; a first install also runs `lavish-axi setup hooks` | 0.1.92 |
-   | treehouse | GitHub release archive, SHA-256 checked, into `~/.local/bin` | 3.1.8 |
-   | no-mistakes | GitHub release archive, SHA-256 checked, into `~/.no-mistakes/bin` (linked from `~/.local/bin`) | 1.84.0 |
+   | treehouse | GitHub release archive (macOS or Linux), SHA-256 checked, into `~/.local/bin` | 3.1.8 |
+   | no-mistakes | GitHub release archive (macOS or Linux), SHA-256 checked, into `~/.no-mistakes/bin` (linked from `~/.local/bin`) | 1.84.0 |
    | claude | not installed by the script (its installer is an unpinned `curl \| bash`); it prints the command | - |
 
-   No Homebrew: point them to https://brew.sh (it asks for their password) and re-run. Tools newer than the pin are left alone; firstmate's bootstrap reports if its own floors move past them.
+   No Homebrew: point them to https://brew.sh (it asks for their password) and re-run. On Linux there is no Homebrew: the brew rows and curl come from the system package manager (e.g. `sudo dnf install git tmux gh nodejs jq`), and treehouse and no-mistakes come from their pinned linux archives (amd64 or arm64), checked with `sha256sum`. If npm's global folder is not writable (a system Node), set a user prefix first: `npm config set prefix ~/.local`. Tools newer than the pin are left alone; firstmate's bootstrap reports if its own floors move past them.
    Needs the user, the script only prints these: `gh auth login`, the Claude Code login (`claude`, then `/login`), and `no-mistakes init` once inside each repo whose work should go through the gate. `~/.local/bin` must be on PATH.
    Verify: `H/modules/firstmate/tools.sh --status` exits 0 (one line per tool: ok, old or MISSING, with its version).
 2. **Upstream or fork.** Ask whether they want upstream (default) or their own fork. For a fork: `gh repo fork kunchenguid/firstmate --clone=false` (ask first: it creates a repo), then `H/install.sh --env-only FIRSTMATE_REPO=https://github.com/<user>/firstmate.git FIRSTMATE_UPSTREAM=https://github.com/kunchenguid/firstmate.git`.
