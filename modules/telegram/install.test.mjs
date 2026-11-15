@@ -77,7 +77,8 @@ test('Linux, polling off: tmux session with the plugin off, no poller, no Telegr
   assert.match(r.stdout, /crontab/);
   assert.match(r.stdout, /watchdog\.py/);
   assert.doesNotMatch(r.stdout, /morning-brief\.py/);
-  assert.ok(!existsSync(join(s.home, 'Library')), 'no launchd plists on Linux');
+  // macOS system tools may create ~/Library themselves, so check only where the plists would go.
+  assert.ok(!existsSync(join(s.home, 'Library/LaunchAgents')), 'no launchd plists on Linux');
 });
 
 test('Linux, polling off: --take-over is refused', () => {
