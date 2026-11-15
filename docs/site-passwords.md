@@ -38,8 +38,15 @@ svc="myproject:site:examplejobs"
 if security find-generic-password -a "$USER" -s "$svc" >/dev/null 2>&1; then
   print -u2 "$svc exists; not overwriting"
 else
-  pw=$(LC_ALL=C tr -dc 'A-Za-z0-9._%+=!?*@-' </dev/urandom | head -c 20)
-  if [[ -z $pw ]]; then
+  # make-password: start
+  pw=
+  for _ in {1..8}; do
+    pw+=$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9._%+=!?*@-')
+    (( ${#pw} >= 20 )) && break
+  done
+  pw=${pw[1,20]}
+  # make-password: end
+  if (( ${#pw} != 20 )); then
     print -u2 "no password made; not storing"
   else
     print -r -- "add-generic-password -a \"$USER\" -s \"$svc\" -w \"$pw\"" \
@@ -50,6 +57,11 @@ else
   unset pw
 fi
 ```
+
+Each pass reads a fixed 256 bytes, so every command in the pipe ends by itself. Never feed `tr`
+from `</dev/urandom` directly. Some callers ignore SIGPIPE, the signal for a closed pipe (Node,
+some agent shells). Then `tr` does not stop after `head` exits. It runs at full processor load
+until someone kills it. One pass almost always gives 20 characters; the loop covers a short pass.
 
 If either error shows, stop. Do not use the account and do not report it as made.
 A locked keychain makes `security -i` wait for an unlock prompt. The `perl` line stops it after
