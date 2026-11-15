@@ -64,10 +64,15 @@ def to_master(text):
         return False
 
 
+USAGE = 'usage: tg-notify.py "message"   (sends a send-only Telegram alert, or queues it for the master session)'
+
+
 def main():
-    text = " ".join(sys.argv[1:]).strip()
-    if not text:
-        return 1
+    args = sys.argv[1:]
+    text = " ".join(args).strip()
+    if not text or "-h" in args or "--help" in args:
+        print(USAGE, file=sys.stderr)
+        return 2
     if to_master(text):
         return 0
     prof = profile_dir()
