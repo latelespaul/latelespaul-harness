@@ -7,7 +7,8 @@ HARNESS_DIR=${_harness_lib:h}
 unset _harness_lib
 
 # Values typed as ~/something.
-for _k in PROJECTS_DIR PROFILE_DIR TELEGRAM_WORKDIR FIRSTMATE_DIR HS_ACCESS_FILE EYESHANDS_TARGETS_FILE; do
+for _k in PROJECTS_DIR PROFILE_DIR TELEGRAM_WORKDIR FIRSTMATE_DIR HS_ACCESS_FILE EYESHANDS_TARGETS_FILE \
+  MACNODE_DIR MACNODE_KEY MACNODE_JOBHUNT_DIR MACNODE_GH_CODE MACNODE_PORTAL_PASS; do
   [[ ${(P)_k} == '~'* ]] && typeset -g $_k="$HOME${${(P)_k}#\~}"
 done
 unset _k
@@ -40,6 +41,17 @@ unset _k
 : ${HS_IPC_GENERIC:=1}
 : ${HS_ACCESS_FILE:=$PROFILE_DIR/hammerspoon/access.json}
 : ${EYESHANDS_TARGETS_FILE:=$PROFILE_DIR/eyeshands/targets.json}
+: ${MACNODE_ROLE:=}
+: ${MACNODE_DIR:=$HOME/.local/state/mac-node}
+: ${MACNODE_VM:=}
+: ${MACNODE_KEY:=$HOME/.ssh/mac-node_ed25519}
+: ${MACNODE_SSH_PORT:=22}
+: ${MACNODE_JOBHUNT_DIR:=$PROJECTS_DIR/job-hunt}
+: ${MACNODE_JOBHUNT_SUBS:=status}
+: ${MACNODE_GH_CODE:=}
+: ${MACNODE_PORTAL_PASS:=}
+: ${MACNODE_REPOS:=}
+: ${MACNODE_HS_OWNER:=mac-node}
 MEMORY_DIRS=${MEMORY_DIRS//\~/$HOME}
 
 # Keys a template may use as __KEY__ (modules add their own).
