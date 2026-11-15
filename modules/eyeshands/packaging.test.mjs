@@ -202,3 +202,46 @@ test('the Spoon CLI refuses to overwrite a ~/.local/bin/eyeshands that it did no
   assert.match(r.stderr, /is not the script that this install writes/);
   assert.equal(readFileSync(join(w.home, '.local', 'bin', 'eyeshands'), 'utf8'), '#!/bin/sh\necho mine\n');
 });
+
+// hdiutil_try with a stub hdiutil and a stub sleep on PATH: needs bash only, so it runs everywhere.
+function hdiutilWorld(failures) {
+  const dir = tmp(), bin = join(dir, 'bin'), log = join(dir, 'calls');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'hdiutil'), `#!/bin/sh
+echo "hdiutil $*" >> '${log}'
+n=$(grep -c '^hdiutil ' '${log}')
+[ "$n" -gt ${failures} ] && exit 0
+echo "hdiutil: $1 failed - Resource busy" >&2
+exit 1
+`);
+  writeFileSync(join(bin, 'sleep'), `#!/bin/sh\necho "sleep $*" >> '${log}'\n`);
+  chmodSync(join(bin, 'hdiutil'), 0o755);
+  chmodSync(join(bin, 'sleep'), 0o755);
+  const r = spawnSync('bash', ['-c', `source '${BUILD}' && hdiutil_try create create -volname 'Eyes & Hands' out.dmg && echo after`],
+    { encoding: 'utf8', timeout: 20000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  return { r, calls: existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [] };
+}
+
+test('hdiutil_try retries a failed hdiutil, 5 s apart, and shows each error', () => {
+  const { r, calls } = hdiutilWorld(2);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'after');
+  assert.deepEqual(calls, [
+    "hdiutil create -volname Eyes & Hands out.dmg", 'sleep 5',
+    "hdiutil create -volname Eyes & Hands out.dmg", 'sleep 5',
+    "hdiutil create -volname Eyes & Hands out.dmg",
+  ]);
+  assert.match(r.stderr, /hdiutil create failed \(try 1 of 3\): hdiutil: create failed - Resource busy/);
+  assert.match(r.stderr, /hdiutil create failed \(try 2 of 3\)/);
+  assert.doesNotMatch(r.stderr, /try 3 of 3|giving up/);
+});
+
+test('hdiutil_try stops the build with a clear message after the third failed try', () => {
+  const { r, calls } = hdiutilWorld(99);
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stdout, /after/);
+  assert.equal(calls.filter(c => c.startsWith('hdiutil ')).length, 3);
+  assert.equal(calls.filter(c => c === 'sleep 5').length, 2, 'no sleep after the last try');
+  assert.match(r.stderr, /hdiutil create failed \(try 3 of 3\): hdiutil: create failed - Resource busy/);
+  assert.match(r.stderr, /build-dmg: hdiutil create failed 3 times; giving up\n$/);
+});
