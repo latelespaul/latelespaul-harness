@@ -84,6 +84,19 @@ master session is down, the alert goes to Telegram as before, marked "(master se
 `TG_NOTIFY_DIRECT=1` always sends. The Telegram watchdog and the morning brief send on their own and
 are not affected.
 
+**Handling an alert**
+- Do not forward a raw alert to the user. Find its cause, fix it, and log what you did. Tell the
+  user only about a blocker that only they can clear, such as a permission or a password prompt.
+- The same alert again means the cause is still there. Fix its source, not the alert.
+- hcron reports a skip once per reason, then stays quiet until the job runs again. A `--needs gui`
+  job that skips because Hammerspoon has no Accessibility permission can stay silent for days. Look
+  for an old last-run time in `hcron status`, then check `hs -c 'return harness.status()'`.
+- After the user turns Accessibility back on in System Settings, Hammerspoon still reports it off
+  until Hammerspoon restarts. Restart it with `modules/hammerspoon/install.sh --restart`, which
+  waits while a job holds awake mode or an armed owner runs.
+- An awake guard alert means that a run used eyes or hands without its own awake hold. Fix that
+  run (`awake run`, or `--needs gui` for an hcron job).
+
 **Warnings**
 - A process can sit in the stopped state (`ps` shows `T`) and look "running" for hours. When a run
   is far over its usual time, check `ps -o stat` and send `SIGCONT` before `SIGTERM`.
