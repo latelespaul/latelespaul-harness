@@ -25,12 +25,13 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync, chmodSync,
-  linkSync, realpathSync } from 'node:fs';
+  realpathSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse, summary, ACTIONS } from './actions.mjs';
+import { pidLock, alive } from './lock.mjs';
 
 const VERSION = 1;
 const SELF = realpathSync(fileURLToPath(import.meta.url));
@@ -64,27 +65,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => new Date().toISOString();
 const newId = () => `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 const ID = /^[A-Za-z0-9-]{1,40}$/;
-function alive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
 function ensureDir(d) { mkdirSync(d, { recursive: true, mode: 0o700 }); chmodSync(d, 0o700); return d; }
 function writePrivate(f, text) { writeFileSync(`${f}.tmp`, text, { mode: 0o600 }); renameSync(`${f}.tmp`, f); }
 const jsonLine = o => JSON.stringify(o) + '\n';
 function tryJson(text) { try { return JSON.parse(text); } catch { return null; } }
-
-// pidLock(file): true when this process now holds the lock. The lock appears whole, pid inside (a hard
-// link of a finished file), or not at all; a lock whose pid is gone is taken over.
-function pidLock(file) {
-  const mine = `${file}.${process.pid}`;
-  writeFileSync(mine, `${process.pid}\n`, { mode: 0o600 });
-  try { linkSync(mine, file); unlinkSync(mine); return true; }
-  catch {
-    let pid = 0;
-    try { pid = Number(readFileSync(file, 'utf8').trim()) || 0; } catch {}
-    unlinkSync(mine);
-    if (pid && alive(pid)) return false;
-    try { unlinkSync(file); } catch {}
-    return pidLock(file);
-  }
-}
 
 // eachLine(stream, max, fn, onEnd): call fn for every newline-terminated line; onEnd once on close.
 // A line over max bytes ends the stream.
@@ -140,8 +124,9 @@ function run(file, args, { cwd, input, timeoutMs = 120_000 } = {}) {
     const add = (s, d) => { if (s.length + d.length > OUT_MAX) { truncated = true; return (s + d).slice(0, OUT_MAX); } return s + d; };
     try { child = spawn(file, args, { cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, PATH: macPath() } }); }
     catch (e) { return res({ exit: 127, stdout: '', stderr: `cannot start ${file}: ${e.message}` }); }
-    child.stdout.on('data', d => { out = add(out, d.toString()); });
-    child.stderr.on('data', d => { err = add(err, d.toString()); });
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', d => { out = add(out, d); });
+    child.stderr.on('data', d => { err = add(err, d); });
     child.stdin.on('error', () => {});
     child.stdin.end(input ?? '');
     const group = sig => { try { process.kill(-child.pid, sig); } catch {} };

@@ -95,6 +95,30 @@ const currentSsh = p => Number([...readFileSync(join(p.mac, 'link.log'), 'utf8')
 const stopMac = async serve => { serve.kill('SIGTERM'); await new Promise(r => serve.once('close', r)); };
 
 // ---------- the allowlist itself ----------
+test('pid lock: many processes taking over the same stale lock at once leave exactly one holder', async t => {
+  const d = realpathSync(mkdtempSync('/tmp/mn-')); t.after(() => rmSync(d, { recursive: true, force: true }));
+  const lock = join(d, 'drain.pid');
+  const dead = spawn(process.execPath, ['-e', '']); await new Promise(r => dead.once('close', r));
+  writeFileSync(lock, `${dead.pid}\n`);
+  const at = Date.now() + 1500;
+  const taker = `import { pidLock } from ${JSON.stringify(join(HERE, 'lock.mjs'))};
+    while (Date.now() < ${at}) {}
+    const got = pidLock(${JSON.stringify(lock)});
+    process.stdout.write(got ? 'held' : 'busy');
+    setTimeout(() => {}, 1500);`;
+  const runs = Array.from({ length: 16 }, () => new Promise(res => {
+    const c = spawn(process.execPath, ['--input-type=module', '-e', taker]);
+    let out = ''; c.stdout.on('data', x => { out += x; });
+    c.on('close', () => res({ pid: c.pid, out }));
+  }));
+  const results = await Promise.all(runs);
+  const holders = results.filter(r => r.out === 'held');
+  assert.equal(holders.length, 1, `holders: ${JSON.stringify(results)}`);
+  assert.equal(results.filter(r => r.out === 'busy').length, 15);
+  assert.equal(Number(readFileSync(lock, 'utf8')), holders[0].pid);
+  assert.deepEqual(readdirSync(d).sort(), ['drain.pid']);
+});
+
 test('allowlist: each named action parses; anything else is refused', () => {
   for (const argv of [['ping'], ['eyes', 'status'], ['hands', 'call', 'eyes.fields'], ['hands', 'call', 'hands.click', '{"x":1}'],
     ['hands', 'batch', '[{"cmd":"a.b"},{"cmd":"c","args":{"k":1}}]'], ['chrome-mode', 'personal'], ['chrome-mode', 'personal', 'desktop'],
