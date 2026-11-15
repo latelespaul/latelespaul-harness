@@ -39,16 +39,27 @@ if security find-generic-password -a "$USER" -s "$svc" >/dev/null 2>&1; then
   print -u2 "$svc exists; not overwriting"
 else
   pw=$(LC_ALL=C tr -dc 'A-Za-z0-9._%+=!?*@-' </dev/urandom | head -c 20)
-  print -r -- "add-generic-password -a \"$USER\" -s \"$svc\" -w \"$pw\"" | security -i >/dev/null 2>&1
+  if [[ -z $pw ]]; then
+    print -u2 "no password made; not storing"
+  else
+    print -r -- "add-generic-password -a \"$USER\" -s \"$svc\" -w \"$pw\"" | security -i >/dev/null 2>&1
+    security find-generic-password -a "$USER" -s "$svc" >/dev/null 2>&1 \
+      || print -u2 "$svc not stored; stop"
+  fi
   unset pw
 fi
 ```
 
-Step 5, into the field that has the focus (`paste: false` keeps the value off the clipboard):
+If either error shows, stop. Do not use the account and do not report it as made.
+
+Step 5, into the field that has the focus (`paste: false` keeps the value off the clipboard). If the
+lookup fails or gives an empty value, the python line stops with an error and sends nothing to the
+typing tool, so the tool types nothing:
 
 ```zsh
 security find-generic-password -a "$USER" -s "$svc" -w \
-  | python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read().rstrip("\n"), "paste": False}))' \
+  | python3 -c 'import json,sys; t=sys.stdin.read().rstrip("\n"); t or sys.exit("no password")
+print(json.dumps({"text": t, "paste": False}))' \
   | eyeshands hands type --owner <owner> --target <target> -
 ```
 
@@ -67,9 +78,9 @@ myproject:site:examplejobs". Later sign-ins use step 5 again.
 
 **Warnings**
 - This applies only to new accounts that the agent makes on sites that the user approved. It never
-  applies to the user's own main accounts, such as an Apple Account (Apple ID), Google, Microsoft, a bank or email.
-  Never reset or change those passwords. Resetting an Apple Account signs out all of the user's devices.
-  Ask the user instead.
+  applies to the user's own main accounts, such as an Apple Account (Apple ID), Google, Microsoft,
+  a bank or email. Never reset or change those passwords. Resetting an Apple Account signs out all
+  of the user's devices. Ask the user instead.
 - Keep quotes, backslashes and spaces out of the character set. They break the `security -i` line.
   If a site refuses the password, change the length or the other characters, not that rule.
 - Never pass the password as a command argument, in an environment variable or in a file. Never
