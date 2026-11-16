@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const INSTALL = fileURLToPath(new URL('./install.sh', import.meta.url));
@@ -13,7 +13,8 @@ const skip = process.platform === 'darwin' ? false : 'macOS only (shasum)';
 
 // running: is Hammerspoon "running" (stub pgrep); status: what `hs` answers (an object, or null
 // for not answering).
-function sandbox({ running = true, status = null } = {}) {
+// modules: MODULES in the sandbox's harness.env; hcron writes only to the sandbox's jobs file.
+function sandbox({ running = true, status = null, modules = '' } = {}) {
   const d = mkdtempSync(join(tmpdir(), 'hs-install-'));
   const bin = join(d, 'bin'), home = join(d, 'home'), calls = join(d, 'calls.txt');
   mkdirSync(bin);
@@ -23,15 +24,17 @@ function sandbox({ running = true, status = null } = {}) {
   stub('hs', status ? `cat ${join(d, 'status.json')}` : 'exit 1');
   if (status) writeFileSync(join(d, 'status.json'), JSON.stringify(status));
   for (const name of ['osascript', 'open', 'sleep', 'killall']) stub(name, 'exit 0');
-  writeFileSync(join(d, 'harness.env'), `PROFILE_DIR="${join(d, 'profile')}"\n`);
+  writeFileSync(join(d, 'harness.env'), `PROFILE_DIR="${join(d, 'profile')}"\nMODULES="${modules}"\n`);
   // HSX_PORT: the hsx fallback asks a port nobody holds, never the live "harness" one.
   const env = { ...process.env, HOME: home, HARNESS_ENV: join(d, 'harness.env'), HS_APP: d,
-    PATH: `${bin}:/usr/bin:/bin`, HSX_PORT: 'install-test-none' };
+    PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HSX_PORT: 'install-test-none',
+    HCRON_JOBS: join(d, 'jobs.json'), HCRON_STATE: join(d, 'hcron-state'), HCRON_LOGS: join(d, 'hcron-logs') };
   const run = (...a) => spawnSync('/bin/zsh', [INSTALL, ...a], { env, encoding: 'utf8', timeout: 30000 });
   const lines = () => (existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : []);
   const acted = () => lines().filter(l => /^(osascript|open|killall) /.test(l));
   const hash = () => run('--config-hash').stdout.trim();
-  return { d, home, run, lines, acted, hash };
+  const jobs = () => (existsSync(join(d, 'jobs.json')) ? JSON.parse(readFileSync(join(d, 'jobs.json'), 'utf8')).jobs : {});
+  return { d, home, run, lines, acted, hash, jobs };
 }
 const QUIT = 'osascript -e tell application "Hammerspoon" to quit';
 const OPEN = 'open -a Hammerspoon';
@@ -148,4 +151,30 @@ test('--restart: restarts an unchanged config too, links nothing, and keeps the 
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(u.acted(), [], 'never starts a Hammerspoon that is not running');
   assert.match(r.stdout, /not running; nothing to restart/);
+});
+
+test('watchdog: with the cron module it adds the hcron job every minute, idempotently; --status reports it', () => {
+  const s = sandbox({ running: false, modules: 'hammerspoon cron' });
+  let r = s.run('--status');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /watchdog: hcron job hammerspoon-watchdog is not registered/);
+  r = s.run();
+  assert.equal(r.status, 0, r.stderr);
+  const job = s.jobs()['hammerspoon-watchdog'];
+  assert.equal(job.cron, '* * * * *');
+  assert.match(job.cmd, /^\/bin\/zsh \S+\/modules\/hammerspoon\/watchdog\.sh$/);
+  assert.equal(job.timeout, '2m');
+  assert.equal(s.run().status, 0, 'a second install updates the same job');
+  assert.deepEqual(Object.keys(s.jobs()), ['hammerspoon-watchdog']);
+  r = s.run('--status');
+  assert.match(r.stdout, /watchdog: hcron job hammerspoon-watchdog starts Hammerspoon within a minute/);
+});
+
+test('watchdog: without the cron module the shared jobs file is left alone', () => {
+  const s = sandbox({ running: false });
+  const r = s.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /the watchdog needs the cron module/);
+  assert.ok(!existsSync(join(s.d, 'jobs.json')));
+  assert.match(s.run('--status').stdout, /watchdog: off \(needs the cron module/);
 });

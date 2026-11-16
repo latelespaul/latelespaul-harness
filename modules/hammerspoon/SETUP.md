@@ -7,6 +7,8 @@ Gives agent tools one signed, notarized app ([Hammerspoon](https://www.hammerspo
 3. System Settings → Privacy & Security → turn on **Accessibility** and **Screen Recording** for Hammerspoon (`hs -c 'return harness.request()'` opens the prompts).
 4. Check: `modules/hammerspoon/install.sh --status` prints `{"accessibility":true,"screen_recording":true,...}`.
 
+**Watchdog.** With the cron module on, `install.sh` also adds the hcron job `hammerspoon-watchdog` (every minute, `watchdog.sh`). When Hammerspoon is not running (a crash or a quit), it starts it again with `open -a Hammerspoon` and sends one alert per outage through `modules/cron/tg-notify.py` (the master-alerts log while the master session is up, else Telegram), not one per minute. It waits 5 seconds and checks again first, so it leaves an `install.sh --restart` in progress alone. `install.sh --status` says whether hcron has the job. To keep Hammerspoon closed on purpose: `hcron pause hammerspoon-watchdog`. Tests: `node --test modules/hammerspoon/watchdog.test.mjs`.
+
 Project code (for example a job-apply driver's eyes and hands) goes in `~/.hammerspoon/local/<name>.lua`, usually a symlink into that project; the harness config loads every file there. Anything there has full screen and keyboard control, so keep it reviewed.
 
 **Harness port (eyes and hands).** `hs -c` runs *any* Lua with Hammerspoon's grants, and every program that runs as you can call it. So commands that read the screen or post input go through a second, narrow port instead: a named CFMessagePort, `harness`, that runs only registered commands and never evaluates Lua (`port.lua`; tests: `node --test modules/hammerspoon/port.test.mjs`, which need `brew install lua@5.4`).
