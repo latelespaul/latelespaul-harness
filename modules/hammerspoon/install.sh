@@ -3,7 +3,10 @@
 #   install.sh            link ~/.hammerspoon/init.lua, ~/.local/bin/awake and ~/.local/bin/hsx to this module,
 #                         start Hammerspoon, or restart it when its config changed (deferred while
 #                         awake mode is held or an owner is armed; see SETUP.md)
-#   install.sh --status   is it running, is the `hs` CLI reachable, are the permissions on? (exit 1 if not)
+#                         and register the hcron job hammerspoon-watchdog (watchdog.sh: starts it again
+#                         after a crash, one alert per outage; needs the cron module)
+#   install.sh --status   is it running, is the `hs` CLI reachable, are the permissions on, is the
+#                         watchdog job registered? (exit 1 if not)
 #   install.sh --config-hash   the fingerprint init.lua reports as "config" for this harness
 #   install.sh --restart [why] [again]   restart a running Hammerspoon now, whatever its config,
 #                         with the same deferral (other modules use this; `again` is the command
@@ -13,6 +16,18 @@ set -e
 source ${0:A:h:h:h}/lib/common.sh
 mod=$HARNESS_DIR/modules/hammerspoon
 hs_app=${HS_APP:-/Applications/Hammerspoon.app}
+job=hammerspoon-watchdog
+
+# hcron straight from the harness, so it works before ~/.local/bin/hcron is linked.
+hcron() { node $HARNESS_DIR/modules/cron/hcron.mjs "$@" }
+has_job() { command -v node >/dev/null && hcron next $job -n 1 >/dev/null 2>&1 }
+
+# The watchdog job, in one line. Without the cron module it is not expected (and not an error).
+watchdog_status() {
+  if ! enabled cron; then print "watchdog: off (needs the cron module: add cron to MODULES)."; return 0; fi
+  if ! has_job; then print "watchdog: hcron job $job is not registered (run: $0)."; return 1; fi
+  print "watchdog: hcron job $job starts Hammerspoon within a minute when it is not running (stop it: hcron pause $job)."
+}
 
 # `hs -c`, or the harness port when the generic one is closed (HS_IPC_GENERIC=0).
 status_json() {
@@ -60,12 +75,13 @@ except (OSError, ValueError, AttributeError, TypeError):
 
 case ${1:-install} in
 --status)
+  wd=0; watchdog_status || wd=1
   pgrep -xq Hammerspoon || { print "Hammerspoon is not running (open -a Hammerspoon)."; exit 1 }
   j=$(status_json) || { print "Hammerspoon runs, but neither the hs CLI nor the harness port answers (reload the config)."; exit 1 }
   print -r -- "$j"
   [[ $j == *'"accessibility":true'* ]] || { print "Grant Accessibility: System Settings > Privacy & Security > Accessibility > Hammerspoon."; exit 1 }
   [[ $j == *'"screen_recording":false'* ]] && { print "Grant Screen Recording: System Settings > Privacy & Security > Screen Recording > Hammerspoon."; exit 1 }
-  exit 0 ;;
+  exit $wd ;;
 --config-hash) config_hash; exit 0 ;;
 --restart) ;;
 install) ;;
@@ -110,6 +126,19 @@ ensure_dir $HOME/.local/bin
 link $mod/awake.sh $HOME/.local/bin/awake   # awake run <name> -- <cmd>: no idle lock while a GUI task runs
 act chmod +x $mod/hsx
 link $mod/hsx $HOME/.local/bin/hsx          # client for the authenticated harness port
+
+# Watchdog: hcron starts Hammerspoon again within a minute after a crash (one alert per outage).
+# The jobs file lives in the profile, shared by every machine, so a machine without the cron module
+# leaves it alone. hcron add updates the job in place (and keeps a pause), so re-running is safe.
+if ! enabled cron; then
+  print "Note: the watchdog needs the cron module (add cron to MODULES and re-install); the hcron job $job was left alone."
+elif ! command -v node >/dev/null; then
+  print "Note: no node, so the hcron job $job was not added (brew install node)."
+else
+  # A relative cmd: hcron's screen-word hint matches "hammerspoon" in a path, and this job must not hold awake mode.
+  act hcron add $job --cron '* * * * *' --cwd $mod --cmd '/bin/zsh ./watchdog.sh' --timeout 2m \
+    || print "warning: could not add the hcron job $job (check: hcron list)."
+fi
 
 if ! pgrep -xq Hammerspoon; then
   act open -a Hammerspoon
