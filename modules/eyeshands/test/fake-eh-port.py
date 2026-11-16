@@ -2,7 +2,8 @@
 depends on (arm, first arm wins, HMAC-SHA256 over seq|cmd|args, seq strictly rising, disarm) and
 canned eyes and hands replies. Never touches Hammerspoon.
   python3 fake-eh-port.py <port name> <config.json> <log.jsonl>   prints "ready" once listening
-Every envelope it receives goes to the log as one JSON line, plus {"event": ...} lines for jobs.
+Every envelope it receives goes to the log as one JSON line, plus {"event": ...} lines for jobs and
+an {"event": "raw-percent"} line for a message with a raw % byte (port.lua sends % as \\u0025).
 config.json: {"owners": {name: {"enabled": true}}, "status": {...}, "targets": {...},
   "lines": [...], "frames": [...], "job_polls": 2, "refuse": {cmd: result},
   "ax_flag": path (accessibility reads true once this file exists),
@@ -197,14 +198,16 @@ def handle(env):
 
 @CALLBACK
 def on_message(_port, _msgid, data, _info):
-    msg = ctypes.string_at(CF.CFDataGetBytePtr(data), CF.CFDataGetLength(data)).decode()
+    raw = ctypes.string_at(CF.CFDataGetBytePtr(data), CF.CFDataGetLength(data))
+    if b"%" in raw:   # the real port's logger reads messages as a format string: a raw % can crash it
+        log({"event": "raw-percent", "message": raw.decode("utf-8", "replace")})
     try:
-        env = json.loads(msg)
+        env = json.loads(raw.decode())
         log(env)
         rep = handle(env)
     except Exception as e:   # a test fake: report, never die
         rep = err(f"fake failed: {e}")
-    out = json.dumps(rep).encode()
+    out = json.dumps(rep).replace("%", "\\u0025").encode()   # as port.lua's replies
     return CF.CFDataCreate(None, out, len(out))
 
 
