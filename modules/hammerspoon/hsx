@@ -47,8 +47,16 @@ class Unreachable(Exception):
     pass
 
 
+def wire(payload):
+    """JSON text as it goes on the port: every % becomes \\u0025. hs.libipc logs port messages through
+    LuaSkin's logDebug:, which reads them as a FORMAT string, so a raw % byte can crash Hammerspoon.
+    In JSON a % only occurs inside a string, where \\u0025 decodes to the same character."""
+    return payload.replace(b"%", b"\\u0025")
+
+
 def send(port_name, payload, timeout):
-    """One request/reply over the named CFMessagePort; returns the reply text."""
+    """One request/reply over the named CFMessagePort; payload is JSON text. Returns the reply text."""
+    payload = wire(payload)
     name = CF.CFStringCreateWithCString(None, port_name.encode(), UTF8)
     port = CF.CFMessagePortCreateRemote(None, name)
     CF.CFRelease(name)

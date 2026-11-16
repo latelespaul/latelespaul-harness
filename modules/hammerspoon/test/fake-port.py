@@ -1,6 +1,8 @@
 """Fake Hammerspoon for port.test.mjs: registers a real CFMessagePort and hands each message to
 test/driver.lua (the real port.lua with fake hs pieces), so hsx is tested end to end without
-touching Hammerspoon.  python3 fake-port.py <port name> <lua binary>; prints "ready" once listening."""
+touching Hammerspoon.  python3 fake-port.py <port name> <lua binary> [wire file]; prints "ready" once
+listening. With a wire file, every request and reply goes there as it crossed the port, as
+"> <request bytes>" and "< <reply bytes>" lines, so a test can check the exact bytes."""
 import ctypes, os, subprocess, sys
 
 CF = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
@@ -27,12 +29,18 @@ lua = subprocess.Popen([sys.argv[2], os.path.join(os.path.dirname(os.path.abspat
 assert lua.stdin and lua.stdout
 
 
+wire = open(sys.argv[3], "ab", buffering=0) if len(sys.argv) > 3 else None
+
+
 @CALLBACK
 def on_message(_port, _msgid, data, _info):
-    msg = ctypes.string_at(CF.CFDataGetBytePtr(data), CF.CFDataGetLength(data)).decode()
+    raw = ctypes.string_at(CF.CFDataGetBytePtr(data), CF.CFDataGetLength(data))
+    msg = raw.decode()
     lua.stdin.write(msg.replace("\n", " ") + "\n")
     lua.stdin.flush()
     out = lua.stdout.readline().rstrip("\n").encode()
+    if wire:
+        wire.write(b"> " + raw + b"\n< " + out + b"\n")
     return CF.CFDataCreate(None, out, len(out))
 
 

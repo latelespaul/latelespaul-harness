@@ -23,11 +23,12 @@ const skipHsx = process.platform !== 'darwin' ? 'macOS only (hsx and the fake po
 const skipE2E = skipLua || skipHsx;
 
 // Runs lines through the driver; one parsed output per input line.
-function drive(lines) {
+function driveRaw(lines) {
   const r = spawnSync(LUA, [DRIVER], { input: lines.join('\n') + '\n', encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  return r.stdout.trimEnd().split('\n').map(l => (l.startsWith('ERROR') ? l : JSON.parse(l)));
+  return r.stdout.trimEnd().split('\n');
 }
+const drive = lines => driveRaw(lines).map(l => (l.startsWith('ERROR') ? l : JSON.parse(l)));
 const secret = () => randomBytes(32).toString('hex');
 const mac = (key, seq, cmd, args) => createHmac('sha256', key).update(`${seq}|${cmd}|${args}`).digest('hex');
 const signed = (key, owner, cmd, args, seq) => JSON.stringify({ cmd, owner, args, seq, mac: mac(key, seq, cmd, args) });
@@ -264,10 +265,31 @@ test('a command that takes only args still works', { skip: skipLua }, () => {
   assert.deepEqual(c, { ok: true, result: { clicked: 3 } });
 });
 
+// hs.libipc hands each port message to LuaSkin's logDebug:, which reads it as a FORMAT string: a raw
+// % byte there makes Hammerspoon read arguments that are not there and crash. PCT holds directives
+// that read a pointer (%s, %@), write through one (%n), and the % of real pages and URLs.
+const PCT = '%s%n%@ 50% off https://x.test/a%20b?q=%2F%';
+
+test('no reply carries a raw % byte, and each reply decodes back to the same text', { skip: skipLua }, () => {
+  const k = secret();
+  const out = driveRaw([
+    JSON.stringify({ cmd: 'echo', args: JSON.stringify({ t: PCT, [PCT]: [PCT] }) }),
+    arm('looker', k),
+    signed(k, 'looker', 'eyes.echo', JSON.stringify({ t: PCT }), 1),
+    '{"cmd":"echo.fail"}',
+  ]);
+  out.forEach((line, i) => assert.ok(!line.includes('%'), `reply ${i} has a raw %: ${line}`));
+  assert.ok(out[0].includes('\\u0025'), 'the % travels as \\u0025');
+  const [echo, , signedEcho, fail] = out.map(l => JSON.parse(l));
+  assert.deepEqual(echo, { ok: true, result: { t: PCT, [PCT]: [PCT] } });
+  assert.deepEqual(signedEcho, { ok: true, result: { t: PCT } });
+  assert.deepEqual(fail, { ok: false, error: 'command failed: 50% done: %s%n%@' });
+});
+
 // ---------- hsx end to end, over a real CFMessagePort ----------
-async function fakePort() {
+async function fakePort(wire) {
   const name = `harness-test-${process.pid}-${randomBytes(4).toString('hex')}`;
-  const child = spawn('python3', [FAKE_PORT, name, LUA], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const child = spawn('python3', [FAKE_PORT, name, LUA, ...(wire ? [wire] : [])], { stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((resolve, reject) => {
     child.stdout.on('data', d => String(d).includes('ready') && resolve());
     child.on('exit', c => reject(new Error(`fake port exited ${c}`)));
@@ -309,6 +331,37 @@ test('hsx raw relays envelopes the caller signed itself; disarm releases', { ski
     assert.equal(p.hsx(['disarm', 'runner'], k + '\n').status, 0);
     assert.equal(p.hsx(['arm', 'runner'], secret() + '\n').status, 0, 'free to arm again after a clean disarm');
   } finally { p.stop(); }
+});
+
+test('wire test: hsx puts no raw % byte on the port, in requests or replies, and keeps the text', { skip: skipE2E }, async () => {
+  const wire = join(mkdtempSync(join(tmpdir(), 'hsx-wire-')), 'wire');
+  const p = await fakePort(wire);
+  try {
+    const call = p.hsx(['call', 'echo', JSON.stringify({ t: PCT })]);
+    assert.equal(call.status, 0, call.stderr);
+    assert.deepEqual(JSON.parse(call.stdout), { t: PCT });
+    const armed = p.hsx(['arm', 'looker', '--new', '--pid', String(process.pid)]);
+    assert.equal(armed.status, 0, armed.stderr);
+    const k = armed.stdout.trim();
+    const one = p.hsx(['call', '--owner', 'looker', 'eyes.echo', JSON.stringify({ t: PCT })], k + '\n');
+    assert.equal(one.status, 0, one.stderr);
+    assert.deepEqual(JSON.parse(one.stdout), { t: PCT });
+    const sess = p.hsx(['session', 'looker'], [k, JSON.stringify({ cmd: 'eyes.echo', args: { t: PCT } }), ''].join('\n'));
+    assert.deepEqual(JSON.parse(sess.stdout.trim()), { ok: true, result: { t: PCT } });
+    const k2 = secret();
+    assert.equal(p.hsx(['arm', 'runner'], k2 + '\n').status, 0);
+    const raw = p.hsx(['raw'], signed(k2, 'runner', 'hands.click', JSON.stringify({ x: PCT }), 5) + '\n');
+    assert.deepEqual(JSON.parse(raw.stdout), { ok: true, result: { clicked: PCT } });
+    const fail = p.hsx(['call', 'echo.fail']);
+    assert.equal(fail.status, 1);
+    assert.match(fail.stderr, /refused: command failed: 50% done: %s%n%@/);
+  } finally { p.stop(); }
+  const bytes = readFileSync(wire);
+  const lines = bytes.toString('utf8').trimEnd().split('\n');
+  assert.equal(lines.filter(l => l.startsWith('> ')).length, 7, 'every request crossed the port');
+  assert.equal(bytes.indexOf(0x25), -1, `a raw % byte crossed the port:\n${bytes}`);
+  assert.ok(lines.some(l => l.startsWith('> ') && l.includes('\\u0025')), 'requests carry % as \\u0025');
+  assert.ok(lines.some(l => l.startsWith('< ') && l.includes('\\u0025')), 'replies carry % as \\u0025');
 });
 
 test('hsx exits 3 when no port answers, and 2 on bad input', { skip: skipHsx }, () => {

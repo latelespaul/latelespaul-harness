@@ -6,6 +6,8 @@
 --   {"cmd":"<registered name>", "owner":"<name>", "args":"<JSON text>", "seq":<integer>, "mac":"<hex>"}
 -- Only commands that a module registered run; nothing is evaluated. `args` travels as JSON TEXT,
 -- so the MAC covers exactly the bytes that get decoded and neither side has to re-encode them.
+-- No raw % byte goes on the wire either way: requests (hsx) and replies (reply below) send it as
+-- %, because hs.libipc hands port messages to a logger that reads them as a format string.
 -- Commands registered with auth=true need a capability (e.g. "hands") and a signed call:
 --   mac = lowercase hex HMAC-SHA256(owner's secret, seq .. "|" .. cmd .. "|" .. args)
 --   The HMAC key is the secret's hex TEXT exactly as armed (its ASCII bytes, case kept), not the
@@ -144,7 +146,13 @@ return function(deps)
     if not ok then audit("error", (...), name, tostring(res)); return end
     return res
   end
-  local function reply(ok, v) return json.encode(ok and { ok = true, result = v } or { ok = false, error = v }) end
+  -- hs.libipc logs each reply through LuaSkin's logDebug:, which reads the text as a FORMAT string,
+  -- so a raw % in a reply (a page URL with %20, text with "50%") crashes Hammerspoon (SIGSEGV in
+  -- strlen). In JSON text a % only occurs inside a string, where % is the same character, so
+  -- no reply carries a raw % byte; every JSON decoder reads it back as %.
+  local function reply(ok, v)
+    return (json.encode(ok and { ok = true, result = v } or { ok = false, error = v }):gsub("%%", "\\u0025"))
+  end
   local function deny(owner, cmd, reason) audit("deny", owner, cmd, reason); return reply(false, reason) end
   local function denyLoud(owner, cmd, reason)
     alert(owner, string.format("%s: %s denied (%s)", clean(owner), clean(cmd), reason))

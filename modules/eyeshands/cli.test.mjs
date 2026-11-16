@@ -121,6 +121,23 @@ test('a one-shot eyes command arms, makes one signed call, and disarms; the secr
   } finally { f.stop(); }
 });
 
+test('wire test: no request carries a raw % byte, and % in args and replies keeps its meaning', { skip }, async () => {
+  // hs.libipc logs each port message through a logger that reads it as a format string.
+  const PCT = '%s%n%@ 50% https://x.test/a%20b';
+  const f = await fake({});
+  try {
+    const r = f.run(['eyes', 'fields', '--owner', 'runner', '--target', 'textedit', JSON.stringify({ match: { label: PCT } })]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(r.json().args.match.label, PCT);
+    const t = f.run(['hands', 'type', '--owner', 'runner', '--target', 'textedit', '-'], JSON.stringify({ text: PCT }));
+    assert.equal(t.status, 0, t.stderr + t.stdout);
+    const log = f.log();
+    assert.deepEqual(log.filter(e => e.event === 'raw-percent'), [], 'a raw % byte crossed the port');
+    assert.equal(JSON.parse(log.find(e => e.cmd === 'eh.eyes.fields').args).match.label, PCT);
+    assert.equal(JSON.parse(log.find(e => e.cmd === 'eh.hands.type').args).text, PCT);
+  } finally { f.stop(); }
+});
+
 test('a one-shot hands command waits for its job to end before it disarms', { skip }, async () => {
   const f = await fake({ job_polls: 3 });
   try {

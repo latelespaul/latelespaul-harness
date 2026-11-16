@@ -23,6 +23,10 @@ port.register("hands.click", function(a) return { clicked = a and a.x or false }
 port.register("hands.type", function() return "typed" end, { cap = "hands", app = function(a) return a and a.app end })
 port.register("eyes.read", function() return "seen" end, { cap = "eyes" })
 port.register("hands.fail", function() error("boom") end, { cap = "hands" })
+-- For the % tests: echo hands its args back; the failure message holds format directives.
+port.register("echo", function(a) return a end, { auth = false })
+port.register("eyes.echo", function(a) return a end, { cap = "eyes" })
+port.register("echo.fail", function() error("50% done: %s%n%@", 0) end, { auth = false })
 POLICY = [[{"owners":{"runner":{"enabled":true,"capabilities":["eyes","hands"],"apps":["chrome"],
   "window":"20:00-05:00","manual_runs":true,"max_arm_minutes":600},
   "looker":{"enabled":true,"capabilities":["eyes"]},"off":{"enabled":false,"capabilities":["hands"]}}}]]
