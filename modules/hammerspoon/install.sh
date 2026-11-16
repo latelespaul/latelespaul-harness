@@ -135,7 +135,8 @@ if ! enabled cron; then
 elif ! command -v node >/dev/null; then
   print "Note: no node, so the hcron job $job was not added (brew install node)."
 else
-  act hcron add $job --cron '* * * * *' --cmd "/bin/zsh $mod/watchdog.sh" --timeout 2m \
+  # A relative cmd: hcron's screen-word hint matches "hammerspoon" in a path, and this job must not hold awake mode.
+  act hcron add $job --cron '* * * * *' --cwd $mod --cmd '/bin/zsh ./watchdog.sh' --timeout 2m \
     || print "warning: could not add the hcron job $job (check: hcron list)."
 fi
 

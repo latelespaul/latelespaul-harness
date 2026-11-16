@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const INSTALL = fileURLToPath(new URL('./install.sh', import.meta.url));
+const HCRON = fileURLToPath(new URL('../cron/hcron.mjs', import.meta.url));
 const skip = process.platform === 'darwin' ? false : 'macOS only (shasum)';
 
 // running: is Hammerspoon "running" (stub pgrep); status: what `hs` answers (an object, or null
@@ -34,7 +35,7 @@ function sandbox({ running = true, status = null, modules = '' } = {}) {
   const acted = () => lines().filter(l => /^(osascript|open|killall) /.test(l));
   const hash = () => run('--config-hash').stdout.trim();
   const jobs = () => (existsSync(join(d, 'jobs.json')) ? JSON.parse(readFileSync(join(d, 'jobs.json'), 'utf8')).jobs : {});
-  return { d, home, run, lines, acted, hash, jobs };
+  return { d, home, env, run, lines, acted, hash, jobs };
 }
 const QUIT = 'osascript -e tell application "Hammerspoon" to quit';
 const OPEN = 'open -a Hammerspoon';
@@ -162,8 +163,15 @@ test('watchdog: with the cron module it adds the hcron job every minute, idempot
   assert.equal(r.status, 0, r.stderr);
   const job = s.jobs()['hammerspoon-watchdog'];
   assert.equal(job.cron, '* * * * *');
-  assert.match(job.cmd, /^\/bin\/zsh \S+\/modules\/hammerspoon\/watchdog\.sh$/);
+  assert.equal(job.cmd, '/bin/zsh ./watchdog.sh');
+  assert.equal(job.cwd, dirname(INSTALL));
+  assert.ok(existsSync(join(job.cwd, job.cmd.split(' ')[1])));
   assert.equal(job.timeout, '2m');
+  assert.ok(!job.awake && !(job.needs || []).length, 'runs while Hammerspoon is down');
+  assert.doesNotMatch(r.stderr, /warning/);
+  const doctor = spawnSync(process.execPath, [HCRON, 'doctor'], { env: s.env, encoding: 'utf8' });
+  assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
+  assert.match(doctor.stdout, /^ok\s+hammerspoon-watchdog$/m);
   assert.equal(s.run().status, 0, 'a second install updates the same job');
   assert.deepEqual(Object.keys(s.jobs()), ['hammerspoon-watchdog']);
   r = s.run('--status');
