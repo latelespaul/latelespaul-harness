@@ -36,6 +36,8 @@ The main `install.sh` runs this module's installer when `telegram` is in MODULES
 | Bot process missing for 2 min | Restart |
 | Messages unread on Telegram for 3 min | Restart |
 | Claude API error (e.g. login expired; these never reach Telegram) | Restart; a second auth error within 1 h → message you to run `/login` |
+| Alive and polling, but a message has waited 5 min in Claude's queue with no reply started (seen after a usage limit reset) | Restart (resume); messages queued in the old process are lost, so you are asked to resend. Only messages queued after a restart count toward the next one, so it never loops |
+| Usage-limit error (`You've hit your … limit · resets …`) | Message you the reset time; no restart before then, then the queue check above applies |
 | Stuck mid-reply for 20 min (60 min if a permission prompt is showing) | Restart; a second hang within 2 h starts a fresh conversation |
 | Usage-limit menu on screen (blocks queued messages even after the reset) | Message you once; press Esc every 30 min so it resumes |
 | Claude Chrome (browser module) not answering | Restart it and tell you |
