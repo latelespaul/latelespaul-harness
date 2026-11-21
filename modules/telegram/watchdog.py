@@ -11,6 +11,7 @@ With TELEGRAM_POLLING=0 it only keeps the session running: it never calls Telegr
 ACTIVE_HOST, and stops any poller that starts under the session.
 """
 import calendar
+import datetime
 import fcntl
 import hashlib
 import json
@@ -65,6 +66,8 @@ NO_BOT_GRACE = 120        # no bot process for this long -> session failed to st
 HANG_AFTER = 20 * 60      # mid-reply with no transcript activity for this long -> hung
 PROMPT_HANG_AFTER = 60 * 60  # same, while a permission prompt is waiting for the user
 FROZEN_AFTER = 10 * 60    # mid-reply with a screen that has not changed at all -> hung
+STALLED_AFTER = 5 * 60    # a message queued in Claude this long with no reply started -> it stopped taking turns
+RESET_GRACE = 60          # after a usage limit resets, wait this long before restarting
 MIN_RESTART_GAP = 180
 STORM_WINDOW, STORM_MAX = 30 * 60, 5
 ALERT_GAP = 60 * 60
@@ -237,44 +240,106 @@ def screen_text():
 
 def parse_ts(s):
     try:
-        return calendar.timegm(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
+        t = calendar.timegm(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception:
         return 0
+    m = re.match(r"\.(\d+)", s[19:])
+    return t + (float("0." + m.group(1)) if m else 0)
+
+
+def reset_from_text(text, since):
+    """Epoch seconds a usage limit resets at, from "resets Nov 20 at 11:30pm (Asia/Calcutta)" or
+    "resets 3pm (Europe/London)" in an error written at `since`. Unreadable: an hour after the error."""
+    m = re.search(r"resets\s+(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)"
+                  r"(?:\s*\(([^)]+)\))?", text, re.I)
+    if not m:
+        return since + 3600
+    mon, day, hour, minute, ampm, zone = m.groups()
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(zone) if zone else None
+    except Exception:
+        tz = None  # unknown zone: local time
+    base = datetime.datetime.fromtimestamp(since, tz)
+    hm = {"hour": int(hour) % 12 + (12 if ampm.lower() == "pm" else 0), "minute": int(minute or 0),
+          "second": 0, "microsecond": 0}
+    try:
+        if mon:
+            t = base.replace(month=time.strptime(mon.title(), "%b").tm_mon, day=int(day), **hm)
+            if t.timestamp() < since - 86400:  # "Jan 2" written on Dec 30
+                t = t.replace(year=t.year + 1)
+        else:
+            t = base.replace(**hm)
+            if t.timestamp() <= since:
+                t += datetime.timedelta(days=1)
+    except ValueError:
+        return since + 3600
+    return t.timestamp()
+
+
+def limit_reset(d, text):
+    """For a usage-limit error entry, when the limit resets (epoch seconds); None for any other error."""
+    if d.get("apiError") != "usage_limit_reached" and not re.search(r"hit your .*limit", text, re.I):
+        return None
+    at = ((d.get("apiErrorParams") or {}).get("rate_limit_info") or {}).get("resetsAt")
+    if isinstance(at, (int, float)) and at > 0:
+        return float(at)
+    return reset_from_text(text, parse_ts(d.get("timestamp") or "") or time.time())
 
 
 def transcript_status():
-    """Return (busy, idle_seconds, last_api_error) for the newest Telegram session transcript."""
+    """Return (busy, idle_seconds, last_api_error, queued) for the newest Telegram session transcript.
+
+    queued is (enqueued, limit_reset) when messages wait in Claude's queue with no reply started,
+    else None (also while a tool call is running): enqueued lists when each message newer than the
+    newest assistant entry was queued; limit_reset is when the usage limit resets if the last reply
+    was a usage-limit error.
+    """
     try:
         files = [os.path.join(PROJECT_DIR, f) for f in os.listdir(PROJECT_DIR) if f.endswith(".jsonl")]
     except Exception:
-        return False, 0, None
+        return False, 0, None, None
     if not files:
-        return False, 0, None
+        return False, 0, None, None
     newest = max(files, key=os.path.getmtime)
     idle = time.time() - os.path.getmtime(newest)
     with open(newest, "rb") as f:
         f.seek(0, 2)
         f.seek(max(0, f.tell() - 1_500_000))
         lines = f.read().decode("utf-8", "replace").splitlines()[1:]
-    last_in = last_end = 0
+    last_in = last_end = last_out = 0
+    enqueued = []
     last_err = None
+    in_tool = False  # the last turn entry is a tool call whose result has not come back
     for line in lines:
         try:
             d = json.loads(line)
         except Exception:
             continue
         t, ts = d.get("type"), parse_ts(d.get("timestamp") or "")
+        if t == "queue-operation":
+            # Slash commands (e.g. /rate-limit-options) are queued too but run without a reply.
+            c = d.get("content")
+            if d.get("operation") == "enqueue" and not (isinstance(c, str) and c.lstrip().startswith("/")):
+                enqueued.append(ts)
+            continue
+        if t in ("user", "assistant") or (t == "system" and d.get("subtype") == "turn_duration"):
+            content = d.get("message", {}).get("content") if t == "assistant" else None
+            in_tool = isinstance(content, list) and any(isinstance(x, dict) and x.get("type") == "tool_use" for x in content)
         if t == "user" and "<channel source=\"telegram\"" in json.dumps(d.get("message", {}).get("content", ""))[:5000].replace('\\"', '"'):
             last_in = max(last_in, ts)
         elif t == "system" and d.get("subtype") == "turn_duration":
             last_end = max(last_end, ts)
         elif t == "assistant":
+            last_out = max(last_out, ts)
             if d.get("isApiErrorMessage"):
                 text = " ".join(x.get("text", "") for x in d["message"].get("content", []) if isinstance(x, dict))
-                last_err = {"ts": d.get("timestamp"), "text": text.strip()[:200]}
+                last_err = {"ts": d.get("timestamp"), "text": text.strip()[:200], "reset": limit_reset(d, text)}
             else:
                 last_err = None
-    return last_in > last_end, idle, last_err
+    waiting = [t for t in enqueued if t > last_out]
+    queued = (waiting, last_err["reset"] if last_err else None) if waiting and not in_tool else None
+    return last_in > last_end, idle, last_err, queued
 
 
 def restart(state, token, reason, fresh=False, tell=True):
@@ -282,14 +347,14 @@ def restart(state, token, reason, fresh=False, tell=True):
     hist = [t for t in state.get("restarts", []) if now - t < STORM_WINDOW]
     if hist and now - hist[-1] < MIN_RESTART_GAP:
         log(f"restart wanted ({reason}) but last one was {int(now - hist[-1])}s ago; waiting")
-        return
+        return False
     if len(hist) >= STORM_MAX:
         if now - state.get("storm_alert", 0) > ALERT_GAP:
             notify(token, f"{len(hist)} restarts in 30 min and it is still unhealthy (last reason: {reason}). "
                           "Backing off to one try per 15 min. On the Mac, run: screen -r claude-tg")
             state["storm_alert"] = now
         if now - hist[-1] < 15 * 60:
-            return
+            return False
     if fresh:
         open(os.path.join(WD_DIR, "fresh-next"), "w").close()
     log(f"RESTART ({'fresh' if fresh else 'resume'}): {reason}")
@@ -303,6 +368,7 @@ def restart(state, token, reason, fresh=False, tell=True):
         subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", PLIST], capture_output=True)
     hist.append(now)
     state["restarts"] = hist
+    state["last_restart_at"] = now
     state["last_restart_reason"] = reason
     for k in ("pending_since", "no_bot_since"):
         state.pop(k, None)
@@ -314,6 +380,23 @@ def restart(state, token, reason, fresh=False, tell=True):
         notify(token, f"restarted Claude ({reason}). "
                       + ("Started a fresh conversation. " if fresh else "Your conversation was kept. ")
                       + "If your last message wasn't answered, send it again.")
+    return True
+
+
+def check_queue(state, token, now, queued):
+    """Alive and polling, but no turn runs: messages pile up in Claude's queue unanswered (seen after a
+    usage limit reset). Waits out a usage limit, then restarts when the oldest waiting message has
+    waited STALLED_AFTER. A restart resumes the conversation but loses the messages queued in the old
+    process (restart says so), so only messages queued after the last restart count: one restart per
+    stuck batch, never a loop. Returns True when it restarted."""
+    enqueued, reset = queued
+    if reset and now < reset + RESET_GRACE:
+        return False  # restarting now only hits the limit again
+    waiting = [t for t in enqueued if t > state.get("last_restart_at", 0)]
+    if not waiting or now - min(waiting) <= STALLED_AFTER:
+        return False
+    why = f"{len(waiting)} message(s) waited {int((now - min(waiting)) // 60)} min with no reply"
+    return restart(state, token, why + (" after the usage limit reset" if reset else ""))
 
 
 def this_host():
@@ -463,10 +546,21 @@ def check():
 
     check_browser(state, token, now)
 
-    busy, idle, err = transcript_status()
+    busy, idle, err, queued = transcript_status()
+
+    # A usage limit: a restart cannot help before it resets, so only say when. check_queue restarts
+    # once after the reset if messages are still waiting.
+    if err and err["reset"] and err["ts"] != state.get("handled_error"):
+        state["handled_error"] = err["ts"]
+        when = time.strftime("%b %d %H:%M", time.localtime(err["reset"]))
+        log(f"usage limit until {when}; not restarting before then")
+        if state.get("limit_noticed") != err["reset"]:  # once per limit, however often it is hit again
+            notify(token, f"Claude hit its usage limit (resets {when}). Your messages wait until then; "
+                          "if they are still unanswered after the reset, I'll restart it.")
+            state["limit_noticed"] = err["reset"]
 
     # Claude API errors (expired login, outages) never reach Telegram on their own.
-    if err and err["ts"] != state.get("handled_error"):
+    if err and not err["reset"] and err["ts"] != state.get("handled_error"):
         state["handled_error"] = err["ts"]
         auth = re.search(r"login|auth|401|token|credential", err["text"], re.I)
         recent = [t for t in state.get("auth_errors", []) if now - t < 3600]
@@ -489,6 +583,10 @@ def check():
     if sig != state.get("screen_sig"):
         state["screen_sig"], state["screen_changed"] = sig, now
     frozen_for = now - state.get("screen_changed", now)
+
+    if queued and not (busy or screen_busy) and check_queue(state, token, now, queued):
+        save_state(state)
+        return
 
     # A usage limit leaves Claude on a menu that blocks every queued message, even after the
     # limit resets. Tell me once, and press Esc every 30 min so it resumes on its own.
