@@ -8,7 +8,8 @@
 # launchd are left alone).
 # On the LOCAL_BRANCH it runs scripts/upstream.sh sync instead (upstream + your open PRs).
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-source ${0:A:h:h}/lib/env.sh
+sync_root=${0:A:h:h}
+source $sync_root/lib/env.sh
 mode=${1:-full}
 [[ $mode == full ]] && echo "--- $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -23,11 +24,32 @@ commit_all() {
   git -C $1 commit -q -m "Sync $(hostname -s) $(date '+%Y-%m-%d %H:%M')" || { echo "commit failed in $1"; return 1 }
 }
 
+# alert <text>: tell the operator (tg-notify routes it to the master session's alert log when one runs).
+alert() { /usr/bin/python3 $sync_root/modules/cron/tg-notify.py "$1" >/dev/null 2>&1 || true }
+
+# rebasing <repo>: true while a rebase is stopped half-way (conflict, or an edit stop).
+rebasing() { [[ -d $(git -C $1 rev-parse --path-format=absolute --git-path rebase-merge 2>/dev/null) || -d $(git -C $1 rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null) ]] }
+
+# pull_rebase <repo>: pull --rebase; a failed pull aborts its rebase, so the branch stays checked out
+# and later syncs never pile commits onto a detached HEAD that is never pushed; the operator gets an alert instead.
+pull_rebase() {
+  git -C $1 pull --rebase --autostash -q && return 0
+  if rebasing $1; then
+    git -C $1 rebase --abort 2>/dev/null
+    echo "pull failed in $1; rebase aborted, resolve manually"
+    alert "Sync: pull --rebase failed in ${1:t} on $(hostname -s); local commits are not pushed until someone merges by hand."
+  else
+    echo "pull failed in $1 (network or remote?)"
+    alert "Sync: pull failed in ${1:t} on $(hostname -s) (network or remote?); it retries on the next sync."
+  fi
+  return 1
+}
+
 # push_pull <repo>: pull (rebase) and push; first push sets the upstream.
 push_pull() {
   has_origin $1 || { echo "no remote for $1; committed locally only"; return 0 }
   if has_upstream $1; then
-    git -C $1 pull --rebase --autostash -q || { echo "pull failed in $1; resolve manually"; return 1 }
+    pull_rebase $1 || return 1
     git -C $1 push -q || echo "push failed in $1"
   else
     git -C $1 push -q -u origin HEAD || echo "first push failed in $1"
@@ -36,10 +58,15 @@ push_pull() {
 
 rc=0
 if [[ -d $PROFILE_DIR/.git ]]; then
-  if [[ $mode == full ]]; then
+  if rebasing $PROFILE_DIR; then
+    # Left over from an interrupted sync: committing now would land on a detached HEAD.
+    echo "profile $PROFILE_DIR is mid-rebase; not syncing until it is resolved"
+    alert "Sync: ${PROFILE_DIR:t} on $(hostname -s) is stuck mid-rebase; nothing is pushed until it is resolved (git status there)."
+    rc=1
+  elif [[ $mode == full ]]; then
     commit_all $PROFILE_DIR && push_pull $PROFILE_DIR || rc=1
   elif has_upstream $PROFILE_DIR; then
-    git -C $PROFILE_DIR pull --rebase --autostash -q || rc=1
+    pull_rebase $PROFILE_DIR || rc=1
   fi
 else
   echo "profile $PROFILE_DIR is not a git repo; run install.sh"
