@@ -34,9 +34,14 @@ rebasing() { [[ -d $(git -C $1 rev-parse --path-format=absolute --git-path rebas
 # and later syncs never pile commits onto a detached HEAD that is never pushed; the operator gets an alert instead.
 pull_rebase() {
   git -C $1 pull --rebase --autostash -q && return 0
-  rebasing $1 && git -C $1 rebase --abort 2>/dev/null
-  echo "pull failed in $1; rebase aborted, resolve manually"
-  alert "Sync: pull --rebase failed in ${1:t} on $(hostname -s); local commits are not pushed until someone merges by hand."
+  if rebasing $1; then
+    git -C $1 rebase --abort 2>/dev/null
+    echo "pull failed in $1; rebase aborted, resolve manually"
+    alert "Sync: pull --rebase failed in ${1:t} on $(hostname -s); local commits are not pushed until someone merges by hand."
+  else
+    echo "pull failed in $1 (network or remote?)"
+    alert "Sync: pull failed in ${1:t} on $(hostname -s) (network or remote?); it retries on the next sync."
+  fi
   return 1
 }
 
