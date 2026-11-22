@@ -60,7 +60,7 @@ node <skill>/scripts/capture.mjs path.json take1 --width 1920 --height 1080
 ```
 
 1. Use a clean browser profile, as the script does by default. Your own logins and extensions must not appear.
-2. When the app needs a login, log in to the demo account inside the click path. WARNING: never put a password in `path.json`. Read it from an environment variable that the user sets, or let the user log in with `--headed`.
+2. When the app needs a login, log in to the demo account inside the click path. WARNING: never put a password in `path.json`. Use a fill step with `"textEnv": "DEMO_PASSWORD"` instead of `"text"`. The script types the value of that environment variable and does not write it to `timeline.json`. The user sets the variable before the run.
 3. Watch `take1/raw.webm` once. Record again when a step stalls, a toast covers the action, or a spinner shows for long.
 4. As another way, use the harness browser tools to record a flow that a script cannot drive. Keep the same brief and the same checks.
 

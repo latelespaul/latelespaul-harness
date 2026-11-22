@@ -5,6 +5,7 @@
 // Playwright is resolved from the current folder, never from the harness.
 // path.json is a list of steps, each one of:
 //   {"goto": "https://..."}  {"click": "<selector>"}  {"fill": "<selector>", "text": "..."}
+//   {"fill": "<selector>", "textEnv": "DEMO_PASSWORD"}  (types the value of that environment variable)
 //   {"press": "Enter"}  {"wait": 800}  {"shot": "name"}
 // Any step may add "caption": "..." and "hold": <ms after the step, default 600>.
 // Writes <out-dir>/raw.webm (the video), <out-dir>/<name>.png and <out-dir>/timeline.json:
@@ -37,16 +38,20 @@ const t0 = Date.now();
 const timeline = [];
 try {
   for (const step of steps) {
-    const entry = { t: (Date.now() - t0) / 1000, ...step };
+    const entry = { ...step };
     const target = step.click ?? step.fill;
-    if (target) {
-      const loc = page.locator(target).first();
+    const loc = target && page.locator(target).first();
+    if (loc) {
       await loc.waitFor({ state: 'visible', timeout: 15000 });
+      await loc.scrollIntoViewIfNeeded();
       entry.box = await loc.boundingBox();
     }
-    if (step.goto) await page.goto(step.goto, { waitUntil: 'networkidle' });
-    else if (step.click) await page.locator(step.click).first().click();
-    else if (step.fill) await page.locator(step.fill).first().pressSequentially(step.text ?? '', { delay: 60 });
+    const text = step.textEnv ? process.env[step.textEnv] : step.text;
+    if (step.textEnv && text === undefined) throw new Error(`capture: environment variable ${step.textEnv} is not set`);
+    entry.t = (Date.now() - t0) / 1000;
+    if (step.goto) await page.goto(step.goto, { waitUntil: 'load' });
+    else if (step.click) await loc.click();
+    else if (step.fill) await loc.pressSequentially(text ?? '', { delay: 60 });
     else if (step.press) await page.keyboard.press(step.press);
     else if (step.wait) await page.waitForTimeout(step.wait);
     if (step.shot) await page.screenshot({ path: join(outDir, `${step.shot}.png`) });
