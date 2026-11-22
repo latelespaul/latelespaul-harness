@@ -25,7 +25,7 @@ ffmpeg -v error -f lavfi -i anullsrc=r=44100:cl=mono -t ${CHAPTER_GAP:-0.9} $fmt
 list=$tmp/list.txt; : > $list
 typeset -F t=0; n=0 pending=
 dur() { ffprobe -v error -show_entries format=duration -of csv=p=0 $1 }
-[[ -n $TIMELINE ]] && : > $TIMELINE
+[[ -n $TIMELINE ]] && { mkdir -p ${TIMELINE:h}; : > $TIMELINE }
 while IFS= read -r line || [[ -n $line ]]; do
   [[ -z ${line// } ]] && continue
   if [[ $line == \#* ]]; then pending=chap; continue; fi
