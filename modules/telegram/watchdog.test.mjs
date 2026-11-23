@@ -86,6 +86,7 @@ const queued = (ago, content = MSG) => ({ type: 'queue-operation', operation: 'e
 const reply = ago => ({ type: 'assistant', ago, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } });
 const toolCall = ago => ({ type: 'assistant', ago, message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] } });
 const turnEnd = ago => ({ type: 'system', subtype: 'turn_duration', ago });
+const userMsg = ago => ({ type: 'user', ago, message: { role: 'user', content: MSG } });
 const LIMIT_TEXT = "You've hit your weekly limit · resets Nov 20 at 11:30pm (Asia/Calcutta)";
 const limitHit = (ago, resetsIn) => ({
   type: 'assistant', ago, isApiErrorMessage: true, apiError: 'usage_limit_reached', resetsIn,
@@ -133,13 +134,34 @@ test('healthy states never restart', { skip }, t => {
     'a long tool call is running': [[...idleSession, toolCall(900), queued(600)]],
     'only a slash command queued': [[...idleSession, queued(600, '/rate-limit-options')]],
     'nothing queued': [idleSession],
-    'a turn is live on screen': [[...idleSession, queued(600)], { screen: '✻ Thinking… (esc to interrupt)' }],
+    'a turn is live on screen': [[...idleSession, userMsg(700), queued(600)], { screen: '✻ Thinking… (esc to interrupt)' }],
   };
   for (const [name, args] of Object.entries(cases)) {
     const s = sandbox(t);
     s.run(...args);
     assert.equal(s.restarts(), 0, `${name}: ${JSON.stringify(s.calls())}`);
   }
+});
+
+test('a stale "esc to interrupt" on an idle screen is not a frozen turn', { skip }, t => {
+  const s = sandbox(t);
+  const screen = 'Done.\n· esc to interrupt';
+  s.run(idleSession, { screen });
+  s.setState({ ...s.state(), screen_changed: s.state().screen_changed - 1200 });
+  s.run(idleSession, { screen });
+  assert.equal(s.restarts(), 0, JSON.stringify(s.calls()));
+});
+
+test('a turn with a frozen screen still restarts, and the plugin channel tag counts as busy', { skip }, t => {
+  const s = sandbox(t);
+  const screen = '✻ Thinking… (esc to interrupt)';
+  const live = [...idleSession, userMsg(1300)];
+  s.run(live, { screen });
+  s.setState({ ...s.state(), screen_changed: s.state().screen_changed - 1200 });
+  s.run(live, { screen });
+  assert.equal(s.restarts(), 1, JSON.stringify(s.calls()));
+  assert.match(s.log(), /stuck on a reply for \d+ min/);
+  assert.equal(s.eval('w.CHANNEL_TAG.search(\'<channel source="plugin:telegram:telegram" chat_id="1">\') is not None'), true);
 });
 
 test('usage limit: no restart before the reset, one notice with the reset time', { skip }, t => {
