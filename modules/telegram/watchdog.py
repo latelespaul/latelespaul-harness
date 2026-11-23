@@ -65,6 +65,7 @@ PENDING_GRACE = 180       # unread messages on Telegram for this long -> poller 
 NO_BOT_GRACE = 120        # no bot process for this long -> session failed to start
 HANG_AFTER = 20 * 60      # mid-reply with no transcript activity for this long -> hung
 PROMPT_HANG_AFTER = 60 * 60  # same, while a permission prompt is waiting for the user
+CHANNEL_TAG = re.compile(r'<channel source="(?:plugin:telegram:)?telegram"')
 FROZEN_AFTER = 10 * 60    # mid-reply with a screen that has not changed at all -> hung
 STALLED_AFTER = 5 * 60    # a message queued in Claude this long with no reply started -> it stopped taking turns
 RESET_GRACE = 60          # after a usage limit resets, wait this long before restarting
@@ -288,19 +289,20 @@ def limit_reset(d, text):
 
 
 def transcript_status():
-    """Return (busy, idle_seconds, last_api_error, queued) for the newest Telegram session transcript.
+    """Return (busy, idle_seconds, last_api_error, queued, turn_open) for the newest Telegram session transcript.
 
     queued is (enqueued, limit_reset) when messages wait in Claude's queue with no reply started,
     else None (also while a tool call is running): enqueued lists when each message newer than the
     newest assistant entry was queued; limit_reset is when the usage limit resets if the last reply
-    was a usage-limit error.
+    was a usage-limit error. turn_open is False once the last turn has ended (its turn_duration
+    entry is the newest turn entry), so a stale "esc to interrupt" left on screen is not a live turn.
     """
     try:
         files = [os.path.join(PROJECT_DIR, f) for f in os.listdir(PROJECT_DIR) if f.endswith(".jsonl")]
     except Exception:
-        return False, 0, None, None
+        return False, 0, None, None, False
     if not files:
-        return False, 0, None, None
+        return False, 0, None, None, False
     newest = max(files, key=os.path.getmtime)
     idle = time.time() - os.path.getmtime(newest)
     with open(newest, "rb") as f:
@@ -311,6 +313,7 @@ def transcript_status():
     enqueued = []
     last_err = None
     in_tool = False  # the last turn entry is a tool call whose result has not come back
+    turn_open = False  # a user or assistant entry came after the last turn_duration
     for line in lines:
         try:
             d = json.loads(line)
@@ -326,7 +329,9 @@ def transcript_status():
         if t in ("user", "assistant") or (t == "system" and d.get("subtype") == "turn_duration"):
             content = d.get("message", {}).get("content") if t == "assistant" else None
             in_tool = isinstance(content, list) and any(isinstance(x, dict) and x.get("type") == "tool_use" for x in content)
-        if t == "user" and "<channel source=\"telegram\"" in json.dumps(d.get("message", {}).get("content", ""))[:5000].replace('\\"', '"'):
+            turn_open = t != "system"
+        # The plugin tags messages <channel source="plugin:telegram:telegram" ...>; older builds used "telegram".
+        if t == "user" and CHANNEL_TAG.search(json.dumps(d.get("message", {}).get("content", ""))[:5000].replace('\\"', '"')):
             last_in = max(last_in, ts)
         elif t == "system" and d.get("subtype") == "turn_duration":
             last_end = max(last_end, ts)
@@ -339,7 +344,7 @@ def transcript_status():
                 last_err = None
     waiting = [t for t in enqueued if t > last_out]
     queued = (waiting, last_err["reset"] if last_err else None) if waiting and not in_tool else None
-    return last_in > last_end, idle, last_err, queued
+    return last_in > last_end, idle, last_err, queued, turn_open
 
 
 def restart(state, token, reason, fresh=False, tell=True):
@@ -546,7 +551,7 @@ def check():
 
     check_browser(state, token, now)
 
-    busy, idle, err, queued = transcript_status()
+    busy, idle, err, queued, turn_open = transcript_status()
 
     # A usage limit: a restart cannot help before it resets, so only say when. check_queue restarts
     # once after the reset if messages are still waiting.
@@ -578,7 +583,9 @@ def check():
     # A turn in progress is not in the transcript until it ends, so also watch the screen:
     # a live turn shows "esc to interrupt" with a ticking timer; a frozen one never changes.
     screen = screen_text()
-    screen_busy = "esc to interrupt" in screen
+    # The screen hardcopy can keep "esc to interrupt" after a turn ends; trust it only while the
+    # transcript shows the turn still open, or an idle session looks frozen and gets restarted.
+    screen_busy = "esc to interrupt" in screen and turn_open
     sig = hashlib.sha1(screen.encode()).hexdigest()
     if sig != state.get("screen_sig"):
         state["screen_sig"], state["screen_changed"] = sig, now
