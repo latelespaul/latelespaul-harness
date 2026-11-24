@@ -152,6 +152,8 @@ marked "(master session down)". `TG_NOTIFY_DIRECT=1` always sends. The Telegram 
 morning brief send on their own and are not affected.
 
 **Master session on a VM (virtual machine), Mac as the hands**
+**Warning:** agents no longer run on the always-on VM. Plain watch scripts may run there. See
+[operating-model.md](operating-model.md).
 ```
  Mac                                              VM
  tg-notify.py ─► Mac master-alerts.log            heartbeat.sh (crontab, every minute)

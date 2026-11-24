@@ -34,7 +34,7 @@ where work runs, and the path from an ask to a merged change. [retro.md](retro.m
 | Second mate | A firstmate-like lead that owns one project: its design, crews, PRs and context. | Work on other projects. |
 | Crew worker | Does one task in its own git worktree and opens a PR. | Merge its own PR, unless the project allows it. |
 | Background agent | A subagent or tmux session for a one-off multi-step job (research, a batch, a setup). | Outlive its task. |
-| Cloud session | A Claude session in the cloud for self-contained repo work. It pushes a branch and opens a PR. | Anything that needs local logins, the screen or local services. |
+| Cloud session | A Claude session in the cloud for code work in one repo. It pushes a branch and opens a PR. | Anything that needs local logins, the screen or local services. |
 | hcron job | Runs a command on a schedule (the cron module). | Ask questions. It reports failures to the master session. |
 
 **The chain of command.** The user talks only to the master session. The master session talks to
@@ -46,17 +46,22 @@ prompts itself, when the user has said so. The user then approves only the maste
 
 | Place | Use it for | Do not use it for |
 |---|---|---|
-| The Mac | The master session, the screen (eyes and hands, Hammerspoon), browsers with the user's logins, the Keychain, local OAuth tokens, tests in a real browser. | Heavy parallel code work: a loaded Mac freezes and stops answering. |
-| Always-on VM (with the [macnode](../modules/macnode) module) | Firstmate and crews for code work, servers, jobs that must run 24/7. | Anything that needs the Mac's screen or logins. Ask the Mac through mac-node. |
-| Cloud session | Self-contained coding in one repo: a feature or a fix with tests. | Hosting, hcron, the screen, browsers, local secrets. |
+| Cloud session (hosted by the agent vendor) | Code work: a feature or a fix in one repo, with tests. It pushes a branch and opens a PR. | Hosting, hcron, the screen, browsers, local secrets. |
+| The Mac | The master session, the screen (eyes and hands, Hammerspoon), browsers with the user's logins, the Keychain, local OAuth tokens, tests in a real browser. Code work when a cloud session cannot do it. | Many parallel crews: a loaded Mac freezes and stops answering. |
+| Server (an always-on virtual machine) | Deployed apps only: the test and production copies, their databases, backups and services. | Agents, crews, firstmate, builds for crews. Keep the server stable for the apps. |
 
 **How to choose.**
 1. Does the work need the screen, a logged-in browser or a local secret? Run it on the Mac.
-2. Is it code work in a repo? Send it to firstmate (on the VM when there is one).
-3. Is it self-contained, and is the Mac or VM busy? Give it to a cloud session. Track it on the
-   status board ("cloud: <task> — PR #n — state"). Do not give the same task to firstmate too.
-4. Must it recur? Make it an hcron job. Never add a new launchd plist.
-5. Is it a short one-off job with many steps? Give it to a background agent.
+2. Is it code work in a repo? Give it to a cloud session. Track it on the status board
+   ("cloud: <task> — PR #n — state").
+3. Can a cloud session not do it (it needs local tools or local data)? Send it to firstmate on the
+   Mac. Do not give one task to both.
+4. Is it a deploy? It goes to the server, and nothing else does.
+5. Must it recur? Make it an hcron job. Never add a new launchd plist.
+6. Is it a short one-off job with many steps? Give it to a background agent.
+
+**Check where it ran.** A tool can fall back to a local run without an error. After you start a
+cloud session, check that it runs in the cloud before you count on the Mac staying free.
 
 ## Step by step: the path of a change
 
@@ -108,9 +113,10 @@ Skipping the gate needs the user's explicit word.
 
 ## Worked example
 1. The user sends "add a dark mode to the web app".
-2. The master session adds "14. Dark mode — firstmate — queued" to the board. It replies "on it".
-3. It sends firstmate a brief. Firstmate routes it to the web app's second mate.
-4. The second mate updates the design. A crew worker builds it and opens PR #52.
+2. It is code work in one repo, so it goes to a cloud session. The master session adds
+   "14. cloud: dark mode — queued" to the board. It replies "on it".
+3. It starts a cloud session with a brief and checks that the session runs in the cloud.
+4. The cloud session builds the change, pushes a branch and opens PR #52.
 5. The gate passes on the head commit. The master session merges #52 and pulls the checkout.
 6. It opens the app on the Mac, takes two screenshots and adds them to the PR.
 7. It changes item 14 to Done and sends the user one line with a screenshot.
