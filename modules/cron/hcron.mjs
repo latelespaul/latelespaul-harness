@@ -130,7 +130,7 @@ function hammerspoon(lua, cmd, args, timeout) {
   catch { return execFileSync('hsx', ['--timeout', String(timeout), 'call', cmd, ...(args ? [JSON.stringify(args)] : [])], opts); }
 }
 
-function screenLocked() {
+export function screenLocked() {
   try {
     const out = hammerspoon('return harness and harness.status() or "{}"', 'status', null, 3);
     const j = JSON.parse(out.trim().split('\n').pop());

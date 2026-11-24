@@ -21,7 +21,7 @@ import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSy
 import { homedir, loadavg, cpus } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCron, cronMatches, inWindow } from '../cron/hcron.mjs';
+import { parseCron, cronMatches, inWindow, screenLocked } from '../cron/hcron.mjs';
 
 const MIN = 60_000;
 export const LIMITS = { dedupeMin: 60, fmIdleMin: 20, inboxMin: 10, parkedMin: 15, prGreenMin: 30 };
@@ -73,7 +73,7 @@ export function firstmateProblems({ sessionUp, metas = [], windows = new Map(), 
   for (const m of metas) {
     const name = (m.window || '').split(':').pop();
     const state = (m.last || '').split(/\s/)[0];
-    if (name && !windows.has(name) && !/^(done|stopped|closed|failed|teardown)/i.test(state))
+    if (name && !windows.has(name) && !/^(done|stopped|closed|failed|teardown|resolved|merged)/i.test(state))
       out.push({ key: `fm:dead:${m.id}`, text: `firstmate: ${m.id} is dead: registry says "${state || 'no status'}" but window ${name} is gone. Restart it or tear it down.` });
   }
   for (const [name, act] of windows) {
@@ -127,10 +127,10 @@ export function healthProblems(results) {
   return results.filter(r => !r.ok).map(r => ({ key: `health:${r.name}`, text: `health: ${r.name} unhealthy (${r.detail})` }));
 }
 
-export function macProblems({ load, loadMax, jobs, states }) {
+export function macProblems({ load, loadMax, locked, jobs, states }) {
   const out = [];
   if (load > loadMax) out.push({ key: 'mac:load', text: `mac: load average ${load.toFixed(1)} is over ${loadMax}. Look: top -o cpu` });
-  if (!jobs?.paused) {
+  if (locked && !jobs?.paused) {
     const skipped = Object.entries(jobs?.jobs || {})
       .filter(([id, j]) => !j.paused && (j.needs || []).some(n => n === 'gui' || n === 'unlocked') && /locked/.test(states[id]?.skip_notified || ''))
       .map(([id]) => id);
@@ -243,7 +243,7 @@ export async function sweep(env = harnessEnv()) {
   await guard('no-mistakes', () => noMistakesProblems(collectNoMistakes()));
   for (const repo of conf.repos || []) await guard(`PRs of ${repo}`, () => prProblems(repo, collectPrs(repo)));
   await guard('health', async () => healthProblems(await Promise.all((conf.health || []).map(checkHealth))));
-  await guard('mac', () => macProblems({ load: loadavg()[0], loadMax: conf.load_max ?? cpus().length, ...hc }));
+  await guard('mac', () => macProblems({ load: loadavg()[0], loadMax: conf.load_max ?? cpus().length, locked: screenLocked().locked, ...hc }));
   return problems;
 }
 

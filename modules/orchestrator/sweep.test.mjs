@@ -44,7 +44,9 @@ test('firstmate: dead worker, idle window, old inbox notes', () => {
     sessionUp: true,
     metas: [{ id: 'mate', window: 'firstmate:fm-mate', last: 'working [corr=1]: busy' },
       { id: 'gone', window: 'firstmate:fm-gone', last: 'done [corr=2]: merged' },
-      { id: 'live', window: 'firstmate:fm-live', last: 'working' }],
+      { id: 'live', window: 'firstmate:fm-live', last: 'working' },
+      { id: 'fixed', window: 'firstmate:fm-fixed', last: 'resolved [corr=3]: ok' },
+      { id: 'shipped', window: 'firstmate:fm-shipped', last: 'merged [corr=4]: #9' }],
     windows: new Map([['fm-live', s - 30 * 60], ['fm-busy', s - 60 * 60], ['2.1.331', s - 999 * 60]]),
     stall: new Map([['fm-busy', s - 60]]),   // the stall watcher saw fm-busy change a minute ago
     notes: [{ path: 'state/inbox/1.note', mtimeMs: t - 11 * MIN }, { path: 'state/inbox/2.note', mtimeMs: t - 2 * MIN }],
@@ -89,8 +91,9 @@ test('health and mac lines', () => {
   assert.deepEqual(keys(healthProblems([{ name: 'dev', ok: true }, { name: 'live', ok: false, detail: 'HTTP 502' }])), ['health:live']);
   const jobs = { jobs: { g: { needs: ['gui'] }, u: { needs: ['unlocked'], paused: true }, n: {} } };
   const states = { g: { skip_notified: 'screen is locked (unlock to let it run)' }, u: { skip_notified: 'screen is locked' }, n: { skip_notified: 'screen is locked' } };
-  assert.deepEqual(keys(macProblems({ load: 20, loadMax: 16, jobs, states })), ['mac:load', 'mac:locked']);
-  assert.deepEqual(macProblems({ load: 2, loadMax: 16, jobs: { ...jobs, paused: true }, states }), []);
+  assert.deepEqual(keys(macProblems({ load: 20, loadMax: 16, locked: true, jobs, states })), ['mac:load', 'mac:locked']);
+  assert.deepEqual(macProblems({ load: 2, loadMax: 16, locked: true, jobs: { ...jobs, paused: true }, states }), []);
+  assert.deepEqual(macProblems({ load: 2, loadMax: 16, locked: false, jobs, states }), []);
 });
 
 test('dedupe: same key held for 60 min, then sent again; stale keys dropped', () => {
