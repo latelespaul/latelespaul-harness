@@ -52,6 +52,9 @@ with open(os.path.join(w.PROJECT_DIR, "session.jsonl"), "w") as f:
         if "resetsIn" in e:
             e["apiErrorParams"] = {"rate_limit_info": {"resetsAt": int(now + e.pop("resetsIn"))}}
         f.write(json.dumps(e) + "\n")
+if "mtimeAgo" in sc:  # when the transcript was last written (a real one stops when its session dies)
+    m = time.time() - sc["mtimeAgo"]
+    os.utime(os.path.join(w.PROJECT_DIR, "session.jsonl"), (m, m))
 w.check()
 `;
 
@@ -70,7 +73,7 @@ function sandbox(t) {
   const base = Date.now() / 1000;
   const stateFile = join(home, '.claude/channels/telegram/watchdog/state.json');
   return {
-    run(transcript, { screen = '' } = {}) { writeFileSync(record, ''); py({ transcript, screen, record, base }); },
+    run(transcript, { screen = '', mtimeAgo } = {}) { writeFileSync(record, ''); py({ transcript, screen, record, base, mtimeAgo }); },
     calls: () => readFileSync(record, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)),
     restarts() { return this.calls().filter(([k, v]) => k === 'tmux' && v.startsWith('new ')).length; },
     notices() { return this.calls().filter(([k]) => k === 'notify').map(([, v]) => v); },
@@ -162,6 +165,19 @@ test('a turn with a frozen screen still restarts, and the plugin channel tag cou
   assert.equal(s.restarts(), 1, JSON.stringify(s.calls()));
   assert.match(s.log(), /stuck on a reply for \d+ min/);
   assert.equal(s.eval('w.CHANNEL_TAG.search(\'<channel source="plugin:telegram:telegram" chat_id="1">\') is not None'), true);
+});
+
+test('after a restart, the old unanswered transcript is not a stuck turn (no restart loop)', { skip }, t => {
+  const s = sandbox(t);
+  // The old session hung on a message 25 min ago; its transcript stopped 25 min ago too.
+  const hung = [...idleSession, userMsg(1500)];
+  s.run(hung, { mtimeAgo: 1500 });
+  assert.equal(s.restarts(), 1, JSON.stringify(s.calls()));
+  // The fresh session has written nothing yet, so the newest transcript is still the old one.
+  const st = s.state();
+  s.setState({ ...st, last_restart_at: st.last_restart_at - 400, restarts: [st.restarts[0] - 400] });
+  s.run(hung, { mtimeAgo: 1500 });
+  assert.equal(s.restarts(), 0, JSON.stringify(s.calls()));
 });
 
 test('usage limit: no restart before the reset, one notice with the reset time', { skip }, t => {
