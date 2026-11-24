@@ -53,6 +53,21 @@ to the full harness path when you add the job:
 hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stall-watch.sh" --timeout 2m
 ```
 
+**The orchestrator sweep** (`modules/orchestrator/sweep.mjs`) looks at every executor in one
+read-only pass and writes one line per problem through `tg-notify.py`, so with `ALERTS_TO_MASTER`
+the lines land in `master-alerts.log`. It finds: the hcron global pause, a job not run for twice its
+interval, a failing job; firstmate workers that are registered as working but have no window, `fm-*`
+windows idle 20 min, inbox notes waiting 10 min; no-mistakes runs parked or at a gate for 15 min
+(run id, branch, checkout); PRs green and mergeable for 30 min but not merged, and conflicting PRs;
+unhealthy health targets; a high load average; a locked screen while a gui job is due. It repeats a
+line only after 60 min. It never merges, kills or resumes anything: you act on each line. The repos,
+health addresses and load limit come from `<profile>/orchestrator/sweep.json` (format in the file header).
+`--dry-run` prints what it finds and sends nothing.
+
+```sh
+hcron add orchestrator-sweep --cron "*/5 * * * *" --cmd "node $PWD/modules/orchestrator/sweep.mjs" --timeout 3m
+```
+
 **Nudging a worker in tmux**
 - Send the submit key (`C-m`) in a separate `send-keys` call. If the text and the submit key go in one
   call, a Claude Code input box sometimes keeps the text unsent. The stall watch then flags the
