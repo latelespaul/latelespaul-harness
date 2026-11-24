@@ -37,7 +37,9 @@ Highest first. A higher level interrupts a lower one at the next step.
 3. **The user overrides.** "P1: <task>", "first X then Y", "drop X" or "pause X" re-orders the list
    at once. The user's order beats this table until the task ends.
 4. **Aging.** A P4/P5 item waiting more than 2 h moves up one level, so nothing starves.
-5. **Heartbeat.** Every 15 min while work runs, send the user a short status with the top 3 items.
+5. **Heartbeat.** Every 15 min while work runs, check the workers, the alerts and the open pull
+   requests. Send the user a short status with the top 3 items. If the user asked for no periodic
+   status, send only what they asked for, what shipped, and real blockers instead.
 6. **Ties.** The item closer to the user's real goal (a delivered result) wins.
 
 ## Watching workers
@@ -73,6 +75,55 @@ hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stal
 - A relaunch tool can refuse a worker whose tmux window is gone. It cannot prove that no agent
   still runs there. Find the worker's process first (`ps`). Do not recreate the window only to get
   past that check.
+
+## Delegating and recovering
+
+These rules keep work moving without the user. Each one came from a real stall.
+
+**Delegate**
+- Give every job with more than a few quick commands to a worker: a background agent, a tmux
+  session, firstmate or a cloud session (see [operating-model.md](operating-model.md)). Do only
+  quick lookups and decisions in the master session.
+- Write the brief so that the worker needs nothing else: goal, current state, rules, what "done"
+  means, report format. Tell the user in one line what you handed off.
+- Add each delegated ask to the status board at once. When the worker reports "done", check that
+  its result closes the item that the user asked for.
+
+**Clear your own blockers**
+- When your own system blocks the plan, clear it at once. Examples are a run that holds a lock, a
+  paused job and an idle worker. Do not wait, and do not report it as the reason for a delay.
+- Before you stop something, make sure that it is yours and that it is not in an irreversible step.
+- Try every blocker yourself first: saved answers, a retry, a fix brief. Report only the blockers
+  that you could not clear, in one message per run, grouped by reason ("Upload failed: A, B",
+  "Job closed: C").
+- A config or setup judgment call is not a blocker. Take the safe default, decide, and say what you
+  chose. Tell workers to do the same.
+
+**Diagnose before you brief a fix**
+- Open the evidence first: the screenshot of the stuck screen, the log, the saved plan or state file.
+- Put the cause, the evidence path and a test that proves the fix in the brief. Do not forward only
+  the error text.
+
+**Restart stale runs**
+- A run can take far longer than usual and fail on a bug that merged code already fixes. Do not wait
+  for it to end. Stop it, pull the new code, clear its stale lock files, and start it again.
+- Stop the run's child processes too. A "pause" flag can take minutes to reach a running loop.
+
+**Do it by hand first, then automate**
+- When a bot fails on a new site or flow, stop the bot. Do the task by hand once with eyes and hands.
+- Write down each step as a playbook: the fields, the control types, what worked and what failed.
+- Give the playbooks to the builders. Turn the bot on for that flow only after the new code passes.
+
+**After a restart or a freeze**
+- Check `hcron status` for a global pause and for jobs with an old last-run time.
+- Check that firstmate and its workers have a live prompt (see "Nudging a worker in tmux" above).
+- A review-gate run that looks frozen can wait at a gate, because the agent that drove it died. Run
+  `no-mistakes axi status` from that branch's checkout. If it shows `awaiting_agent: parked`, look
+  at the decision that the gate asks for. Answer it with `no-mistakes axi respond` only when the
+  user's standing rules give you that authority. Send all other gate decisions to the user. Then
+  start a new driver.
+- If the review gate itself is stuck, fixing it comes before feature work. Skip the gate only when
+  the user says so.
 
 ## Alerts to the master session
 
