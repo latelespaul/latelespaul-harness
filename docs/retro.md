@@ -70,7 +70,8 @@ keeps only the date, the quote and a link to that doc.
 - Other sessions append to `learnings.md` while the retro runs. The session reads the file again
   just before it writes it.
 - A failed run sends one alert and keeps the old marker, so the next run covers the same period.
-- `logs/retro/lock` stops a second run. Remove it by hand only when no retro runs.
+- `logs/retro/lock` stops a second run while the first one is alive. The next run takes over a lock
+  that a dead run left.
 
 **Next.** Read the latest report in `<profile>/knowledge/retro/`. Review the open PRs with
 `scripts/upstream.sh status`.
