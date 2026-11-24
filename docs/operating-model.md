@@ -113,9 +113,10 @@ Skipping the gate needs the user's explicit word.
 
 ## Worked example
 1. The user sends "add a dark mode to the web app".
-2. The master session adds "14. Dark mode — firstmate — queued" to the board. It replies "on it".
-3. It sends firstmate a brief. Firstmate routes it to the web app's second mate.
-4. The second mate updates the design. A crew worker builds it and opens PR #52.
+2. It is code work in one repo, so it goes to a cloud session. The master session adds
+   "14. cloud: dark mode — queued" to the board. It replies "on it".
+3. It starts a cloud session with a brief and checks that the session runs in the cloud.
+4. The cloud session builds the change, pushes a branch and opens PR #52.
 5. The gate passes on the head commit. The master session merges #52 and pulls the checkout.
 6. It opens the app on the Mac, takes two screenshots and adds them to the PR.
 7. It changes item 14 to Done and sends the user one line with a screenshot.

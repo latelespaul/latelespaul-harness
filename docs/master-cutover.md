@@ -1,5 +1,8 @@
 # Runbook: move the Telegram master session from the Mac to a Linux VM
 
+**Warning: superseded.** Do not use this runbook. The always-on VM now runs deployed apps only, not
+agents. See [operating-model.md](operating-model.md).
+
 **Short answer.** Only one Telegram poller may run at any time. Prepare and test the VM with
 polling off. Get the user's OK. Stop the Mac poller, then start the VM poller. Telegram is down for
 less than 2 minutes. To roll back, stop the VM poller and start the Mac poller again.
