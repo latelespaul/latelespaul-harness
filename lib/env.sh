@@ -38,6 +38,8 @@ unset _k
 : ${FIRSTMATE_TELEGRAM:=0}
 : ${FIRSTMATE_AUTOSTART:=1}
 : ${CLAUDE_P_IGNORE_API_KEY:=0}
+: ${RETRO_MODEL:=opus}
+: ${RETRO_MERGE:=0}
 : ${HS_IPC_GENERIC:=1}
 : ${HS_ACCESS_FILE:=$PROFILE_DIR/hammerspoon/access.json}
 : ${EYESHANDS_TARGETS_FILE:=$PROFILE_DIR/eyeshands/targets.json}
