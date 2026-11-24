@@ -68,19 +68,27 @@ print -r -- $input
 (( collect_only )) && exit 0
 
 command -v claude >/dev/null || die "claude is not on PATH"
-mkdir $work/lock 2>/dev/null || die "another retro is running (remove $work/lock if not)"
-trap 'rmdir $work/lock 2>/dev/null' EXIT
+lock=$work/lock
+if ! mkdir $lock 2>/dev/null; then
+  pid=$(cat $lock/pid 2>/dev/null)
+  [[ -n $pid ]] && kill -0 $pid 2>/dev/null && die "another retro is running (pid $pid)"
+  rm -rf $lock; mkdir $lock || die "cannot take the lock $lock"
+fi
+print $$ > $lock/pid
+trap 'rm -rf $lock' EXIT
 export HARNESS_LEARN=1   # the review's own session must not feed session-learn.sh
 [[ $CLAUDE_P_IGNORE_API_KEY == 1 ]] && unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 
 summary=$work/$stamp-summary.txt; rm -f $summary
-allowed=(Read Write Edit Glob Grep "Bash(git:*)" "Bash(gh:*)" "Bash(gh-axi:*)" "Bash(node:*)" "Bash(no-mistakes:*)"
+allowed=(Read Write Edit Glob Grep "Bash(no-mistakes:*)" "Bash(gh pr list:*)" "Bash(gh pr view:*)"
+  "Bash(node $HARNESS_DIR/scripts/rule-lint.mjs:*)" "Bash(node scripts/rule-lint.mjs:*)"
   "Bash($HARNESS_DIR/scripts/upstream.sh:*)" "Bash(scripts/upstream.sh:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(wc:*)"
-  "Bash(diff:*)" "Bash(cp:*)" "Bash(mkdir:*)" "Bash(grep:*)" "Bash(date:*)" "Bash(cd:*)")
+  "Bash(diff:*)" "Bash(mkdir:*)" "Bash(grep:*)" "Bash(date:*)" "Bash(cd:*)")
+for c in status diff log show add commit rm mv restore branch rev-parse; do allowed+=("Bash(git $c:*)"); done
 (( RETRO_MERGE )) && allowed+=("Bash($HARNESS_DIR/scripts/pr-merge.sh:*)" "Bash(scripts/pr-merge.sh:*)" "Bash($HARNESS_DIR/install.sh:*)")
 # upstream.sh new puts worktrees next to the main checkout, in <main checkout>-work/.
 main_wt=$(git -C $HARNESS_DIR worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-wt_root=${main_wt:-$HARNESS_DIR}-work; mkdir -p $wt_root
+wt_root=${RETRO_WT_ROOT:-${main_wt:-$HARNESS_DIR}-work}; mkdir -p $wt_root
 body=$(awk 'NR == 1 && /^---$/ { fm = 1; next } fm && /^---$/ { fm = 0; next } !fm' $HARNESS_DIR/commands/retro.md)
 prompt="${body//\$ARGUMENTS/$input}
 

@@ -28,8 +28,10 @@ material only grows, and general rules stay hidden in one user's memory. The ret
    marker, so it takes everything.
 3. It collects the session entries, learnings and changed memories from that time, and the output of
    `scripts/rule-lint.mjs --profile`. It writes them to `logs/retro/<date>-input.md`.
-4. It runs `claude -p` with the steps in `commands/retro.md`. Only file tools and the git, gh,
-   upstream.sh and no-mistakes commands are allowed. Claude refuses any other tool call.
+4. It runs `claude -p` with the steps in `commands/retro.md`. Only file tools, read-only shell
+   commands, local git commands (no push), `gh pr list`/`gh pr view`, the rule lint, `upstream.sh` and
+   `no-mistakes` are allowed; `pr-merge.sh` and `install.sh` only with `RETRO_MERGE=1`. Claude refuses
+   any other tool call.
 5. The session opens at most 3 PRs, edits the profile, and writes the report and the summary.
 6. The script copies the summary to `<profile>/logs/retro-summary.txt` and sends it through
    `modules/cron/tg-notify.py`. With `ALERTS_TO_MASTER` on, it goes to the master session's alert log
