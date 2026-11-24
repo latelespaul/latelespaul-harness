@@ -35,8 +35,8 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ lib/             env loading, helpers           ├─ skills/ commands/ agents/   your own
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
  ├─ scripts/         sync, learn, check, pr-merge,  └─ telegram/ browser/   module data
- │                   ste-check
- ├─ docs/            explaining-standard.md, eyes-hands-design.md, master-session.md, master-cutover.md, hand-batches.md, site-passwords.md, prompts/ (build prompts)
+ │                   ste-check, retro, rule-lint
+ ├─ docs/            explaining-standard.md, retro.md, eyes-hands-design.md, master-session.md, master-cutover.md, hand-batches.md, site-passwords.md, prompts/ (build prompts)
  ├─ skills/ commands/ agents/
  ├─ modules/         telegram, browser, firstmate, hammerspoon, cron, eyeshands, macnode
  └─ profile.example/ starting point for a profile
@@ -52,6 +52,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 ## How it runs day to day
 - Every Claude session pulls the profile and the framework when it starts (SessionStart hook).
 - When a session ends, `scripts/session-learn.sh` has a small model write a short entry into `knowledge/sessions/` and any reusable gotchas into `knowledge/learnings.md`. `/learn` does the same on demand.
+- Once a week, `scripts/retro.sh` (hcron) reviews that material: general rules become harness PRs, stale memories and learnings are pruned. See `docs/retro.md`; `/retro` runs it by hand.
 - `scripts/sync.sh` commits and pushes the profile every 2 hours and at login. Log: `logs/sync.log`. Change the interval with `SYNC_INTERVAL` in `harness.env`, then re-run `install.sh`.
 - A pre-commit hook in both repos blocks commits that look like they contain a token or key.
 
