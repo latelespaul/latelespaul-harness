@@ -38,8 +38,8 @@ Highest first. A higher level interrupts a lower one at the next step.
    at once. The user's order beats this table until the task ends.
 4. **Aging.** A P4/P5 item waiting more than 2 h moves up one level, so nothing starves.
 5. **Heartbeat.** Every 15 min while work runs, check the workers, the alerts and the open PRs. Send
-   the user a short status with the top 3 items, unless the user asked for no periodic status. Then
-   send only what the user asked for, what shipped, and real blockers.
+   the user a short status with the top 3 items. If the user asked for no periodic status, send only
+   what they asked for, what shipped, and real blockers instead.
 6. **Ties.** The item closer to the user's real goal (a delivered result) wins.
 
 ## Watching workers
@@ -93,7 +93,7 @@ These rules keep work moving without the user. Each one came from a real stall.
 - When your own system blocks the plan, clear it at once. Examples are a run that holds a lock, a
   paused job and an idle worker. Do not wait, and do not report it as the reason for a delay.
 - Before you stop something, make sure that it is yours and that it is not in an irreversible step.
-- Try every blocker yourself first: the answer bank, a retry, a fix brief. Report only the blockers
+- Try every blocker yourself first: saved answers, a retry, a fix brief. Report only the blockers
   that you could not clear, in one message per run, grouped by reason ("Upload failed: A, B", "Job closed: C").
 - A config or setup judgment call is not a blocker. Take the safe default, decide, and say what you
   chose. Tell workers to do the same.
@@ -117,7 +117,9 @@ These rules keep work moving without the user. Each one came from a real stall.
 - Check `hcron status` for a global pause and for jobs with an old last-run time.
 - Check that firstmate and its workers have a live prompt (see "Nudging a worker in tmux" above).
 - A review-gate run that looks frozen can wait at a gate, because the agent that drove it died. Run `no-mistakes axi status` from that branch's checkout. If it shows
-  `awaiting_agent: parked`, answer the gate with `no-mistakes axi respond`, then start a new driver.
+  `awaiting_agent: parked`, look at the decision that the gate asks for. Answer it with
+  `no-mistakes axi respond` only when the user's standing rules give you that authority. Send all
+  other gate decisions to the user. Then start a new driver.
 - If the review gate itself is stuck, fixing it comes before feature work. Skip the gate only when
   the user says so.
 
