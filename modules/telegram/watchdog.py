@@ -552,6 +552,10 @@ def check():
     check_browser(state, token, now)
 
     busy, idle, err, queued, turn_open = transcript_status()
+    # A restarted session writes no transcript until its first message, so the newest file can be
+    # the old one with its unanswered message: not a live turn, or every restart looks stuck again.
+    if now - idle < state.get("last_restart_at", 0):
+        busy = turn_open = False
 
     # A usage limit: a restart cannot help before it resets, so only say when. check_queue restarts
     # once after the reset if messages are still waiting.
