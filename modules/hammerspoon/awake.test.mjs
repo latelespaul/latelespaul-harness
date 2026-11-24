@@ -205,7 +205,9 @@ test('a run killed with SIGKILL leaves no keeper or caffeinate behind', async ()
   const child = spawn('/bin/zsh', [AWAKE, 'run', 'night', '--', 'sleep', '30'],
     { env: { ...process.env, PATH: `${s.d}:/usr/bin:/bin`, HSX_PORT: 'awake-test-none', ...FAST }, stdio: 'ignore', detached: true });
   const wait = ms => new Promise(res => setTimeout(res, ms));
-  for (let i = 0; i < 50 && !s.caffeinated().length; i++) await wait(100);
+  // Up to 15 s: under a loaded full-suite run the start can take longer than 5 s.
+  for (let i = 0; i < 150 && !s.caffeinated().length; i++) await wait(100);
+  assert.ok(s.caffeinated().length, 'caffeinate started while Hammerspoon did not answer');
   const cpid = Number(s.caffeinated()[0].split(' ')[0]);
   child.kill('SIGKILL');
   await wait(1200);
