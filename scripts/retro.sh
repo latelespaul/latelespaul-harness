@@ -26,7 +26,7 @@ done
 [[ -d $kb ]] || die "no knowledge folder in the profile: $kb"
 mkdir -p $state $work
 [[ -z $since && -f $marker ]] && since=$(<$marker)
-: ${since:=1970-01-01 00:00}
+: ${since:=1970-01-02 00:00}   # not 01-01: east of UTC that is before the epoch and BSD find rejects it
 day=${since[1,10]}
 now=$(date '+%Y-%m-%d %H:%M') stamp=$(date +%Y-%m-%d)
 input=$work/$stamp-input.md

@@ -98,3 +98,12 @@ test('a lock left by a dead run is taken over; a live one stops the run', () => 
   assert.equal(r.status, 1);
   assert.match(r.stderr, /another retro is running/);
 });
+
+test('the first run (no marker) collects every memory, even in a time zone east of UTC', () => {
+  const { run } = setup({ extraEnv: { TZ: 'Asia/Kolkata' } });
+  const r = run('--collect');
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /parse date/);
+  const input = readFileSync(r.stdout.trim(), 'utf8');
+  for (const s of ['### old.md', '### new.md', 'old finding', 'old tip']) assert.match(input, new RegExp(s));
+});
