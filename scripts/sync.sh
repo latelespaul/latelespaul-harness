@@ -35,17 +35,25 @@ alert() {
 # syncs started together (SessionStart in many sessions plus the scheduled one) never race on fetch or
 # rebase. A sync that cannot get the lock within SYNC_LOCK_WAIT seconds (default 30) skips quietly:
 # the one holding it is doing the same work, and the next run catches up. A lock whose owner is gone,
-# or older than SYNC_LOCK_STALE seconds (default 600), is taken over.
+# or older than SYNC_LOCK_STALE seconds (default 600), is taken over by an atomic rename, and a
+# sync only releases a lock that still holds its own pid.
 with_lock() {
   local repo=$1; shift
   local lock=$(git -C $repo rev-parse --path-format=absolute --git-path harness-sync.lock 2>/dev/null)
   [[ -n $lock ]] || { "$@"; return }
-  local waited=0 pid old
+  local waited=0 pid old moved
   until mkdir $lock 2>/dev/null; do
     pid=$(<$lock/pid 2>/dev/null)
     old=( $lock(N/mm+$(( ${SYNC_LOCK_STALE:-600} / 60 ))) )
     if [[ -n $pid ]] && ! kill -0 $pid 2>/dev/null || (( $#old )); then
-      rm -rf $lock; continue
+      if mv $lock $lock.stale.$$ 2>/dev/null; then
+        moved=$(<$lock.stale.$$/pid 2>/dev/null)
+        if [[ $moved != $pid ]] && mkdir $lock 2>/dev/null; then
+          print -r -- $moved > $lock/pid
+        fi
+        rm -rf $lock.stale.$$
+      fi
+      continue
     fi
     if (( waited >= ${SYNC_LOCK_WAIT:-30} * 5 )); then
       echo "another sync holds ${repo:t}; skipping (the next run catches up)"
@@ -54,7 +62,7 @@ with_lock() {
     sleep 0.2; (( waited++ ))
   done
   print -r -- $$ > $lock/pid
-  { "$@" } always { rm -rf $lock }
+  { "$@" } always { [[ $(<$lock/pid 2>/dev/null) == $$ ]] && rm -rf $lock }
 }
 
 # rebasing <repo>: true while a rebase is stopped half-way (conflict, or an edit stop).
