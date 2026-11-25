@@ -57,9 +57,10 @@ hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stal
 
 **The orchestrator sweep** (`modules/orchestrator/sweep.mjs`) looks at every executor in one
 read-only pass and writes one line per problem through `tg-notify.py`, so with `ALERTS_TO_MASTER`
-the lines land in `master-alerts.log`. It finds: the hcron global pause, a job not run for twice its
-interval, a failing job; firstmate workers that are registered as working but have no window, `fm-*`
-windows idle 20 min (only info, not sent, unless inbox notes are waiting), inbox notes waiting 10 min; no-mistakes runs parked or at a gate for 15 min
+the lines land in `master-alerts.log`. It finds: the hcron global pause, jobs not run for twice their
+interval since the Mac woke (several share one line), a failing job; firstmate workers that are
+registered as working but have no window, `fm-*` windows idle 20 min (only info, not sent, unless
+inbox notes are waiting), inbox notes waiting 10 min; no-mistakes runs parked or at a gate for 15 min
 (run id, branch, checkout); PRs green and mergeable for 30 min but not merged, and conflicting PRs;
 unhealthy health targets; a high load average; a locked screen while a gui job is due. When DNS
 fails for every health URL, it sends one "network down" line and holds back the PR, health and
