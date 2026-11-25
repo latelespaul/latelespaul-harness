@@ -52,6 +52,11 @@ with open(os.path.join(w.PROJECT_DIR, "session.jsonl"), "w") as f:
         if "resetsIn" in e:
             e["apiErrorParams"] = {"rate_limit_info": {"resetsAt": int(now + e.pop("resetsIn"))}}
         f.write(json.dumps(e) + "\n")
+if sc.get("exits"):  # run.sh's exit lines in launchd.log: [seconds ago, seconds it ran]
+    os.makedirs(os.path.dirname(w.LAUNCHD_LOG), exist_ok=True)
+    with open(w.LAUNCHD_LOG, "w") as f:
+        for ago, ran in sc["exits"]:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - ago)) + f" claude fresh exited code=0 after {ran}s\n")
 if "mtimeAgo" in sc:  # when the transcript was last written (a real one stops when its session dies)
     m = time.time() - sc["mtimeAgo"]
     os.utime(os.path.join(w.PROJECT_DIR, "session.jsonl"), (m, m))
@@ -73,7 +78,7 @@ function sandbox(t) {
   const base = Date.now() / 1000;
   const stateFile = join(home, '.claude/channels/telegram/watchdog/state.json');
   return {
-    run(transcript, { screen = '', mtimeAgo } = {}) { writeFileSync(record, ''); py({ transcript, screen, record, base, mtimeAgo }); },
+    run(transcript, { screen = '', mtimeAgo, exits } = {}) { writeFileSync(record, ''); py({ transcript, screen, record, base, mtimeAgo, exits }); },
     calls: () => readFileSync(record, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)),
     restarts() { return this.calls().filter(([k, v]) => k === 'tmux' && v.startsWith('new ')).length; },
     notices() { return this.calls().filter(([k]) => k === 'notify').map(([, v]) => v); },
@@ -225,4 +230,20 @@ test('reset time read from the error text when the entry has no resetsAt', { ski
   const entry = { timestamp: '2026-11-19T16:04:42.234Z', apiError: 'usage_limit_reached' };
   assert.equal(s.eval(`w.limit_reset(${JSON.stringify(entry)}, ${JSON.stringify(LIMIT_TEXT)})`), at('2026-11-20T18:00:00Z'));
   assert.equal(s.eval(`w.limit_reset({"timestamp": "2026-11-19T16:04:42Z"}, "API Error: 500")`), null, 'other errors are not limits');
+});
+
+test('a fast-exit loop (5+ exits under 10 s in 3 min) restarts fresh once and logs it; slow or old exits do not', { skip }, t => {
+  const s = sandbox(t);
+  const loop = [170, 150, 120, 90, 60, 30].map(ago => [ago, 1]);
+  s.run(idleSession, { exits: [[600, 1], [500, 0], [400, 1], [300, 1], [250, 1], [10, 3600]] });
+  assert.equal(s.restarts(), 0, 'old exits and a long run are not a loop');
+  s.run(idleSession, { exits: loop.slice(0, 4) });
+  assert.equal(s.restarts(), 0, '4 fast exits are not enough');
+  s.run(idleSession, { exits: loop });
+  assert.equal(s.restarts(), 1, JSON.stringify(s.calls()));
+  assert.match(s.log(), /RESTART \(fresh\): claude exited 6 times within 10s of starting in the last 3 min \(fast-exit loop\)/);
+  // The same exits, already handled by that restart, never count again (no restart loop).
+  s.setState({ ...s.state(), restarts: [] });
+  s.run(idleSession, { exits: loop });
+  assert.equal(s.restarts(), 0);
 });
