@@ -114,6 +114,17 @@ These rules keep work moving without the user. Each one came from a real stall.
 - A config or setup judgment call is not a blocker. Take the safe default, decide, and say what you
   chose. Tell workers to do the same.
 
+**Answer from the user's data**
+- Workers, crews and sub-agents must not ask the user a question that the user's own data answers.
+  That data is the profile, the curriculum vitae (CV), the answer bank and memory.
+- When the data does not answer it, the worker picks the most reasonable truthful answer. It logs
+  the answer as a guess and continues.
+- Only these go to the user: passwords, 2FA, CAPTCHA, payments, legal terms to accept, and real
+  product or business decisions.
+- Put this rule in every brief that you send to a worker.
+- When a worker asks the user something that breaks this rule, do not pass it on. Answer it
+  yourself, or rewrite it into one of the allowed kinds.
+
 **Diagnose before you brief a fix**
 - Open the evidence first: the screenshot of the stuck screen, the log, the saved plan or state file.
 - Put the cause, the evidence path and a test that proves the fix in the brief. Do not forward only
