@@ -55,6 +55,21 @@ to the full harness path when you add the job:
 hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stall-watch.sh" --timeout 2m
 ```
 
+**Freeze watch.** The same script also watches firstmate itself (the first window that is not `fm-*`).
+Firstmate can freeze after an API error: the prompt keeps unsent text, Enter does nothing and the
+process ignores SIGTERM. A stall note to firstmate cannot help then. The script calls firstmate
+frozen when inbox notes wait and its pane shows no progress for 15 min, or when the pane shows
+"API Error" with an idle prompt for 5 min. No progress means no pane change and no drained note. A
+busy pane whose spinner still redraws is not frozen. The script then presses Enter once. If firstmate
+is still frozen 3 min later, it stops the `claude` child of `run-firstmate.sh` (SIGTERM, then SIGKILL
+after 20 s). The loop starts it again with `--continue`. When a new `claude` shows a fresh prompt,
+the script types `check inbox`. A pane that shows a permission or selection dialog gets no keys and
+no restart: the master gets one line and decides. For a
+second mate (`fm-*` window) with "API Error", an idle prompt and inbox messages, it presses Enter, then
+sends one nudge. It never stops a second mate. Each step goes straight to `master-alerts.log`, with
+one summary line for each freeze, so the user's Telegram never gets these lines. State:
+`<profile>/logs/fm-freeze-watch.state`.
+
 **The orchestrator sweep** (`modules/orchestrator/sweep.mjs`) looks at every executor in one
 read-only pass and writes one line per problem through `tg-notify.py`, so with `ALERTS_TO_MASTER`
 the lines land in `master-alerts.log`. It finds: the hcron global pause, jobs not run for twice their
