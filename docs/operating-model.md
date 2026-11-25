@@ -46,12 +46,13 @@ prompts itself, when the user has said so. The user then approves only the maste
 
 | Place | Use it for | Do not use it for |
 |---|---|---|
-| Cloud session (hosted by the agent vendor) | Code work: a feature or a fix in one repo, with tests. It pushes a branch and opens a PR. | Hosting, hcron, the screen, browsers, local secrets. |
+| Cloud session (hosted by the agent vendor) | Code work: a feature or a fix in one repo, with tests. It pushes a branch and opens a PR. | Hosting, hcron, the screen, browsers with the user's logins, local secrets. |
 | The Mac | The master session, the screen (eyes and hands, Hammerspoon), browsers with the user's logins, the Keychain, local OAuth tokens, tests in a real browser. Code work when a cloud session cannot do it. | Many parallel crews: a loaded Mac freezes and stops answering. |
 | Server (an always-on virtual machine) | Deployed apps only: the test and production copies, their databases, backups and services. | Agents, crews, firstmate, builds for crews. Keep the server stable for the apps. |
 
 **How to choose.**
 1. Does the work need the screen, a logged-in browser or a local secret? Run it on the Mac.
+   A web task with no sign-in stays off the Mac's browsers (the `eyes-hands` skill, section 0b).
 2. Is it code work in a repo? Give it to a cloud session. Track it on the status board
    ("cloud: <task> — PR #n — state").
 3. Can a cloud session not do it (it needs local tools or local data)? Send it to firstmate on the
