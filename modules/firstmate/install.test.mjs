@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const INSTALL = fileURLToPath(new URL('./install.sh', import.meta.url));
 
-function sandbox(modules = 'firstmate') {
+function sandbox(modules = 'firstmate', extraEnv = '') {
   const d = realpathSync(mkdtempSync(join(tmpdir(), 'fm-install-test-')));
   const home = join(d, 'home'), fm = join(d, 'firstmate'), bin = join(d, 'bin');
   for (const p of [home, bin]) mkdirSync(p, { recursive: true });
@@ -24,7 +24,7 @@ function sandbox(modules = 'firstmate') {
   }
   mkdirSync(join(fm, '.git'), { recursive: true });   // "already cloned": the installer leaves it alone
   const envFile = join(d, 'harness.env');
-  writeFileSync(envFile, `FIRSTMATE_DIR="${fm}"\nMODULES="${modules}"\nFIRSTMATE_TELEGRAM=0\nLABEL_PREFIX="test"\nPROFILE_DIR="${d}/profile"\n`);
+  writeFileSync(envFile, `FIRSTMATE_DIR="${fm}"\nMODULES="${modules}"\nFIRSTMATE_TELEGRAM=0\nLABEL_PREFIX="test"\nPROFILE_DIR="${d}/profile"\n${extraEnv}`);
   // HCRON_JOBS keeps hcron off the real profile (with the cron module off it is never written anyway).
   const env = { PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HARNESS_ENV: envFile, HCRON_JOBS: join(d, 'jobs.json'), TMPDIR: d };
   const run = (args = []) => spawnSync('/bin/zsh', [INSTALL, ...args], { env, encoding: 'utf8' });
@@ -61,4 +61,14 @@ test('start hint: the "or wait" hcron line only when the cron module is on', () 
   const on = sandbox('firstmate cron').run(['--dry-run']);
   assert.match(on.stdout, /or wait: hcron job firstmate-start/, on.stdout + on.stderr);
   assert.doesNotMatch(on.stdout, /autostart needs the cron module/);
+});
+
+test('FIRSTMATE_TELEGRAM=1 writes valid telegram-settings.json with the plugin on (off when polling is off)', () => {
+  for (const [extra, on] of [['', true], ['TELEGRAM_POLLING=0\n', false]]) {
+    const s = sandbox('firstmate', `FIRSTMATE_TELEGRAM=1\n${extra}`);
+    const r = s.run();
+    assert.doesNotMatch(r.stderr, /unfilled placeholder/, r.stderr);
+    const settings = JSON.parse(readFileSync(join(s.home, '.claude/telegram-settings.json'), 'utf8'));
+    assert.equal(settings.enabledPlugins['telegram@claude-plugins-official'], on);
+  }
 });
