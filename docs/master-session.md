@@ -158,8 +158,9 @@ send them to the master session instead. Then `modules/cron/tg-notify.py` (used 
 watch, the Hammerspoon awake guard and the Eyes & Hands loader) appends each alert to
 `<profile>/logs/master-alerts.log` while the master session (`claude-tg`) runs: a screen session on
 macOS, a tmux session on Linux. The master session watches that file, fixes what it can and tells the
-user only about real blockers. If the master session is down, the alert goes to Telegram as before,
-marked "(master session down)". `TG_NOTIFY_DIRECT=1` always sends. The Telegram watchdog and the
+user only about real blockers. If the master session is down, the alert is still logged, and Telegram
+gets one note per outage ("master session down since HH:MM; N alerts queued"), then at most one
+reminder every 6 h, never one message per alert. `TG_NOTIFY_DIRECT=1` always sends the alert itself. The Telegram watchdog and the
 morning brief send on their own and are not affected.
 
 **Master session on a VM (virtual machine), Mac as the hands**
@@ -183,7 +184,7 @@ morning brief send on their own and are not affected.
   on the VM) moves only after `pull-alerts` writes the lines, so a Mac that was away catches up on reconnect.
 - The Mac keeps `ALERTS_TO_MASTER` too. Its `tg-notify.py` counts the VM's master session as up while
   a pull came in the last 10 minutes (`~/.local/state/mac-node/alerts-pulled` on the Mac). When the
-  VM master or the link is down for longer, Mac alerts go to Telegram again, marked "(master session down)".
+  VM master or the link is down for longer, Mac alerts are logged and Telegram gets the one outage note.
 - Alerts from hcron, the stall watch and anything else on the VM that calls `tg-notify.py` reach the
   VM's log the same way.
 

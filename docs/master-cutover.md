@@ -272,5 +272,5 @@ If the total is over 120 s, find the slow step before you ask for the OK.
 - **A firstmate Telegram bot** (`FIRSTMATE_TELEGRAM=1`) is a different bot, so `pgrep` can show it.
   `--status` counts only the poller under `claude-tg`.
 - **Alerts to the master.** `modules/cron/tg-notify.py` finds the master session through `screen -ls`.
-  After the cutover the Mac has no `claude-tg`, and the VM uses tmux, so alerts go straight to
-  Telegram, marked "(master session down)".
+  After the cutover the Mac has no `claude-tg`, and the VM uses tmux, so the Mac counts the master
+  as down: alerts are logged and Telegram gets one "master session down" note per outage.
