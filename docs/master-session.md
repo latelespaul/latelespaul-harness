@@ -160,8 +160,8 @@ watch, the Hammerspoon awake guard and the Eyes & Hands loader) appends each ale
 macOS, a tmux session on Linux. The master session watches that file, fixes what it can and tells the
 user only about real blockers. If the master session is down, the alert is still logged, and Telegram
 gets one note per outage ("master session down since HH:MM; N alerts queued"), then at most one
-reminder every 6 h, never one message per alert. `TG_NOTIFY_DIRECT=1` always sends the alert itself. The Telegram watchdog and the
-morning brief send on their own and are not affected.
+reminder every 6 h, never one message per alert. `TG_NOTIFY_DIRECT=1` always sends the alert itself.
+The Telegram watchdog and the morning brief send on their own and are not affected.
 
 **Master session on a VM (virtual machine), Mac as the hands**
 **Warning:** agents no longer run on the always-on VM. Plain watch scripts may run there. See
