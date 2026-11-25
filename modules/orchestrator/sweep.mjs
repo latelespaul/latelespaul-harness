@@ -50,7 +50,7 @@ export function lastTwoSlots(job, now, maxMin = 14 * 1440) {
 // job, and several overdue jobs share one line. Returns [{ key, text }].
 export function hcronProblems(jobs, states, now = new Date(), awakeSince = null) {
   const out = [], overdue = [];
-  const awake = toMs(awakeSince) ?? -Infinity;
+  const awake = toMs(awakeSince) || -Infinity; // missing or unreadable: count from the last run
   if (jobs.paused) out.push({ key: 'hcron:paused', text: 'hcron: ALL jobs paused (global pause on): nothing scheduled runs. Lift with `hcron resume all` if nobody meant it.' });
   for (const [id, job] of Object.entries(jobs.jobs || {})) {
     if (job.paused) continue;

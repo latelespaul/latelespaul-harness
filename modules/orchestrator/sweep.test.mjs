@@ -34,6 +34,12 @@ test('hcron: after a sleep, overdue counts from the wake, and several jobs share
   assert.match(ps[0].text, /2 jobs overdue: a has not run.*; b has not run/);
 });
 
+test('hcron: an unreadable wake time is ignored, so overdue still counts from the last run', () => {
+  const jobs = { jobs: { a: { cron: '*/5 * * * *' } } };
+  const st = { a: { started_at: new Date(now - 600 * MIN).toISOString() } };
+  assert.deepEqual(keys(hcronProblems(jobs, st, now, 'not-a-date')), ['hcron:overdue:a']);
+});
+
 test('hcron: windows and yearly jobs', () => {
   // Hourly job with a night window: at noon the last two allowed slots are 04:00 and 03:00, so a run at 04:00 is fine.
   const night = { cron: '0 * * * *', window: '20:00-05:00' };
