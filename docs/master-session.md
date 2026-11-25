@@ -59,11 +59,14 @@ hcron add fm-stall-watch --cron "*/5 * * * *" --cmd "$PWD/modules/firstmate/stal
 read-only pass and writes one line per problem through `tg-notify.py`, so with `ALERTS_TO_MASTER`
 the lines land in `master-alerts.log`. It finds: the hcron global pause, a job not run for twice its
 interval, a failing job; firstmate workers that are registered as working but have no window, `fm-*`
-windows idle 20 min, inbox notes waiting 10 min; no-mistakes runs parked or at a gate for 15 min
+windows idle 20 min (only info, not sent, unless inbox notes are waiting), inbox notes waiting 10 min; no-mistakes runs parked or at a gate for 15 min
 (run id, branch, checkout); PRs green and mergeable for 30 min but not merged, and conflicting PRs;
-unhealthy health targets; a high load average; a locked screen while a gui job is due. It repeats a
-line only after 60 min. It never merges, kills or resumes anything: you act on each line. The repos,
-health addresses and load limit come from `<profile>/orchestrator/sweep.json` (format in the file header).
+unhealthy health targets; a high load average; a locked screen while a gui job is due. When DNS
+fails for every health URL, it sends one "network down" line and holds back the PR, health and
+hcron-failure lines that follow from it. It repeats a line (same key or same text) only after 120 min.
+It never merges, kills or resumes anything: you act on each line. The repos, health addresses, load
+limit and an `ignore` list (`owner/name#N` or `label:NAME`, for parked PRs) come from
+`<profile>/orchestrator/sweep.json` (format in the file header).
 `--dry-run` prints what it finds and sends nothing.
 
 ```sh

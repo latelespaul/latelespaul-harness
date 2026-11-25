@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 // hcron.mjs resolves its jobs file at import; point it at a dummy so no harness.env is needed.
 process.env.HCRON_JOBS ??= '/nonexistent/jobs.json';
-const { lastTwoSlots, hcronProblems, firstmateProblems, noMistakesProblems, prProblems, healthProblems, macProblems, dedupe } =
+const { lastTwoSlots, hcronProblems, firstmateProblems, noMistakesProblems, prProblems, healthProblems, macProblems, dedupe, netDown, networkFilter } =
   await import('./sweep.mjs');
 
 const MIN = 60_000;
@@ -53,6 +53,14 @@ test('firstmate: dead worker, idle window, old inbox notes', () => {
     now: t,
   });
   assert.deepEqual(keys(ps), ['fm:dead:mate', `fm:idle:fm-live:${s - 1800}`, 'fm:inbox:state/inbox/1.note']);
+  assert.equal(ps[1].info, false);   // work is queued, so the idle window is worth a line
+});
+
+test('firstmate: an idle window with nothing queued is info only, never sent', () => {
+  const t = now.getTime(), s = Math.floor(t / 1000);
+  const ps = firstmateProblems({ sessionUp: true, windows: new Map([['fm-live', s - 30 * 60]]), now: t });
+  assert.deepEqual(ps.map(p => p.info), [true]);
+  assert.deepEqual(dedupe(ps, {}, t).send, []);
 });
 
 test('firstmate: session down is one line, only when workers are registered', () => {
@@ -87,6 +95,24 @@ test('PRs: green+mergeable for 30 min, conflicting, drafts and red skipped', () 
   assert.deepEqual(keys(ps), ['pr:green:o/r#1', 'pr:conflict:o/r#4']);
 });
 
+test('PRs: ignore list by PR and by label', () => {
+  const t = now.getTime(), old = new Date(t - 45 * MIN).toISOString();
+  const prs = [{ number: 62, title: 'parked', mergeable: 'CONFLICTING', updatedAt: old },
+    { number: 7, title: 'labelled', mergeable: 'CONFLICTING', labels: [{ name: 'parked' }] },
+    { number: 8, title: 'live', mergeable: 'CONFLICTING' }];
+  assert.deepEqual(keys(prProblems('o/r', prs, t, ['o/r#62', 'label:parked'])), ['pr:conflict:o/r#8']);
+});
+
+test('network down: one line, dependent lines held back', () => {
+  const dns = [{ name: 'a', ok: false, detail: 'ENOTFOUND from https://a' }, { name: 'b', ok: false, detail: 'EAI_AGAIN from https://b' }];
+  assert.equal(netDown(dns), true);
+  assert.equal(netDown([dns[0], { name: 'b', ok: false, detail: 'HTTP 502 from https://b' }]), false);
+  assert.equal(netDown([]), false);
+  const ps = [{ key: 'pr:conflict:o/r#1' }, { key: 'health:a' }, { key: 'hcron:fail:mail' }, { key: 'sweep:err:PRs of o/r' }, { key: 'mac:load' }];
+  assert.deepEqual(keys(networkFilter(ps, true)), ['net:down', 'mac:load']);
+  assert.deepEqual(networkFilter(ps, false), ps);
+});
+
 test('health and mac lines', () => {
   assert.deepEqual(keys(healthProblems([{ name: 'dev', ok: true }, { name: 'live', ok: false, detail: 'HTTP 502' }])), ['health:live']);
   const jobs = { jobs: { g: { needs: ['gui'] }, u: { needs: ['unlocked'], paused: true }, n: {} } };
@@ -96,12 +122,13 @@ test('health and mac lines', () => {
   assert.deepEqual(macProblems({ load: 2, loadMax: 16, locked: false, jobs, states }), []);
 });
 
-test('dedupe: same key held for 60 min, then sent again; stale keys dropped', () => {
+test('dedupe: same key or text held for 120 min, then sent again; stale keys dropped', () => {
   const t = now.getTime(), p = [{ key: 'a', text: 'x' }, { key: 'b', text: 'y' }];
   const first = dedupe(p, { old: t - 2 * 1440 * MIN }, t);
   assert.deepEqual(keys(first.send), ['a', 'b']);
-  assert.deepEqual(Object.keys(first.sent).sort(), ['a', 'b']);
-  assert.deepEqual(dedupe(p, first.sent, t + 59 * MIN).send, []);
-  assert.deepEqual(keys(dedupe([p[0]], first.sent, t + 61 * MIN).send), ['a']);
+  assert.deepEqual(Object.keys(first.sent).sort(), ['a', 'b', 'text:x', 'text:y']);
+  assert.deepEqual(dedupe(p, first.sent, t + 119 * MIN).send, []);
+  assert.deepEqual(dedupe([{ key: 'c', text: 'x' }], first.sent, t + 90 * MIN).send, []);   // same text, new key
+  assert.deepEqual(keys(dedupe([p[0]], first.sent, t + 121 * MIN).send), ['a']);
   assert.deepEqual(keys(dedupe([p[0], p[0]], {}, t).send), ['a']);   // one line per problem per sweep
 });

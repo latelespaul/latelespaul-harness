@@ -2,7 +2,7 @@
 // Orchestrator sweep: one read-only pass over every executor, so nothing stalls unseen.
 // It writes one line per problem through modules/cron/tg-notify.py, which lands in the master
 // session's alert log when <profile>/telegram/ALERTS_TO_MASTER is set (docs/master-session.md).
-// The same problem is not repeated within DEDUPE_MIN (60) minutes. The sweep never merges, kills,
+// The same problem (same key or same text) is not repeated within DEDUPE_MIN (120) minutes. The sweep never merges, kills,
 // resumes or restarts anything: the master session acts on each line.
 //
 //   sweep.mjs              run every check, send the new lines
@@ -11,20 +11,25 @@
 // Checks: hcron (global pause, a job overdue for 2x its interval, a job failing), firstmate (dead
 // workers, fm-* windows idle, inbox notes waiting), no-mistakes (runs parked at a gate or awaiting
 // the agent), GitHub PRs (green and mergeable but not merged, conflicting), health targets, the Mac
-// (load average, screen locked while a gui job is due).
+// (load average, screen locked while a gui job is due). An idle fm-* window is only info (printed,
+// not sent) unless inbox notes are waiting. When every URL health target fails on DNS (or, with no
+// URL targets, github.com does not resolve), the network is down: one "network down" line is sent
+// and the PR, health and hcron-failure lines that would follow from it are held back.
 // Personal values (repos, health URLs, load limit) come from <profile>/orchestrator/sweep.json:
 //   { "repos": ["owner/name"], "health": [{ "name": "app", "url": "https://..." } | { "name": "x", "cmd": "..." }],
-//     "load_max": 12 }
+//     "load_max": 12, "ignore": ["owner/name#62", "label:parked"] }
+// "ignore" drops PR lines for a PR (owner/name#N) or for any PR carrying a label (label:NAME).
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir, loadavg, cpus } from 'node:os';
+import { lookup } from 'node:dns/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseCron, cronMatches, inWindow, screenLocked } from '../cron/hcron.mjs';
 
 const MIN = 60_000;
-export const LIMITS = { dedupeMin: 60, fmIdleMin: 20, inboxMin: 10, parkedMin: 15, prGreenMin: 30 };
+export const LIMITS = { dedupeMin: 120, fmIdleMin: 20, inboxMin: 10, parkedMin: 15, prGreenMin: 30 };
 const ago = ms => `${Math.round(ms / MIN)} min`;
 const toMs = t => (t == null ? null : typeof t === 'string' ? Date.parse(t) : t > 1e12 ? t : t * 1000);
 
@@ -80,8 +85,9 @@ export function firstmateProblems({ sessionUp, metas = [], windows = new Map(), 
     if (!name.startsWith('fm-')) continue;
     const since = stall.get(name) ?? act;
     const idle = now - since * 1000;
+    // Idle is not an error: only worth a line when work is queued (inbox notes waiting).
     if (idle >= LIMITS.fmIdleMin * MIN)
-      out.push({ key: `fm:idle:${name}:${since}`, text: `firstmate: window ${name} idle ${ago(idle)}. Look: tmux capture-pane -p -t firstmate:${name}` });
+      out.push({ key: `fm:idle:${name}:${since}`, info: !notes.length, text: `firstmate: window ${name} idle ${ago(idle)}. Look: tmux capture-pane -p -t firstmate:${name}` });
   }
   const old = notes.filter(n => now - n.mtimeMs >= LIMITS.inboxMin * MIN);
   if (old.length) {
@@ -106,11 +112,12 @@ export function noMistakesProblems(rows, now = Date.now()) {
 
 // ---------- GitHub PRs ----------
 const GOOD = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
-export function prProblems(repo, prs, now = Date.now()) {
+export function prProblems(repo, prs, now = Date.now(), ignore = []) {
   const out = [];
   for (const p of prs) {
     if (p.isDraft) continue;
     const tag = `${repo}#${p.number}`;
+    if (ignore.includes(tag) || (p.labels || []).some(l => ignore.includes(`label:${l.name ?? l}`))) continue;
     if (p.mergeable === 'CONFLICTING') { out.push({ key: `pr:conflict:${tag}`, text: `PR ${tag} conflicts with its base: rebase it ("${p.title}")` }); continue; }
     const checks = p.statusCheckRollup || [];
     const green = checks.every(c => GOOD.has(c.conclusion || c.state));
@@ -127,6 +134,18 @@ export function healthProblems(results) {
   return results.filter(r => !r.ok).map(r => ({ key: `health:${r.name}`, text: `health: ${r.name} unhealthy (${r.detail})` }));
 }
 
+// Network errors that mean "no DNS / no route", not "this target is broken".
+const NET_DOWN = /ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|nodename nor servname/;
+export const netDown = results => results.length > 0 && results.every(r => !r.ok && NET_DOWN.test(r.detail || ''));
+
+// While the network is down, keep one line for it and drop the lines it causes.
+export function networkFilter(problems, down, why = '') {
+  if (!down) return problems;
+  const dependent = p => /^(pr:|health:|hcron:fail:|sweep:err:PRs of )/.test(p.key);
+  return [{ key: 'net:down', text: `network down (${why || 'DNS fails for every target'}): PR, health and hcron-failure lines held back until it is back` },
+    ...problems.filter(p => !dependent(p))];
+}
+
 export function macProblems({ load, loadMax, locked, jobs, states }) {
   const out = [];
   if (load > loadMax) out.push({ key: 'mac:load', text: `mac: load average ${load.toFixed(1)} is over ${loadMax}. Look: top -o cpu` });
@@ -140,14 +159,16 @@ export function macProblems({ load, loadMax, locked, jobs, states }) {
 }
 
 // ---------- dedupe ----------
-// sent = { key: epoch ms last sent }. Returns the problems to send now and the new sent map
-// (keys not seen for a day are dropped).
+// sent = { key or "text:<text>": epoch ms last sent }. Returns the problems to send now and the new
+// sent map (entries not seen for a day are dropped). A line is held if its key or its exact text was
+// sent within the window; info lines are never sent.
 export function dedupe(problems, sent, now = Date.now(), windowMin = LIMITS.dedupeMin) {
   const next = Object.fromEntries(Object.entries(sent).filter(([, t]) => now - t < 1440 * MIN));
+  const recent = k => next[k] && now - next[k] < windowMin * MIN;
   const send = [];
   for (const p of problems) {
-    if (next[p.key] && now - next[p.key] < windowMin * MIN) continue;
-    next[p.key] = now; send.push(p);
+    if (p.info || recent(p.key) || recent(`text:${p.text}`)) continue;
+    next[p.key] = next[`text:${p.text}`] = now; send.push(p);
   }
   return { send, sent: next };
 }
@@ -215,8 +236,10 @@ function collectNoMistakes() {
 
 function collectPrs(repo) {
   return JSON.parse(run('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '50',
-    '--json', 'number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,updatedAt']));
+    '--json', 'number,title,isDraft,labels,mergeable,mergeStateStatus,statusCheckRollup,updatedAt']));
 }
+
+const resolves = host => lookup(host).then(() => true, () => false);
 
 async function checkHealth(t) {
   if (t.cmd) {
@@ -238,19 +261,22 @@ export async function sweep(env = harnessEnv()) {
     catch (e) { problems.push({ key: `sweep:err:${name}`, text: `sweep: the ${name} check failed (${String(e.message).split('\n')[0].slice(0, 120)})` }); }
   };
   const hc = collectHcron(env.PROFILE_DIR);
+  const health = await Promise.all((conf.health || []).map(checkHealth));
+  const urls = health.filter((r, i) => conf.health[i].url);
+  const down = urls.length ? netDown(urls) : !(await resolves('github.com'));
   await guard('hcron', () => hcronProblems(hc.jobs, hc.states));
   await guard('firstmate', () => firstmateProblems(collectFirstmate(env)));
   await guard('no-mistakes', () => noMistakesProblems(collectNoMistakes()));
-  for (const repo of conf.repos || []) await guard(`PRs of ${repo}`, () => prProblems(repo, collectPrs(repo)));
-  await guard('health', async () => healthProblems(await Promise.all((conf.health || []).map(checkHealth))));
+  if (!down) for (const repo of conf.repos || []) await guard(`PRs of ${repo}`, () => prProblems(repo, collectPrs(repo), Date.now(), conf.ignore || []));
+  await guard('health', () => healthProblems(health));
   await guard('mac', () => macProblems({ load: loadavg()[0], loadMax: conf.load_max ?? cpus().length, locked: screenLocked().locked, ...hc }));
-  return problems;
+  return networkFilter(problems, down, urls.length ? `DNS fails for all ${urls.length} health target(s)` : 'github.com does not resolve');
 }
 
 async function main(args) {
   const env = harnessEnv();
   const problems = await sweep(env);
-  if (args.includes('--dry-run')) { for (const p of problems) console.log(p.text); if (!problems.length) console.log('sweep: all clear'); return; }
+  if (args.includes('--dry-run')) { for (const p of problems) console.log(`${p.info ? 'info: ' : ''}${p.text}`); if (!problems.length) console.log('sweep: all clear'); return; }
   const statePath = process.env.SWEEP_STATE || join(env.PROFILE_DIR, 'logs/orchestrator-sweep.state.json');
   const { send, sent } = dedupe(problems, readJson(statePath, {}));
   const notify = process.env.SWEEP_NOTIFY || `python3 "${join(HARNESS, 'modules/cron/tg-notify.py')}"`;
@@ -261,6 +287,7 @@ async function main(args) {
   }
   mkdirSync(dirname(statePath), { recursive: true });
   writeFileSync(statePath + '.tmp', JSON.stringify(sent, null, 2) + '\n'); renameSync(statePath + '.tmp', statePath);
+  for (const p of problems.filter(p => p.info)) console.log(`info: ${p.text}`);
   console.log(`sweep: ${problems.length} problem(s), ${send.length} new`);
 }
 
