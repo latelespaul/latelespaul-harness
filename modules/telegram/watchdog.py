@@ -42,6 +42,7 @@ WD_DIR = os.path.join(TG_DIR, "watchdog")
 STATE_FILE = os.path.join(WD_DIR, "state.json")
 UNINSTALLED = os.path.join(WD_DIR, "uninstalled")  # install.sh --uninstall on Linux; install removes it
 LOG_FILE = os.path.join(TG_DIR, "logs/watchdog.log")
+LAUNCHD_LOG = os.path.join(TG_DIR, "logs/launchd.log")  # run.sh writes one line per claude exit here
 PROFILE = ENV.get("PROFILE_DIR", "")
 WORK_DIR = ENV.get("TELEGRAM_WORKDIR") or os.path.join(HOME, "Projects/claude-telegram")
 PROJECT_DIR = os.path.join(HOME, ".claude/projects", re.sub(r"[^A-Za-z0-9]", "-", WORK_DIR))
@@ -72,6 +73,7 @@ RESET_GRACE = 60          # after a usage limit resets, wait this long before re
 MIN_RESTART_GAP = 180
 STORM_WINDOW, STORM_MAX = 30 * 60, 5
 ALERT_GAP = 60 * 60
+FAST_EXIT, FAST_WINDOW, FAST_MAX = 10, 3 * 60, 5  # this many exits under FAST_EXIT s in FAST_WINDOW: a loop
 
 
 def log(msg):
@@ -223,6 +225,28 @@ def kill_strays(procs, tree):
     except Exception:
         pass
     return killed
+
+
+def fast_exits(since):
+    """How many times claude exited within FAST_EXIT seconds of starting, after `since` (epoch), per
+    run.sh's lines in launchd.log ("2026-11-25 15:16:07 claude fresh exited code=0 after 1s")."""
+    try:
+        with open(LAUNCHD_LOG, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 20_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return 0
+    n = 0
+    for line in lines:
+        m = re.match(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) claude .* exited code=\S+ after (\d+)s$", line)
+        if m and int(m.group(2)) < FAST_EXIT:
+            try:
+                t = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                continue
+            n += t > since
+    return n
 
 
 def screen_text():
@@ -516,6 +540,16 @@ def check():
     killed = kill_strays(procs, tree)
     if killed:
         log(f"killed stray Telegram processes: {killed}")
+
+    # claude exiting within seconds of every start (run.sh restarts it every ~11 s): something blocks
+    # it, often a leftover poller or a stray run.sh loop. Strays are gone now (kill_strays above, which
+    # also stops a bot.pid holder outside the session); a clean restart is the rest of the fix.
+    loops = fast_exits(max(now - FAST_WINDOW, state.get("last_restart_at", 0)))
+    if loops >= FAST_MAX:
+        restart(state, token, f"claude exited {loops} times within {FAST_EXIT}s of starting in the last "
+                              f"{FAST_WINDOW // 60} min (fast-exit loop)", fresh=True)
+        save_state(state)
+        return
 
     bot_alive = any("server.ts" in procs[p][1] for p in tree if p in procs)
     if bot_alive:

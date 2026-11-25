@@ -42,6 +42,7 @@ The main `install.sh` runs this module's installer when `telegram` is in MODULES
 | Usage-limit menu on screen (blocks queued messages even after the reset) | Message you once; press Esc every 30 min so it resumes |
 | Claude Chrome (browser module) not answering | Restart it and tell you |
 | Stray or duplicate poller | Kill it |
+| Fast-exit loop: claude exits within 10 s of starting 5+ times in 3 min (`run.sh` lines in `logs/launchd.log`) | Kill strays (incl. a `bot.pid` poller outside the session), restart fresh, log it. Exits before that restart never count again |
 | 5 restarts in 30 min | Message you, then retry once per 15 min |
 
 Restarts resume the conversation (`--continue`).
