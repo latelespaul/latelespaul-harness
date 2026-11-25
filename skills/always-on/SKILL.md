@@ -48,8 +48,10 @@ there are too many alerts. First run `TG=~/.claude/channels/telegram`.
    A known cause: `install.sh` ran inside the Telegram session and unloaded the agents (fixed in
    #95 and #96). The watchdog now stops fast-exit loops itself (#94).
 2. **Strays.** Find the kills: `grep 'killed stray' $TG/logs/watchdog.log | tail`. Then list
-   the Telegram processes: `pgrep -fl 'telegram-settings.json|plugins/.*/telegram'`. A process
-   outside the agent's tree is a stray. Do not stop firstmate's own bot (under `run-firstmate.sh`).
+   the Telegram processes: `pgrep -fl 'telegram-settings.json|plugins/.*/telegram|telegram/run.sh'`.
+   Only `run.sh` and `claude`, `node` or `bun` programs count; ignore shells and editors that only
+   name the paths. Such a process outside the agent's tree is a stray. Do not stop firstmate's own
+   bot (under `run-firstmate.sh`).
 3. **Alert flood.** Group today's alerts by type:
    `grep "^$(date -u +%F)" $PROFILE_DIR/logs/master-alerts.log | sed -E 's/^[^ ]+ //; s/[0-9]+/N/g' | cut -c1-60 | sort | uniq -c | sort -rn`.
    Match each group to its cause:
@@ -60,7 +62,7 @@ there are too many alerts. First run `TG=~/.claude/channels/telegram`.
    | hcron "has not run for N min" | the Mac slept | none; one overdue summary is normal |
    | Sweep line for the same pull request (PR) | a parked PR | add it to `ignore` in `$PROFILE_DIR/orchestrator/sweep.json` |
    | "idle N min" for a crew | an idle crew | none; information only |
-   | `Sync:` lines (pull error, stuck mid-rebase) | two syncs at the same time (a race) | re-run `scripts/upstream.sh sync` once |
+   | `Sync:` lines (pull error, stuck mid-rebase) | two syncs at the same time (a race) | re-run `$HARNESS_DIR/scripts/sync.sh` once; for a conflict or a stuck rebase, run `git status` in that repo, fix by hand, report it |
    | "master session down" | the master session stopped | step 1; `tg-notify.py` sends one note per outage |
 
 4. **Fix and report.** Do only the safe fixes. Reload agents with `scripts/recover.sh` from a
