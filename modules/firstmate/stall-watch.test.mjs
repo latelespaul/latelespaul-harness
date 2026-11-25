@@ -124,6 +124,14 @@ test('frozen firstmate at a permission dialog: no keys, no kill, one master line
   } finally { s.done(); }
 });
 
+test('a question in assistant text is not a dialog: the ladder still runs', () => {
+  const s = sandbox();
+  s.windows(['0 2.1.332']); s.pane('0', `⏺ Do you want to merge PR 3?\n${PROMPT}`); s.note('a');
+  s.run(0); s.run(16);
+  assert.deepEqual(s.keys(), ['send-keys -t firstmate:0 C-m']);
+  assert.doesNotMatch(s.master(), /waits at a dialog/);
+});
+
 test('a busy firstmate whose spinner still redraws is not frozen', () => {
   const s = sandbox();
   s.windows(['0 2.1.332']); s.note('a');

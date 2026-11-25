@@ -44,7 +44,7 @@ submit() { tmux send-keys -t "$1" C-m; }
 type_line() { tmux send-keys -t "$1" -l -- "$2"; sleep 1; submit "$1"; }
 fm_claude() { pgrep -P "$1" -f '^claude( |$)' 2>/dev/null | head -1; }
 alive() { kill -0 "$1" 2>/dev/null; }
-dialog() { print -r -- "$1" | tail -25 | grep -qE 'Do you want to|^[[:space:]]*❯ *[0-9]+\.'; }
+dialog() { print -r -- "$1" | tail -25 | grep -qE '^[[:space:]]*❯ *[0-9]+\.'; }
 # The restarted claude is ready: a pid that is not the killed one, the same on two polls 2 s apart,
 # and a pane that differs from the frame before the kill and shows an input prompt, not a dialog.
 ready() {
@@ -58,7 +58,7 @@ ready() {
 
 # ---------- firstmate itself ----------
 freeze_watch() {
-  local main target pane ph h raw notes since pnotes step stepat praw idle why pid pp new i kpid kraw
+  local main target pane ph h raw notes since pnotes step stepat praw idle why pid pp new i kpid kraw t0
   main=$(tmux list-windows -t "$SESSION" -F '#{window_index} #W' 2>/dev/null | awk '$2 !~ /^fm-/ {print $1; exit}')
   [[ -n $main ]] || return 0
   target="$SESSION:$main"
@@ -111,7 +111,8 @@ freeze_watch() {
       for (( i = 0; i < TERM_WAIT; i++ )); do alive "$pid" || break; sleep 1; done
       if alive "$pid"; then kill -KILL "$pid" 2>/dev/null; master "freeze-watch step b: pid $pid ignored SIGTERM for ${TERM_WAIT}s; sent SIGKILL."; fi
       step=2 stepat=$now
-      for (( i = 0; i < READY_WAIT; i += 2 )); do
+      t0=$SECONDS
+      while (( SECONDS - t0 < READY_WAIT )); do
         if new=$(ready); then
           type_line "$target" "check inbox"
           master "freeze-watch step c: firstmate restarted as pid $new; typed \"check inbox\"."
