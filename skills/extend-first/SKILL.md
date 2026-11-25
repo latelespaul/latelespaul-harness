@@ -42,8 +42,10 @@ Outside the harness:
 - In a project: its README, `docs/` or design docs, `AGENTS.md` or `CLAUDE.md`, and the code near
   the change.
 
-Quick search:
+Quick search. Agent shells do not export `HARNESS_DIR` or `PROFILE_DIR`. Set both first from the
+"Paths" section of `~/.claude/CLAUDE.md`. An empty result with unset paths does not mean "nothing exists".
 ```sh
+: "${HARNESS_DIR:?set it first}" "${PROFILE_DIR:?set it first}"
 grep -ril "<topic word>" "$HARNESS_DIR"/{skills,modules,scripts,docs} "$PROFILE_DIR"/{skills,knowledge}
 grep -h '^description:' "$HARNESS_DIR"/skills/*/SKILL.md "$PROFILE_DIR"/skills/*/SKILL.md
 ```
