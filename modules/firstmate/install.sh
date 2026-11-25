@@ -67,8 +67,12 @@ fi
 ensure_dir $claude_dir/skills/firstmate
 write_file $claude_dir/skills/firstmate/SKILL.md "$(render $mod/skill/SKILL.md.tmpl)"
 
-# Its own Telegram bot shares the plugin settings with the telegram module.
+# Its own Telegram bot shares the plugin settings with the telegram module, rendered the same way
+# (an unfilled __TELEGRAM_PLUGIN_ON__ is invalid JSON: Claude stops on a settings-error screen, and
+# telegram/install.sh sees changed settings and restarts the bot on every install).
 if [[ $FIRSTMATE_TELEGRAM == 1 ]]; then
+  TELEGRAM_PLUGIN_ON=true; [[ $TELEGRAM_POLLING == 0 ]] && TELEGRAM_PLUGIN_ON=false
+  render_keys+=(TELEGRAM_PLUGIN_ON)
   write_file $HOME/.claude/telegram-settings.json "$(render $HARNESS_DIR/modules/telegram/session-settings.json.tmpl)"
   act mkdir -p ~/.claude/channels/telegram-firstmate/logs
 fi
