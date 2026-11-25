@@ -62,7 +62,9 @@ frozen when inbox notes wait and its pane shows no progress for 15 min, or when 
 "API Error" with an idle prompt for 5 min. No progress means no pane change and no drained note. A
 busy pane whose spinner still redraws is not frozen. The script then presses Enter once. If firstmate
 is still frozen 3 min later, it stops the `claude` child of `run-firstmate.sh` (SIGTERM, then SIGKILL
-after 20 s). The loop starts it again with `--continue`, and the script types `check inbox`. For a
+after 20 s). The loop starts it again with `--continue`. When a new `claude` shows a fresh prompt,
+the script types `check inbox`. A pane that shows a permission or selection dialog gets no keys and
+no restart: the master gets one line and decides. For a
 second mate (`fm-*` window) with "API Error", an idle prompt and inbox messages, it presses Enter, then
 sends one nudge. It never stops a second mate. Each step goes straight to `master-alerts.log`, with
 one summary line for each freeze, so the user's Telegram never gets these lines. State:

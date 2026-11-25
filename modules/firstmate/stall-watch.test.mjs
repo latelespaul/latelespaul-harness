@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const WATCH = fileURLToPath(new URL('./stall-watch.sh', import.meta.url));
 const T0 = 1_800_000_000;
 const PROMPT = '────────\n❯ \n────────\n';
+const DIALOG = 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n';
 
 // Windows come from $FAKE/windows ("index name" lines); a pane's text from $FAKE/pane-<index or name>.
 const FAKE_TMUX = `#!/bin/sh
@@ -25,11 +26,13 @@ exit 0
 `;
 // The claude child: the pid in $FAKE/claude-pid while it lives, then the restarted one in $FAKE/new-pid.
 // A killed child stays a zombie until node reaps it (spawnSync blocks the loop), so a zombie counts as gone.
+// The restarted claude draws its frame: $FAKE/pane-after, if present, replaces window 0's pane.
 const FAKE_PGREP = `#!/bin/sh
 [ -f "$FAKE/claude-pid" ] || exit 1
 p=$(cat "$FAKE/claude-pid")
 case "$(ps -o stat= -p "$p" 2>/dev/null)" in ""|Z*) alive= ;; *) alive=1 ;; esac
-if [ -n "$alive" ]; then echo "$p"; elif [ -f "$FAKE/new-pid" ]; then cat "$FAKE/new-pid"; else exit 1; fi
+if [ -n "$alive" ]; then echo "$p"; elif [ -f "$FAKE/new-pid" ]; then
+  [ -f "$FAKE/pane-after" ] && mv "$FAKE/pane-after" "$FAKE/pane-0"; cat "$FAKE/new-pid"; else exit 1; fi
 `;
 
 function sandbox() {
@@ -76,7 +79,7 @@ test('frozen firstmate with notes waiting: Enter, then SIGTERM, SIGKILL, restart
     assert.deepEqual(s.keys(), ['send-keys -t firstmate:0 C-m']);
     assert.match(s.master(), /step a: firstmate looks frozen \(2 inbox note\(s\) waiting, no progress for 16 min\)/);
     s.run(17); assert.equal(s.keys().length, 1, 'waits 3 min after Enter');
-    writeFileSync(join(s.fake, 'new-pid'), '99999');
+    writeFileSync(join(s.fake, 'new-pid'), '99999'); s.pane('after', `Claude Code\n${PROMPT}`);
     const exited = new Promise(res => c.on('exit', (code, sig) => res(sig)));
     r = s.run(19); assert.equal(r.status, 0, r.stderr);
     assert.equal(await exited, 'SIGKILL');
@@ -87,6 +90,37 @@ test('frozen firstmate with notes waiting: Enter, then SIGTERM, SIGKILL, restart
     assert.equal(m.match(/Freeze watch: firstmate was frozen/g).length, 1, 'one summary line');
     assert.deepEqual(s.keys().slice(1), ['send-keys -t firstmate:0 -l -- check inbox', 'send-keys -t firstmate:0 C-m']);
     s.run(24); assert.equal(s.keys().length, 3, 'ladder starts over after the restart');
+  } finally { s.done(); }
+});
+
+test('after the restart, "check inbox" waits for a new pid and a redrawn pane', async () => {
+  const s = sandbox();
+  try {
+    s.windows(['0 2.1.332']); s.pane('0', `⏺ working\n${PROMPT}`); s.note('a');
+    const c = s.claude();
+    s.run(0); s.run(16);
+    // pgrep still lists the killed pid, and the pane keeps the old frame with its prompt line.
+    writeFileSync(join(s.fake, 'new-pid'), String(c.pid));
+    const exited = new Promise(res => c.on('exit', (code, sig) => res(sig)));
+    s.run(20); assert.equal(await exited, 'SIGKILL');
+    assert.equal(s.keys().length, 1, 'nothing typed on the old frame');
+    s.pane('0', `Claude Code\n${PROMPT}`); s.run(25);
+    assert.equal(s.keys().length, 1, 'nothing typed while only the killed pid shows');
+    writeFileSync(join(s.fake, 'new-pid'), '99999'); s.run(30);
+    assert.deepEqual(s.keys().slice(1), ['send-keys -t firstmate:0 -l -- check inbox', 'send-keys -t firstmate:0 C-m']);
+    assert.match(s.master(), /step c: firstmate restarted as pid 99999/);
+  } finally { s.done(); }
+});
+
+test('frozen firstmate at a permission dialog: no keys, no kill, one master line', () => {
+  const s = sandbox();
+  try {
+    s.windows(['0 2.1.332']); s.pane('0', `⏺ Bash(rm -rf build)\n${DIALOG}`); s.note('a');
+    const c = s.claude();
+    for (const min of [0, 16, 20, 25, 30]) s.run(min);
+    assert.deepEqual(s.keys(), []);
+    assert.equal(s.master().match(/waits at a dialog; no keys sent/g).length, 1);
+    assert.equal(c.exitCode, null); assert.equal(c.signalCode, null);
   } finally { s.done(); }
 });
 
@@ -153,4 +187,16 @@ test('second mate with an empty inbox is left alone', () => {
   writeFileSync(join(s.fm, 'state/mate.meta'), 'window=firstmate:fm-mate\n');
   s.run(0); s.run(6); s.run(11);
   assert.deepEqual(s.keys(), []);
+});
+
+test('second mate at a dialog after an API Error: no keys, one master line', () => {
+  const s = sandbox();
+  s.windows(['0 2.1.332', '1 fm-mate']); s.pane('0', PROMPT);
+  s.pane('fm-mate', `⎿ API Error: The response stopped arriving\n${DIALOG}`);
+  writeFileSync(join(s.fm, 'state/mate.meta'), 'window=firstmate:fm-mate\n');
+  mkdirSync(join(s.fm, 'state/mate.inbox'), { recursive: true });
+  writeFileSync(join(s.fm, 'state/mate.inbox/0001.msg'), 'do it');
+  s.run(0); s.run(6); s.run(11); s.run(16);
+  assert.deepEqual(s.keys(), []);
+  assert.equal(s.master().match(/second mate fm-mate .* waits at a dialog; no keys sent/g).length, 1);
 });

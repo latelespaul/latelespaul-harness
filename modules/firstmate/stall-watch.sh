@@ -10,7 +10,8 @@
 #   - "API Error" on the pane with an idle prompt for APIERR_MIN (5) min.
 # Recovery ladder: (a) press Enter once; (b) still frozen RETRY_MIN (3) min later: SIGTERM the claude
 # child of run-firstmate.sh, SIGKILL after TERM_WAIT (20) s, and the loop restarts it with --continue;
-# (c) once the new prompt shows, type "check inbox" + Enter. Every step goes to master-alerts.log
+# (c) once the new claude (a new pid, seen on two polls) draws a fresh prompt, type "check inbox" + Enter.
+# A pane that shows a permission or selection dialog gets no keys at all: one master line instead. Every step goes to master-alerts.log
 # (written directly, so it never reaches the user's Telegram), plus one summary line per episode.
 # Second mates (fm-* windows): "API Error" + idle prompt + their inbox not empty for APIERR_MIN min
 # means Enter, then one nudge and one master line on the next run. They are never killed.
@@ -43,17 +44,28 @@ submit() { tmux send-keys -t "$1" C-m; }
 type_line() { tmux send-keys -t "$1" -l -- "$2"; sleep 1; submit "$1"; }
 fm_claude() { pgrep -P "$1" -f '^claude( |$)' 2>/dev/null | head -1; }
 alive() { kill -0 "$1" 2>/dev/null; }
+dialog() { print -r -- "$1" | tail -25 | grep -qE 'Do you want to|^[[:space:]]*❯ *[0-9]+\.'; }
+# The restarted claude is ready: a pid that is not the killed one, the same on two polls 2 s apart,
+# and a pane that differs from the frame before the kill and shows an input prompt, not a dialog.
+ready() {
+  local a b p
+  a=$(fm_claude "$pp"); [[ -n $a && $a != $kpid ]] || return 1
+  sleep 2
+  b=$(fm_claude "$pp"); [[ $b == $a ]] || return 1
+  p=$(tmux capture-pane -p -t "$target" 2>/dev/null)
+  [[ $(raw_hash "$p") != $kraw ]] && print -r -- "$p" | grep -q '^❯' && ! dialog "$p" && print -r -- "$a"
+}
 
 # ---------- firstmate itself ----------
 freeze_watch() {
-  local main target pane ph h raw notes since pnotes step stepat praw idle why pid pp new i
+  local main target pane ph h raw notes since pnotes step stepat praw idle why pid pp new i kpid kraw
   main=$(tmux list-windows -t "$SESSION" -F '#{window_index} #W' 2>/dev/null | awk '$2 !~ /^fm-/ {print $1; exit}')
   [[ -n $main ]] || return 0
   target="$SESSION:$main"
   pane=$(tmux capture-pane -p -t "$target" 2>/dev/null)
   h=$(calm_hash "$pane"); raw=$(raw_hash "$pane")
   notes=$(print -l "$FM"/state/inbox/*.note(N) | grep -c .)
-  [[ -f $FREEZE_STATE ]] && read -r ph praw since pnotes step stepat < "$FREEZE_STATE"
+  [[ -f $FREEZE_STATE ]] && read -r ph praw since pnotes step stepat kpid kraw < "$FREEZE_STATE"
   step=${step:-0} stepat=${stepat:-0}
   # Progress: the pane changed, a note was drained, or a busy pane still redraws its spinner.
   if [[ $ph != $h ]] || (( notes < ${pnotes:-0} )) || { busy "$pane" && [[ $praw != $raw ]]; }; then
@@ -69,15 +81,18 @@ freeze_watch() {
   pp=$(tmux display-message -p -t "$target" '#{pane_pid}' 2>/dev/null)
   if (( step == 2 )); then
     # (c) after the restart: type "check inbox" once the new prompt shows.
-    if [[ -n $(fm_claude "$pp") ]] && print -r -- "$pane" | grep -q '^❯'; then
+    if new=$(ready); then
       type_line "$target" "check inbox"
-      master "freeze-watch step c: typed \"check inbox\" into $target after the restart."
+      master "freeze-watch step c: firstmate restarted as pid $new; typed \"check inbox\" into $target."
       master "Freeze watch: firstmate was frozen and is restarted (--continue) and nudged. Check it: tmux capture-pane -p -t $target"
       step=0 since=$now
     elif (( now - stepat >= FREEZE_MIN * 60 )); then
       master "Freeze watch: firstmate ($target) did not come back with a prompt ${FREEZE_MIN} min after the restart; look at it by hand."
       step=3
     fi
+  elif [[ -n $why ]] && (( step < 2 )) && dialog "$pane"; then
+    master "Freeze watch: firstmate ($target) looks frozen ($why) but waits at a dialog; no keys sent, decide it by hand: tmux capture-pane -p -t $target"
+    step=3
   elif [[ -n $why ]] && (( step == 0 )); then
     # (a) press Enter once.
     submit "$target"
@@ -90,14 +105,14 @@ freeze_watch() {
       master "Freeze watch: firstmate looks frozen ($why) but $target has no claude child of run-firstmate.sh; restart it by hand."
       step=3
     else
+      kpid=$pid kraw=$raw
       kill -TERM "$pid" 2>/dev/null
       master "freeze-watch step b: Enter did not help; sent SIGTERM to firstmate claude pid $pid."
       for (( i = 0; i < TERM_WAIT; i++ )); do alive "$pid" || break; sleep 1; done
       if alive "$pid"; then kill -KILL "$pid" 2>/dev/null; master "freeze-watch step b: pid $pid ignored SIGTERM for ${TERM_WAIT}s; sent SIGKILL."; fi
       step=2 stepat=$now
       for (( i = 0; i < READY_WAIT; i += 2 )); do
-        new=$(fm_claude "$pp")
-        if [[ -n $new && $new != $pid ]] && tmux capture-pane -p -t "$target" 2>/dev/null | grep -q '^❯'; then
+        if new=$(ready); then
           type_line "$target" "check inbox"
           master "freeze-watch step c: firstmate restarted as pid $new; typed \"check inbox\"."
           master "Freeze watch: firstmate was frozen ($why); restarted (--continue) and nudged. Check it: tmux capture-pane -p -t $target"
@@ -108,7 +123,7 @@ freeze_watch() {
       pane=$(tmux capture-pane -p -t "$target" 2>/dev/null); h=$(calm_hash "$pane"); raw=$(raw_hash "$pane"); since=$now
     fi
   fi
-  print -r -- "$h $raw ${since:-$now} $notes $step $stepat" > "$FREEZE_STATE"
+  print -r -- "$h $raw ${since:-$now} $notes $step $stepat ${kpid:-0} ${kraw:-0}" > "$FREEZE_STATE"
 }
 freeze_watch
 
@@ -126,7 +141,9 @@ tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep '^fm-' | while read -
     inbox=${meta:+${meta%.meta}.inbox}
     msgs=$([[ -n $inbox ]] && print -l "$inbox"/*.msg(N) | grep -c .)
     if (( ${msgs:-0} > 0 )); then
-      if (( !(notified & 4) )); then
+      if dialog "$pane"; then
+        (( notified & 16 )) || { master "Freeze watch: second mate $w shows API Error with ${msgs} inbox message(s) but waits at a dialog; no keys sent, decide it by hand."; (( notified |= 16 )); }
+      elif (( !(notified & 4) )); then
         submit "$SESSION:$w"; (( notified |= 4 ))
         master "freeze-watch: second mate $w shows API Error, idle ${idle} min, ${msgs} inbox message(s); pressed Enter."
       elif (( !(notified & 8) )); then
