@@ -1,6 +1,6 @@
 ---
 name: eyes-hands
-description: Choose the browser or tool for any web task, then work in a desktop app or browser like a person. The "eyes" read the screen (macOS Accessibility and screenshots); the "hands" post real mouse and keyboard input (Hammerspoon). Use for any task in a browser or app on the user's Mac (fill a form, click through a site, check a page, book, submit, find a blocker), and before any web step ("open this site", "look up", "check a web page", research) to pick the lane: web tools, a cloud session, the agent's CDP Chrome, or the user's own Chrome. Use it whenever eyes/hands tools are installed (such as the Eyes & Hands MCP tools eyes_status, eyes_fields, hands_click, or the `eyeshands` command), even if the user never says "eyes" or "hands". Covers the look-think-act-check loop, the MCP and CLI names for each step, checks, refusals, pauses when the user touches the Mac, and hand-offs.
+description: Choose the browser or tool for any web task, then work in a desktop app or browser like a person. The "eyes" read the screen (macOS Accessibility and screenshots); the "hands" post real mouse and keyboard input (Hammerspoon). Use for any task in a browser or app on the user's Mac (fill a form, click through a site, check a page, book, submit, find a blocker), and before any web step ("open this site", "look up", "check a web page", research) to pick the lane: web tools, a cloud session, the agent's CDP Chrome, the Claude in Chrome extension, or eyes + hands in the user's own Chrome. Use it whenever eyes/hands tools are installed (such as the Eyes & Hands MCP tools eyes_status, eyes_fields, hands_click, or the `eyeshands` command), even if the user never says "eyes" or "hands". Covers the look-think-act-check loop, the MCP and CLI names for each step, checks, refusals, pauses when the user touches the Mac, and hand-offs.
 ---
 
 # Eyes and hands
@@ -42,27 +42,35 @@ First ask: does the task need a sign-in or the user's account? Then pick one cha
 ```
 task
  │
- ├─ needs no sign-in and no user account            → NO LOCAL BROWSER:
+ ├─ 1. needs no sign-in and no user account         → NO LOCAL BROWSER:
  │                                                     web tools (search, fetch),
  │                                                     else a cloud session,
  │                                                     else the agent's CDP Chrome (read-only)
  │
  └─ acts as the user (their logins or accounts)
-     ├─ default                                     → DESKTOP (eyes + hands, normal Chrome)
+     ├─ 2. normal signed-in site (mail, docs,       → EXTENSION (Claude in Chrome,
+     │     dashboards, consoles), extension on         in the user's normal Chrome)
+     ├─ 3. strict site, or any sign-up, login,      → DESKTOP (eyes + hands, normal Chrome)
+     │     submit or send; also the fallback
      └─ only if the task QUALIFIES for CDP (below)  → CDP (Chrome with the debug port)
 ```
 
-**No sign-in needed** (public pages, docs, research, price checks, reading a site): do not use the user's Chrome.
+**Lane 1: no sign-in needed** (public pages, docs, research, price checks, reading a site): do not use the user's Chrome.
 - Use the web tools first: search, fetch, or a web-fetch subagent.
 - If you must drive a real page, use a cloud session (its browser runs in the cloud).
 - Else use the agent's own CDP Chrome, read-only.
 - This keeps the user's Mac and screen free.
 
-**Acts as the user** (their Gmail or Google, sign-ups, logins, forms, messages, accounts, shops, job portals): use the user's normal Chrome with their own logins, driven by eyes + hands. Never use a Chrome started in debug (CDP) mode to sign up, log in, fill or submit forms, send messages, pay or change an account. Sites detect the debug port and flag the session as a bot. Read-only CDP is allowed only in the cases the CDP table below lists.
+**Lane 2: normal signed-in sites** (reading mail, docs, dashboards, cloud consoles): use the Claude in Chrome extension, when it is installed.
+- It runs in the user's normal Chrome with their own logins, and it opens no debug port.
+- Its tools are `mcp__claude-in-chrome__*`. Chrome shows a "debugging" bar on each tab that it controls.
+- If the extension is not installed, use lane 3.
+
+**Lane 3: strict sites and acting steps** (LinkedIn, Google sign-in, job portals, banks, shops, any site that showed a CAPTCHA or bot wall; every sign-up, login, submit, send or payment): use the user's normal Chrome with their own logins, driven by eyes + hands. Never use a Chrome started in debug (CDP) mode to sign up, log in, fill or submit forms, send messages, pay or change an account. Sites detect the debug port and flag the session as a bot. Read-only CDP is allowed only in the cases the CDP table below lists.
 
 CDP (Chrome DevTools Protocol) is the browser module's `agent` mode (Chrome runs with its debug port); DESKTOP is its `desktop` mode.
 
-**DESKTOP is the default** for every task that acts as the user or on a site that watches for bots:
+**DESKTOP is lane 3**, and the fallback for lane 2. Use it for every acting step and on every site that watches for bots:
 - applying, signing up, logging in;
 - filling or submitting forms, sending messages, editing account settings;
 - anything on LinkedIn, ATS portals, Google, banks or shops.
