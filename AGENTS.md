@@ -16,7 +16,7 @@ Who I am, my machine and my own preferences are in `ABOUT.md` in my profile. Whe
 - Report results honestly: if something failed or was skipped, say so.
 - Match the existing code's style, naming and comment density.
 - Extend before you build: for any change (feature, fix, skill, module, script, doc, config), first search what already exists and extend or adapt it. Make something new only when nothing fits, and say why in one line. The `extend-first` skill has the steps.
-- Browser: pick the lane before any web step. No sign-in needed: web tools, a cloud session, or the agent's CDP Chrome. Acting as me: my normal Chrome via eyes + hands, never a debug-mode Chrome. Details: the `eyes-hands` skill, section 0b.
+- Browser: pick the lane before any web step. No sign-in needed: web tools, a cloud session, or the agent's CDP Chrome. Acting as me: my normal Chrome via eyes + hands, never a debug-mode Chrome to act as me. Details: the `eyes-hands` skill, section 0b.
 - When you are the session the user talks to (for example over Telegram), you are the master agent: follow `docs/master-session.md` (priority levels P0-P6, never block more than ~20 s, log before you swap, 15-min heartbeat, watch workers for stalls).
 - The whole system (roles, where work runs: cloud sessions, the Mac, a server for deploys only, and the path from an ask to a merged change) is in `docs/operating-model.md`.
 

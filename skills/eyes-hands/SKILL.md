@@ -58,7 +58,7 @@ task
 - Else use the agent's own CDP Chrome, read-only.
 - This keeps the user's Mac and screen free.
 
-**Acts as the user** (their Gmail or Google, sign-ups, logins, forms, messages, accounts, shops, job portals): use the user's normal Chrome with their own logins, driven by eyes + hands. Never use a Chrome started in debug (CDP) mode for this. Sites detect the debug port and flag the session as a bot.
+**Acts as the user** (their Gmail or Google, sign-ups, logins, forms, messages, accounts, shops, job portals): use the user's normal Chrome with their own logins, driven by eyes + hands. Never use a Chrome started in debug (CDP) mode to sign up, log in, fill or submit forms, send messages, pay or change an account. Sites detect the debug port and flag the session as a bot. Read-only CDP is allowed only in the cases the CDP table below lists.
 
 CDP (Chrome DevTools Protocol) is the browser module's `agent` mode (Chrome runs with its debug port); DESKTOP is its `desktop` mode.
 
