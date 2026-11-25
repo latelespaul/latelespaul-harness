@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, realpa
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCron, cronMatches, inWindow, dueSlots, parseDuration } from './hcron.mjs';
+import { parseCron, cronMatches, inWindow, dueSlots, parseDuration, noteTick } from './hcron.mjs';
 
 const at = (h, m, day = 10) => new Date(2026, 10, day, h, m, 0); // Nov 2026, local time (10th = Tue)
 
@@ -317,4 +317,21 @@ test('doctor flags a job that looks like it drives the screen but holds no awake
   assert.match(r.stdout, /^ok +plain$/m);
   s.run('rm', 'shots');
   assert.equal(s.run('doctor').status, 0);
+});
+
+test('a gap between ticks (Mac asleep) starts a new awake_since; steady ticks keep it', () => {
+  const t0 = new Date(2026, 10, 10, 9, 0);
+  const first = noteTick({}, t0);
+  assert.equal(first.awake_since, t0.toISOString());
+  const steady = noteTick(first, new Date(t0.getTime() + 60_000));
+  assert.equal(steady.awake_since, t0.toISOString());
+  const woke = new Date(t0.getTime() + 3 * 3600_000);
+  assert.equal(noteTick(steady, woke).awake_since, woke.toISOString());
+});
+
+test('tick writes the scheduler state file', () => {
+  const s = sandbox();
+  spawnSync(process.execPath, [HCRON, 'tick'], { env: s.env, encoding: 'utf8' });
+  const st = JSON.parse(readFileSync(join(s.d, 'state', '.scheduler.json'), 'utf8'));
+  assert.ok(st.last_tick && st.awake_since);
 });

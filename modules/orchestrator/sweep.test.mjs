@@ -23,6 +23,23 @@ test('hcron: a job is overdue only past 2x its interval', () => {
   assert.deepEqual(keys(hcronProblems(jobs, st, now)), ['hcron:overdue:a']);
 });
 
+test('hcron: after a sleep, overdue counts from the wake, and several jobs share one line', () => {
+  const jobs = { jobs: { a: { cron: '*/5 * * * *' }, b: { cron: '0 * * * *' } } };
+  const st = { a: { started_at: new Date(now - 600 * MIN).toISOString() }, b: { started_at: new Date(now - 600 * MIN).toISOString() } };
+  // Woke 8 min ago: a (every 5 min) is not overdue yet, b (hourly) neither.
+  assert.deepEqual(hcronProblems(jobs, st, now, new Date(now - 8 * MIN).toISOString()), []);
+  // Awake for hours: both overdue, in one line.
+  const ps = hcronProblems(jobs, st, now, new Date(now - 300 * MIN).toISOString());
+  assert.deepEqual(keys(ps), ['hcron:overdue:a,b']);
+  assert.match(ps[0].text, /2 jobs overdue: a has not run.*; b has not run/);
+});
+
+test('hcron: an unreadable wake time is ignored, so overdue still counts from the last run', () => {
+  const jobs = { jobs: { a: { cron: '*/5 * * * *' } } };
+  const st = { a: { started_at: new Date(now - 600 * MIN).toISOString() } };
+  assert.deepEqual(keys(hcronProblems(jobs, st, now, 'not-a-date')), ['hcron:overdue:a']);
+});
+
 test('hcron: windows and yearly jobs', () => {
   // Hourly job with a night window: at noon the last two allowed slots are 04:00 and 03:00, so a run at 04:00 is fine.
   const night = { cron: '0 * * * *', window: '20:00-05:00' };

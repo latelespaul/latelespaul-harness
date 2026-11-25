@@ -8,7 +8,7 @@
 //   sweep.mjs              run every check, send the new lines
 //   sweep.mjs --dry-run    print every problem found; send nothing, record nothing
 //
-// Checks: hcron (global pause, a job overdue for 2x its interval, a job failing), firstmate (dead
+// Checks: hcron (global pause, jobs overdue for 2x their interval since the Mac woke, a job failing), firstmate (dead
 // workers, fm-* windows idle, inbox notes waiting), no-mistakes (runs parked at a gate or awaiting
 // the agent), GitHub PRs (green and mergeable but not merged, conflicting), health targets, the Mac
 // (load average, screen locked while a gui job is due). An idle fm-* window is only info (printed,
@@ -26,7 +26,7 @@ import { homedir, loadavg, cpus } from 'node:os';
 import { lookup } from 'node:dns/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCron, cronMatches, inWindow, screenLocked } from '../cron/hcron.mjs';
+import { parseCron, cronMatches, inWindow, screenLocked, SCHEDULER_STATE } from '../cron/hcron.mjs';
 
 const MIN = 60_000;
 export const LIMITS = { dedupeMin: 120, fmIdleMin: 20, inboxMin: 10, parkedMin: 15, prGreenMin: 30 };
@@ -45,9 +45,12 @@ export function lastTwoSlots(job, now, maxMin = 14 * 1440) {
   return out;
 }
 
-// jobs = the parsed jobs.json; states = { id: state json }; returns [{ key, text }].
-export function hcronProblems(jobs, states, now = new Date()) {
-  const out = [];
+// jobs = the parsed jobs.json; states = { id: state json }; awakeSince = when hcron's ticks resumed
+// after the last gap (Mac asleep or off). Overdue counts from then, so one sleep is not one line per
+// job, and several overdue jobs share one line. Returns [{ key, text }].
+export function hcronProblems(jobs, states, now = new Date(), awakeSince = null) {
+  const out = [], overdue = [];
+  const awake = toMs(awakeSince) || -Infinity; // missing or unreadable: count from the last run
   if (jobs.paused) out.push({ key: 'hcron:paused', text: 'hcron: ALL jobs paused (global pause on): nothing scheduled runs. Lift with `hcron resume all` if nobody meant it.' });
   for (const [id, job] of Object.entries(jobs.jobs || {})) {
     if (job.paused) continue;
@@ -60,9 +63,12 @@ export function hcronProblems(jobs, states, now = new Date()) {
     if (slots.length < 2) continue;
     const interval = slots[0] - slots[1];
     const last = toMs(st.started_at) ?? toMs(job.added);
-    if (last != null && now - last > 2 * interval && last < slots[1].getTime())
-      out.push({ key: `hcron:overdue:${id}`, text: `hcron: ${id} has not run for ${ago(now - last)} (every ${ago(interval)}). ${st.skip_notified ? `Last skip: ${st.skip_notified}. ` : ''}Check: hcron status` });
+    if (last != null && now - Math.max(last, awake) > 2 * interval && last < slots[1].getTime())
+      overdue.push(`${id} has not run for ${ago(now - last)} (every ${ago(interval)}${st.skip_notified ? `; last skip: ${st.skip_notified}` : ''})`);
   }
+  const ids = overdue.map(o => o.split(' ')[0]);
+  if (overdue.length === 1) out.push({ key: `hcron:overdue:${ids[0]}`, text: `hcron: ${overdue[0]}. Check: hcron status` });
+  else if (overdue.length) out.push({ key: `hcron:overdue:${ids.join(',')}`, text: `hcron: ${overdue.length} jobs overdue: ${overdue.join('; ')}. Check: hcron status` });
   return out;
 }
 
@@ -191,7 +197,7 @@ function collectHcron(profile) {
   const jobs = readJson(process.env.HCRON_JOBS || join(profile, 'cron/jobs.json'), { jobs: {} });
   const dir = process.env.HCRON_STATE || join(HOME, '.local/state/hcron');
   const states = Object.fromEntries(Object.keys(jobs.jobs || {}).map(id => [id, readJson(join(dir, `${id}.json`), {})]));
-  return { jobs, states };
+  return { jobs, states, awakeSince: readJson(join(dir, SCHEDULER_STATE), {}).awake_since };
 }
 
 function collectFirstmate(env) {
@@ -264,7 +270,7 @@ export async function sweep(env = harnessEnv()) {
   const health = await Promise.all((conf.health || []).map(checkHealth));
   const urls = health.filter((r, i) => conf.health[i].url);
   const down = urls.length ? netDown(urls) : !(await resolves('github.com'));
-  await guard('hcron', () => hcronProblems(hc.jobs, hc.states));
+  await guard('hcron', () => hcronProblems(hc.jobs, hc.states, new Date(), hc.awakeSince));
   await guard('firstmate', () => firstmateProblems(collectFirstmate(env)));
   await guard('no-mistakes', () => noMistakesProblems(collectNoMistakes()));
   if (!down) for (const repo of conf.repos || []) await guard(`PRs of ${repo}`, () => prProblems(repo, collectPrs(repo), Date.now(), conf.ignore || []));
