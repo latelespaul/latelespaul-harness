@@ -1,6 +1,6 @@
 ---
 name: extend-first
-description: Reuse-first workflow for ANY change - a feature, fix, skill, module, script, command, hook, doc, rule or config. Load it FIRST, before your first search, file read or edit, whenever the user asks to add, build, create, make, write, change, update, improve, fix, refactor or set up something ("new skill", "new module", "new script", "make a skill for X", "can we have a tool that...", "refactor X"), or when you are about to create a new file, skill or module yourself, even if the user never says "reuse" or "extend". It gives the steps: search what already exists, extend or adapt it, and build something new only when nothing fits. Not for questions, lookups or explanations that change nothing.
+description: Reuse-first workflow for ANY change - a feature, fix, skill, module, script, command, hook, doc, rule or config. Load it FIRST, before your first search, file read or edit, whenever the user asks to add, build, create, make, write, change, update, improve, fix, refactor or set up something ("new skill", "new module", "new script", "make a skill for X", "can we have a tool that...", "refactor X"), or when you are about to create a new file, skill or module yourself, even if the user never says "reuse" or "extend". It gives the steps - search what already exists, extend or adapt it, and build something new only when nothing fits. Not for questions, lookups or explanations that change nothing.
 ---
 
 # Extend first
