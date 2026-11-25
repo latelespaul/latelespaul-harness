@@ -282,7 +282,7 @@ async function main(args) {
   const notify = process.env.SWEEP_NOTIFY || `python3 "${join(HARNESS, 'modules/cron/tg-notify.py')}"`;
   for (const p of send) {
     const r = spawnSync('/bin/zsh', ['-c', `${notify} "$1"`, 'sweep', `Sweep: ${p.text}`], { stdio: 'ignore', timeout: 30_000 });
-    if (r.status !== 0) delete sent[p.key];   // not delivered: try again next sweep
+    if (r.status !== 0) { delete sent[p.key]; delete sent[`text:${p.text}`]; }   // not delivered: try again next sweep
     console.log(`${r.status === 0 ? 'sent' : 'NOT sent'}: ${p.text}`);
   }
   mkdirSync(dirname(statePath), { recursive: true });
