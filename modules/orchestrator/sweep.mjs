@@ -15,7 +15,7 @@
 // not sent) unless inbox notes are waiting. When every URL health target fails on DNS (or, with no
 // URL targets, github.com does not resolve), the network is down: one "network down" line is sent
 // and the PR, health and hcron-failure lines that would follow from it are held back.
-// Personal values (repos, health URLs, load limit) come from <profile>/orchestrator/sweep.json:
+// Personal values (repos, health URLs, load limit, ignore list) come from <profile>/orchestrator/sweep.json:
 //   { "repos": ["owner/name"], "health": [{ "name": "app", "url": "https://..." } | { "name": "x", "cmd": "..." }],
 //     "load_max": 12, "ignore": ["owner/name#62", "label:parked"] }
 // "ignore" drops PR lines for a PR (owner/name#N) or for any PR carrying a label (label:NAME).
