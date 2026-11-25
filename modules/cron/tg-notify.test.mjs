@@ -102,3 +102,14 @@ test('a VM master pulled this Mac\'s alerts in the last 10 min: queued for it; a
   assert.equal(t.run('mac', 'job', 'failed').status, 1);
   assert.ok(existsSync(t.down), 'an older pull counts as master down');
 });
+
+test('a VM pull after an outage\'s last alert ends it: the next outage gets its own note', () => {
+  const s = sandbox({ up: false });
+  s.pulled(2 * 3600);
+  assert.equal(s.run('mac', 'a', 'failed').status, 1);
+  assert.equal(s.run('mac', 'b', 'failed').status, 0);
+  const st = JSON.parse(readFileSync(s.down, 'utf8'));
+  writeFileSync(s.down, JSON.stringify({ ...st, since: st.since - 3 * 3600, sent: st.sent - 3 * 3600, last: st.last - 3 * 3600 }));
+  assert.equal(s.run('mac', 'c', 'failed').status, 1, 'a new outage: its note is due at once');
+  assert.equal(JSON.parse(readFileSync(s.down, 'utf8')).count, 1, 'counts only the new outage');
+});

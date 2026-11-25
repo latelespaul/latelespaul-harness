@@ -12,7 +12,8 @@
 # master session is down, the alert is still logged there, and Telegram gets one note per outage
 # ("master session down since HH:MM; N alerts queued") plus at most one reminder every 6 h, instead
 # of every alert (~/.claude/channels/telegram/master-down.json keeps the outage's count; it is cleared
-# once the master is back). TG_NOTIFY_DIRECT=1 always sends the alert itself.
+# by the next alert while the master is up, such as the heartbeat's "up again", and a VM pull after the
+# outage's last alert starts a new outage). TG_NOTIFY_DIRECT=1 always sends the alert itself.
 import json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timezone
 
@@ -62,12 +63,16 @@ def local_master_up():
     return ".claude-tg" in r.stdout if sys.platform == "darwin" else r.returncode == 0
 
 
-def remote_master_up():
+def last_pull():
     mn = harness_value("MACNODE_DIR", os.path.join(os.path.expanduser("~"), ".local/state/mac-node"))
     try:
-        return time.time() - os.path.getmtime(os.path.join(mn, "alerts-pulled")) < REMOTE_FRESH
+        return os.path.getmtime(os.path.join(mn, "alerts-pulled"))
     except OSError:
-        return False
+        return 0
+
+
+def remote_master_up():
+    return time.time() - last_pull() < REMOTE_FRESH
 
 
 def master_up():
@@ -103,9 +108,12 @@ def outage_note(now=None):
         st = json.load(open(DOWN_FILE))
     except (OSError, ValueError):
         st = {}
+    if last_pull() > st.get("last", now):
+        st = {}
     first = "since" not in st
     st.setdefault("since", now)
     st["count"] = st.get("count", 0) + 1
+    st["last"] = now
     due = first or now - st.get("sent", 0) >= REMIND_EVERY
     if due:
         st["sent"] = now
