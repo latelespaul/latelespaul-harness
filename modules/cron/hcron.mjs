@@ -19,7 +19,9 @@
 // when Hammerspoon cannot hold it, `caffeinate -d -i -u -w <job pid>` keeps the display awake instead and you are told);
 // failures, timeouts and skips go to $HCRON_NOTIFY (a command that takes the message as its last
 // argument), never silently. `hcron doctor` (and `add`) warn about a job that looks like it drives
-// the screen but holds no awake mode.
+// the screen but holds no awake mode. Each tick also writes $HCRON_STATE/.scheduler.json
+// ({ last_tick, awake_since }): a gap of over 5 minutes between ticks (Mac asleep or off) starts a new
+// awake_since, so the orchestrator sweep doesn't call jobs overdue for slots missed during the gap.
 
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, renameSync, realpathSync, statSync } from 'node:fs';
@@ -118,6 +120,14 @@ const saveJobs = j => writeJson(JOBS, j);
 const statePath = id => join(STATE_DIR, `${id}.json`);
 const loadState = id => readJson(statePath(id), {});
 const saveState = (id, s) => writeJson(statePath(id), s);
+export const SCHEDULER_STATE = '.scheduler.json';   // dot name: never a job id
+export const WAKE_GAP_MIN = 5;
+// A tick after a gap (sleep, power off, launchd down) marks when the scheduler came back.
+export function noteTick(prev, now) {
+  const last = prev.last_tick ? Date.parse(prev.last_tick) : NaN;
+  const gap = !(now - last <= WAKE_GAP_MIN * 60_000);
+  return { last_tick: now.toISOString(), awake_since: gap || !prev.awake_since ? now.toISOString() : prev.awake_since };
+}
 
 function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 
@@ -263,6 +273,8 @@ function done(id, rc, secs, timedOut, extra = {}) {
 }
 
 function tick(now = new Date()) {
+  const sched = join(STATE_DIR, SCHEDULER_STATE);
+  writeJson(sched, noteTick(readJson(sched, {}), now));
   const all = loadJobs();
   if (all.paused) return;
   let lock;
