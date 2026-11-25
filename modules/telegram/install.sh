@@ -232,7 +232,8 @@ if [[ $mode == install && $same == 1 ]]; then
 fi
 
 # From inside the session, finish in a detached process (its own session, so the restart can't kill it).
-if ! dry && [[ -z $TELEGRAM_INSTALL_DETACHED ]] && inside_session; then
+detached=${TELEGRAM_INSTALL_DETACHED:-}; unset TELEGRAM_INSTALL_DETACHED
+if ! dry && [[ -z $detached ]] && inside_session; then
   act mkdir -p $state/logs
   TELEGRAM_INSTALL_DETACHED=1 /usr/bin/python3 -c 'import os, sys
 if os.fork(): os._exit(0)
@@ -272,6 +273,7 @@ fi
 
 if (( linux )); then
   # tmux keeps the session; run.sh restarts claude inside it, and the watchdog restarts tmux.
+  unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT
   act tmux new -d -s claude-tg $mod/run.sh
   cron_hint
 else
