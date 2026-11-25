@@ -6,7 +6,14 @@ mkdir -p $TELEGRAM_WORKDIR
 cd $TELEGRAM_WORKDIR
 WD=~/.claude/channels/telegram/watchdog
 mkdir -p $WD
-orphaned() { [ "$(ps -o ppid= -p $$ | tr -d ' ')" = 1 ] }
+# Orphaned: our parent died, or the screen/tmux session we ran in is gone (run.sh's parent is login,
+# which can outlive screen; a loop with no terminal then restarts claude every 11 s, each exiting at once).
+orphaned() {
+  [ "$(ps -o ppid= -p $$ | tr -d ' ')" = 1 ] && return 0
+  [[ -n $STY ]] && ! kill -0 ${STY%%.*} 2>/dev/null && return 0
+  [[ -n $TMUX ]] && ! tmux has-session -t '=claude-tg' 2>/dev/null && return 0
+  return 1
+}
 # Polling off (TELEGRAM_POLLING=0): a plain session without the Telegram channel, so nothing here
 # polls the bot (telegram-settings.json keeps the plugin off too).
 channels=(--channels plugin:telegram@claude-plugins-official)
