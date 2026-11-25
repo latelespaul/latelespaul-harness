@@ -60,7 +60,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 - **About you:** edit `ABOUT.md` in your profile. It is loaded into every session and wins over `AGENTS.md`.
 - **Rules for everyone:** edit `AGENTS.md` here (and send it upstream if it helps others).
 - **How agents explain things:** `docs/explaining-standard.md` (whole process, STE-style writing), applied by the `explain` skill; `node scripts/ste-check.mjs <file|->` checks a draft (tests: `node --test scripts/ste-check.test.mjs`).
-- **A skill, command or subagent:** add `skills/<name>/SKILL.md`, `commands/<name>.md` or `agents/<name>.md` to your profile (private) or to this repo (shared), then re-run `install.sh` to link it.
+- **A skill, command or subagent:** first check that no existing one covers it (the `extend-first` skill); then add `skills/<name>/SKILL.md`, `commands/<name>.md` or `agents/<name>.md` to your profile (private) or to this repo (shared), then re-run `install.sh` to link it.
 - **Claude settings on every machine:** put them in your profile's `settings.json` (for example `model`, `theme`, extra hooks); `install.sh` merges it into `~/.claude/settings.json`. Settings you change locally are kept too.
 - **More working folders with shared memory:** add them to `MEMORY_DIRS` in `harness.env`.
 - **A module:** `modules/<name>/` with an `install.sh` (supports `--status`, honours `HARNESS_DRY_RUN` and `HARNESS_SKIP_LAUNCHD` via `lib/common.sh`) and a `SETUP.md`; optional `claude-notes.md.tmpl` (appended to CLAUDE.md), `settings.json.tmpl` (merged into settings), `skill/SKILL.md.tmpl` (rendered into `~/.claude/skills/<name>/`). Templates use `__KEY__` placeholders for values from `harness.env`. Enable it with `MODULES` in `harness.env`.
