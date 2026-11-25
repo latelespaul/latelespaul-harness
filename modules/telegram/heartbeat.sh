@@ -4,7 +4,7 @@
 #   * * * * * /bin/zsh <harness>/modules/telegram/heartbeat.sh >/dev/null 2>&1
 # Each run checks three things and reports only a change (down, or up again), through
 # modules/cron/tg-notify.py: to <profile>/logs/master-alerts.log while the master session is up, else
-# to Telegram marked "(master session down)".
+# logged there too and Telegram gets one "master session down" note per outage.
 #   master     the master session claude-tg (tmux on Linux, screen on macOS)
 #   firstmate  firstmate's tmux session ($FIRSTMATE_SESSION)
 #   mac-node   the link to the Mac (only with the macnode module, on the VM side)

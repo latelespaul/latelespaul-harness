@@ -9,8 +9,11 @@
 # as up when its session "claude-tg" runs here (screen on macOS, tmux on Linux), or when a master
 # session on a VM pulled this Mac's alerts over mac-node in the last 10 minutes
 # ($MACNODE_DIR/alerts-pulled; the VM's heartbeat pulls every minute while its master runs). If the
-# master session is down, the alert goes to Telegram as before, marked "(master session down)".
-# TG_NOTIFY_DIRECT=1 always sends.
+# master session is down, the alert is still logged there, and Telegram gets one note per outage
+# ("master session down since HH:MM; N alerts queued") plus at most one reminder every 6 h, instead
+# of every alert (~/.claude/channels/telegram/master-down.json keeps the outage's count; it is cleared
+# by the next alert while the master is up, such as the heartbeat's "up again", and a VM pull after the
+# outage's last alert starts a new outage). TG_NOTIFY_DIRECT=1 always sends the alert itself.
 import json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timezone
 
@@ -60,25 +63,34 @@ def local_master_up():
     return ".claude-tg" in r.stdout if sys.platform == "darwin" else r.returncode == 0
 
 
-def remote_master_up():
+def last_pull():
     mn = harness_value("MACNODE_DIR", os.path.join(os.path.expanduser("~"), ".local/state/mac-node"))
     try:
-        return time.time() - os.path.getmtime(os.path.join(mn, "alerts-pulled")) < REMOTE_FRESH
+        return os.path.getmtime(os.path.join(mn, "alerts-pulled"))
     except OSError:
-        return False
+        return 0
+
+
+def remote_master_up():
+    return time.time() - last_pull() < REMOTE_FRESH
 
 
 def master_up():
     return local_master_up() or remote_master_up()
 
 
-def to_master(text):
-    """Queue the alert for the master session; True when queued."""
-    if os.environ.get("TG_NOTIFY_DIRECT") == "1":
-        return False
+DOWN_FILE = os.path.join(TG_DIR, "master-down.json")
+REMIND_EVERY = 6 * 3600
+
+
+def alerts_to_master():
     prof = profile_dir()
-    if not prof or not os.path.exists(os.path.join(prof, "telegram", "ALERTS_TO_MASTER")) or not master_up():
-        return False
+    return bool(prof) and os.path.exists(os.path.join(prof, "telegram", "ALERTS_TO_MASTER")) and os.environ.get("TG_NOTIFY_DIRECT") != "1"
+
+
+def log_alert(text):
+    """Append the alert to the master session's log; True when written."""
+    prof = profile_dir()
     try:
         os.makedirs(os.path.join(prof, "logs"), exist_ok=True)
         with open(os.path.join(prof, "logs", "master-alerts.log"), "a") as f:
@@ -86,6 +98,37 @@ def to_master(text):
         return True
     except OSError:
         return False
+
+
+def outage_note(now=None):
+    """The master is down: count this alert in the outage, and return the one note for Telegram when
+    it is due (the first alert of the outage, then every REMIND_EVERY), else None."""
+    now = now or time.time()
+    try:
+        st = json.load(open(DOWN_FILE))
+    except (OSError, ValueError):
+        st = {}
+    if last_pull() > st.get("last", now):
+        st = {}
+    first = "since" not in st
+    st.setdefault("since", now)
+    st["count"] = st.get("count", 0) + 1
+    st["last"] = now
+    due = first or now - st.get("sent", 0) >= REMIND_EVERY
+    if due:
+        st["sent"] = now
+    try:
+        os.makedirs(TG_DIR, exist_ok=True)
+        with open(DOWN_FILE + ".tmp", "w") as f:
+            json.dump(st, f)
+        os.replace(DOWN_FILE + ".tmp", DOWN_FILE)
+    except OSError:
+        pass
+    if not due:
+        return None
+    n = st["count"]
+    return (f"master session {'down' if first else 'still down'} since {time.strftime('%H:%M', time.localtime(st['since']))}; "
+            f"{n} alert{'s' if n != 1 else ''} queued in logs/master-alerts.log")
 
 
 USAGE = 'usage: tg-notify.py "message"   (sends a send-only Telegram alert, or queues it for the master session)'
@@ -97,11 +140,18 @@ def main():
     if not text or "-h" in args or "--help" in args:
         print(USAGE, file=sys.stderr)
         return 2
-    if to_master(text):
-        return 0
-    prof = profile_dir()
-    if prof and os.path.exists(os.path.join(prof, "telegram", "ALERTS_TO_MASTER")) and os.environ.get("TG_NOTIFY_DIRECT") != "1":
-        text += " (master session down)"
+    if alerts_to_master():
+        if master_up():
+            try:
+                os.remove(DOWN_FILE)  # the outage, if any, is over
+            except OSError:
+                pass
+            if log_alert(text):
+                return 0
+        elif log_alert(text):
+            text = outage_note()
+            if text is None:
+                return 0
     token = env().get("TELEGRAM_BOT_TOKEN", "")
     if not text or not token:
         return 1

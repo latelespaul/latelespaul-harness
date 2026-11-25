@@ -2,8 +2,8 @@
 // The master-session heartbeat, offline: a throwaway HOME and profile, fake `tmux` and `screen` (they say
 // a session is up while $d/up-<name> exists; the fakes come first on PATH and TMUX is unset, so no real
 // tmux server is reached) and a stub for mac-node (link up while $d/link-up exists; it records pulls).
-// tg-notify.py is the real one: with the master up it appends to the sandbox's master-alerts.log; with
-// it down it would send to Telegram, and HOME has no bot token, so nothing leaves the machine.
+// tg-notify.py is the real one: it appends to the sandbox's master-alerts.log; with the master down it
+// would also send one outage note to Telegram, and HOME has no bot token, so nothing leaves the machine.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -81,17 +81,21 @@ test('mac-node link down: reported once, and no pull until it is back; then a pu
   assert.equal(s.pulls(), 1);
 });
 
-test('master session down: no log line and no pull; the change stays unrecorded until it is delivered', t => {
+test('master session down: logged, no pull; an unsent outage note means the change is retried once', t => {
   const s = sandbox(t);
   s.run();
   s.master(false);
   s.run();
-  assert.deepEqual(s.alerts(), [], 'with the master down, tg-notify sends to Telegram (no token here), never to the log');
-  assert.match(s.state(), /^master up$/m, 'undelivered: tried again next run');
+  const down = 'Heartbeat: the master session (claude-tg) is down';
+  assert.deepEqual(s.alerts(), [down]);
+  assert.match(s.state(), /^master up$/m, 'the outage note could not be sent (no token): tried again next run');
+  s.run();
+  assert.deepEqual(s.alerts(), [down, down], 'the retry logs the change a second time');
+  assert.match(s.state(), /^master down$/m, 'no note due on the retry, so the change is recorded');
   assert.equal(s.pulls(), 1, 'no pull while the master is down');
   s.master(true);
   s.run();
-  assert.deepEqual(s.alerts(), []);
+  assert.deepEqual(s.alerts(), [down, down, 'Heartbeat: the master session (claude-tg) is up again']);
   assert.equal(s.pulls(), 2);
 });
 
