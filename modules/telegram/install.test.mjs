@@ -166,3 +166,21 @@ test('watchdog, polling off: stays idle after --uninstall until install runs aga
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(s.calls(), new RegExp(`^tmux new -d -s claude-tg ${MOD}/run\\.sh$`, 'm'), 'install re-arms the watchdog');
 });
+
+test('run from inside the bot session (an agent in it ran install.sh): the restart finishes in a detached process', () => {
+  const s = sandbox({ polling: 0 });
+  const bin = join(s.d, 'bin'), log = join(s.d, 'calls.log');
+  // The session's root is this test process, so the installer (its child) is inside it. ps answers
+  // only the parent lookups the installer makes, from the real ps.
+  writeFileSync(join(bin, 'tmux'), `#!/bin/sh\necho "tmux $*" >> "${log}"\ncase "$1" in list-panes) echo ${process.pid} ;; esac\nexit 0\n`);
+  writeFileSync(join(bin, 'ps'), `#!/bin/sh\ncase "$*" in "-o ppid= -p "*) exec /bin/ps "$@" ;; esac\nexit 0\n`);
+  const r = s.run();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /finishes in the background/);
+  const out = join(s.home, '.claude/channels/telegram/logs/install.log');
+  for (let i = 0; i < 150 && !/polling off/.test(existsSync(out) ? readFileSync(out, 'utf8') : ''); i++) {
+    spawnSync('/bin/sleep', ['0.2']);
+  }
+  assert.match(readFileSync(out, 'utf8'), /polling off/, 'the detached installer ran to the end');
+  assert.match(s.calls(), /^tmux new -d -s claude-tg /m);
+});

@@ -68,6 +68,18 @@ session_pid() {
   if (( linux )); then tmux list-panes -t '=claude-tg' -F '#{pane_pid}' 2>/dev/null | head -1
   else launchctl print gui/$uid/$(label telegram) 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p' | head -1; fi
 }
+# True when this installer runs inside the bot session (an agent in it ran install.sh). Stopping the
+# session then kills this installer before it starts the agents again, which left the bot and the
+# watchdog down for hours (2026-11-25).
+inside_session() {
+  local root=$(session_pid) p=$$
+  [[ -n $root ]] || return 1
+  while [[ -n $p && $p != 0 && $p != 1 ]]; do
+    [[ $p == $root ]] && return 0
+    p=$(ps -o ppid= -p $p 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}
 # The bot's poller (bun server.ts) under this module's session; firstmate's own bot doesn't count.
 bot_running() {
   local pid=$(session_pid)
@@ -219,6 +231,18 @@ if [[ $mode == install && $same == 1 ]]; then
   fi
 fi
 
+# From inside the session, finish in a detached process (its own session, so the restart can't kill it).
+detached=${TELEGRAM_INSTALL_DETACHED:-}; unset TELEGRAM_INSTALL_DETACHED
+if ! dry && [[ -z $detached ]] && inside_session; then
+  act mkdir -p $state/logs
+  TELEGRAM_INSTALL_DETACHED=1 /usr/bin/python3 -c 'import os, sys
+if os.fork(): os._exit(0)
+os.setsid(); os.execv("/bin/zsh", ["zsh", *sys.argv[1:]])' $0 "$@" </dev/null >>$state/logs/install.log 2>&1
+  print "This runs inside the Telegram session, which the restart stops, so it finishes in the background."
+  print "The session restarts in a few seconds. Log: $state/logs/install.log"
+  exit 0
+fi
+
 stop_agents
 if (( ! linux && ! ${names[(Ie)morning-brief]} )); then   # brief off (or polling off): retire its agent
   [[ -f $agents_dir/$(label morning-brief).plist ]] && act rm -f $agents_dir/$(label morning-brief).plist
@@ -249,6 +273,7 @@ fi
 
 if (( linux )); then
   # tmux keeps the session; run.sh restarts claude inside it, and the watchdog restarts tmux.
+  unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT
   act tmux new -d -s claude-tg $mod/run.sh
   cron_hint
 else

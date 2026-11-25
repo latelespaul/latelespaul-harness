@@ -47,6 +47,8 @@ The main `install.sh` runs this module's installer when `telegram` is in MODULES
 
 Restarts resume the conversation (`--continue`).
 
+`install.sh` run from inside the session (an agent in it, after a merge) finishes the restart in a detached process. Its log is `~/.claude/channels/telegram/logs/install.log`. So stopping the session can't kill the installer halfway and leave the bot and the watchdog unloaded. `run.sh` also exits once its screen or tmux session is gone, so no restart loop outlives it.
+
 ## Morning brief (optional)
 If `$PROFILE_DIR/telegram/morning-brief.md` exists, `com.<prefix>.morning-brief` runs `morning-brief.py` at `TELEGRAM_BRIEF_TIME`: headless `claude -p` writes the brief from that prompt and the bot sends it (split under Telegram's 4096-char limit). Names in `watchlist.txt` next to it fill `{{WATCHLIST}}` in the prompt. If it fails twice, it sends a failure message instead. Only the `ACTIVE_HOST` Mac sends. Start from `morning-brief.example.md`. Test now: `morning-brief.py --now`. Log: `~/.claude/channels/telegram/logs/morning-brief.log`; each sent brief is kept as `~/.claude/channels/telegram/morning/<YYYY-MM-DD>.txt` for review.
 
