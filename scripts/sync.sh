@@ -33,7 +33,8 @@ alert() {
 
 # with_lock <repo> <cmd...>: runs cmd while holding the repo's sync lock (a directory in its .git), so
 # syncs started together (SessionStart in many sessions plus the scheduled one) never race on fetch or
-# rebase. A sync that cannot get the lock within SYNC_LOCK_WAIT seconds (default 30) skips quietly:
+# rebase. A sync that cannot get the lock within SYNC_LOCK_WAIT seconds (default 30, 5 for --pull,
+# which runs under the SessionStart hook's 15 s timeout) skips quietly:
 # the one holding it is doing the same work, and the next run catches up. A lock whose owner is gone,
 # or older than SYNC_LOCK_STALE seconds (default 600), is taken over by an atomic rename, and a
 # sync only releases a lock that still holds its own pid.
@@ -41,7 +42,8 @@ with_lock() {
   local repo=$1; shift
   local lock=$(git -C $repo rev-parse --path-format=absolute --git-path harness-sync.lock 2>/dev/null)
   [[ -n $lock ]] || { "$@"; return }
-  local waited=0 pid old moved
+  local waited=0 pid old moved lock_wait=${SYNC_LOCK_WAIT:-30}
+  [[ $mode == full ]] || lock_wait=${SYNC_LOCK_WAIT:-5}
   until mkdir $lock 2>/dev/null; do
     pid=$(<$lock/pid 2>/dev/null)
     old=( $lock(N/mm+$(( ${SYNC_LOCK_STALE:-600} / 60 ))) )
@@ -55,7 +57,7 @@ with_lock() {
       fi
       continue
     fi
-    if (( waited >= ${SYNC_LOCK_WAIT:-30} * 5 )); then
+    if (( waited >= lock_wait * 5 )); then
       echo "another sync holds ${repo:t}; skipping (the next run catches up)"
       return 0
     fi
@@ -67,6 +69,28 @@ with_lock() {
 
 # rebasing <repo>: true while a rebase is stopped half-way (conflict, or an edit stop).
 rebasing() { [[ -d $(git -C $1 rev-parse --path-format=absolute --git-path rebase-merge 2>/dev/null) || -d $(git -C $1 rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null) ]] }
+
+# recover_interrupted <repo>: git rebase --autostash writes rebase-merge/autostash before head-name, so a
+# sync killed between the two (the SessionStart hook's timeout) leaves a rebase that --continue and
+# --abort cannot read. Quit it (git then keeps the autostash as stash@{0}) and pop that entry back, but
+# only when the stash was taken on the current HEAD, so the pop is a clean restore and never a merge.
+recover_interrupted() {
+  local dir=$(git -C $1 rev-parse --path-format=absolute --git-path rebase-merge 2>/dev/null)
+  [[ -f $dir/autostash && ! -e $dir/head-name ]] || return 0
+  git -C $1 symbolic-ref -q HEAD >/dev/null || return 0
+  local sha=$(<$dir/autostash)
+  git -C $1 rebase --quit >/dev/null 2>&1 || return 0
+  echo "quit an interrupted rebase in $1 (it held only the autostash)"
+  if [[ $(git -C $1 rev-parse -q --verify 'stash@{0}') == $sha &&
+        $(git -C $1 rev-parse -q --verify "$sha^1") == $(git -C $1 rev-parse HEAD) ]] &&
+     git -C $1 stash pop -q 'stash@{0}' >/dev/null 2>&1; then
+    echo "restored its autostash"
+    return 0
+  fi
+  echo "could not restore the autostash $sha in $1; it is kept in git stash"
+  alert "Sync: quit an interrupted rebase in ${1:t} on $(hostname -s), but its local changes could not be restored by themselves; they are safe in git stash there (autostash $sha), run git stash pop."
+  return 1
+}
 
 # pull_rebase <repo>: fetch the upstream branch, then rebase onto its remote-tracking ref (never
 # FETCH_HEAD, which concurrent fetches overwrite: "Cannot rebase onto multiple branches"). A failed
@@ -85,6 +109,11 @@ pull_rebase() {
     echo "fetch from $remote failed in $1 (network or remote?)"
     alert "Sync: fetch from $remote failed in ${1:t} on $(hostname -s) (network or remote?); it retries on the next sync."
     return 1
+  fi
+  if [[ $mode != full ]] && (( SECONDS > ${SYNC_PULL_BUDGET:-8} )); then
+    # Under the SessionStart hook a late rebase can be killed half-way; the next sync does it.
+    echo "pull ran ${SECONDS}s; not starting a rebase this close to the hook timeout"
+    return 0
   fi
   git -C $1 rebase --autostash -q '@{u}' && return 0
   if rebasing $1; then
@@ -111,6 +140,7 @@ push_pull() {
 
 # sync_profile: the profile part, run under the profile's lock (a sync mid-rebase is not "stuck").
 sync_profile() {
+  recover_interrupted $PROFILE_DIR || return 1
   if rebasing $PROFILE_DIR; then
     # Left over from an interrupted sync: committing now would land on a detached HEAD.
     echo "profile $PROFILE_DIR is mid-rebase; not syncing until it is resolved"

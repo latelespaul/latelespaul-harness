@@ -62,7 +62,7 @@ there are too many alerts. First run `TG=~/.claude/channels/telegram`.
    | hcron "has not run for N min" | the Mac slept | none; one overdue summary is normal |
    | Sweep line for the same pull request (PR) | a parked PR | add it to `ignore` in `$PROFILE_DIR/orchestrator/sweep.json` |
    | "idle N min" for a crew | an idle crew | none; information only |
-   | `Sync:` lines (pull error, stuck mid-rebase) | two syncs at the same time (a race) | re-run `$HARNESS_DIR/scripts/sync.sh` once; for a conflict or a stuck rebase, run `git status` in that repo, fix by hand, report it |
+   | `Sync:` lines (pull error, stuck mid-rebase) | two syncs at the same time (a race), or a sync killed mid-rebase (sync.sh quits that rebase and restores the autostash itself) | re-run `$HARNESS_DIR/scripts/sync.sh` once; for a conflict or a stuck rebase, run `git status` in that repo, fix by hand, report it; for "safe in git stash", run `git stash pop` there |
    | "master session down" | the master session stopped | step 1; `tg-notify.py` sends one note per outage |
 
 4. **Fix and report.** Do only the safe fixes. Reload agents with `scripts/recover.sh` from a

@@ -99,3 +99,55 @@ test('a fetch failure is reported as a fetch failure', async () => {
   assert.equal(r.status, 1, r.out);
   assert.match(alertText(), /fetch from origin failed/);
 });
+
+// leaveInterrupted: the state a sync killed right after git took its autostash leaves behind (the
+// changes are stashed and reset away, and rebase-merge holds only the autostash, with no head-name).
+function leaveInterrupted(profile) {
+  writeFileSync(join(profile, 'notes.md'), 'local edit\n');
+  const sha = git(profile, 'stash', 'create', 'autostash');
+  git(profile, 'reset', '-q', '--hard');
+  mkdirSync(join(profile, '.git/rebase-merge'));
+  writeFileSync(join(profile, '.git/rebase-merge/autostash'), `${sha}\n`);
+  return sha;
+}
+
+test('a rebase interrupted after the autostash is quit and the changes come back', async () => {
+  const { profile, remote, sync, alertText, pushFromOther } = setup();
+  leaveInterrupted(profile);
+  pushFromOther('other.md', 'from other\n');
+  const r = await sync();
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /restored its autostash/);
+  assert.ok(!existsSync(join(profile, '.git/rebase-merge')));
+  assert.equal(git(profile, 'branch', '--show-current'), 'main');
+  assert.equal(git(profile, 'stash', 'list'), '');
+  assert.equal(readFileSync(join(profile, 'notes.md'), 'utf8'), 'local edit\n');
+  assert.ok(existsSync(join(profile, 'other.md')));
+  assert.equal(git(remote, 'show', 'main:notes.md'), 'local edit');
+  assert.equal(alertText(), '');
+});
+
+test('an autostash taken on another HEAD stays in the stash and the alert says where', async () => {
+  const { profile, sync, alertText } = setup();
+  const sha = leaveInterrupted(profile);
+  writeFileSync(join(profile, 'later.md'), 'later\n');
+  git(profile, 'add', '-A'); git(profile, 'commit', '-q', '-m', 'later');
+  const r = await sync(['--pull']);
+  assert.equal(r.status, 1, r.out);
+  assert.ok(!existsSync(join(profile, '.git/rebase-merge')));
+  assert.equal(git(profile, 'rev-parse', 'stash@{0}'), sha);
+  assert.equal(readFileSync(join(profile, 'notes.md'), 'utf8'), 'one\n');
+  assert.match(alertText(), new RegExp(`safe in git stash there \\(autostash ${sha}\\)`));
+});
+
+test('a --pull past its time budget skips the rebase instead of risking the hook kill', async () => {
+  const { profile, sync, alertText, pushFromOther } = setup();
+  pushFromOther('other.md', 'x\n');
+  writeFileSync(join(profile, 'local.md'), 'local\n');
+  const r = await sync(['--pull'], { SYNC_PULL_BUDGET: '-1' });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /not starting a rebase/);
+  assert.ok(!existsSync(join(profile, 'other.md')));
+  assert.ok(existsSync(join(profile, 'local.md')));
+  assert.equal(alertText(), '');
+});
