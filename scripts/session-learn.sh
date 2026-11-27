@@ -24,7 +24,10 @@ mkdir -p $logs
   # Skip trivial sessions.
   (( $(grep -c '^USER: ' <<<$convo) >= 3 )) || exit 0
 
-  out=$(print -r -- $convo | claude -p --model haiku --tools "" --no-session-persistence \
+  # Run from a neutral folder and load user settings only, so no project's SessionStart hooks
+  # (for example a fleet lock in the ended session's folder) fire for the summariser.
+  cd $logs || exit 0
+  out=$(print -r -- $convo | claude -p --model haiku --tools "" --no-session-persistence --setting-sources user \
 "Below is a transcript of a coding session (working folder: $cwd). Write a short record of it in exactly this format and nothing else:
 
 TITLE: <max 8 words>
