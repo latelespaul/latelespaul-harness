@@ -213,6 +213,21 @@ for l in $claude_dir/{skills,commands,agents}/*(N@); do
   fi
 done
 
+# MCP servers: the profile's mcp.json ({"mcpServers": {"<name>": <config>}}, "_" keys are comments)
+# is added at user scope. A server already in ~/.claude.json is never overwritten or removed.
+# Read ~/.claude.json with jq, not `claude mcp list`: that starts every server (a second Telegram poller too).
+mcp_file=$PROFILE_DIR/mcp.json
+if [[ -f $mcp_file ]]; then
+  jq -e '.mcpServers | type == "object"' $mcp_file >/dev/null 2>&1 || { print -u2 "invalid $mcp_file: needs an mcpServers object"; exit 1 }
+  for name in ${(f)"$(jq -r '.mcpServers | keys_unsorted[] | select(startswith("_") | not)' $mcp_file)"}; do
+    jq -e --arg n $name '.mcpServers[$n]' $HOME/.claude.json >/dev/null 2>&1 && continue
+    if ! dry && ! command -v claude >/dev/null; then print "note: claude not found, so MCP server $name is not added"; continue; fi
+    act claude mcp add-json -s user $name "$(jq -c --arg n $name '.mcpServers[$n]' $mcp_file)" \
+      || { print "note: could not add MCP server $name"; continue }
+    dry || print "added MCP server $name"
+  done
+fi
+
 # Claude Code keeps auto-memory per working folder; point the main ones at the profile.
 for d in ${(z)MEMORY_DIRS}; do link_memory $d; done
 

@@ -34,6 +34,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ harness.env      your values (gitignored)       ├─ secrets.md     where secrets live, never values
  ├─ lib/             env loading, helpers           ├─ skills/ commands/ agents/   your own
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
+ │                                                  ├─ mcp.json       optional MCP servers to add
  ├─ scripts/         sync, learn, check, pr-merge,  └─ telegram/ browser/   module data
  │                   ste-check, retro, rule-lint
  ├─ docs/            explaining-standard.md, operating-model.md, retro.md, eyes-hands-design.md, master-session.md, master-cutover.md, hand-batches.md, site-passwords.md, prompts/ (build prompts)
@@ -44,6 +45,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  install.sh renders and links into:
  ~/.claude/CLAUDE.md ──@imports──> AGENTS.md + ABOUT.md + memory/MEMORY.md
  ~/.claude/settings.json           hooks: pull at start, learn at end (+ module fragments + your overlay)
+ ~/.claude.json mcpServers         servers from the profile's mcp.json (added once, never overwritten)
  ~/.claude/skills|commands/*  ───> framework and profile files (profile wins on a name clash)
  ~/.claude/projects/*/memory  ───> profile memory/
  ~/Library/LaunchAgents/com.<prefix>.harness-sync.plist   sync every 2 h and at login (macOS; on Linux, a crontab line: SETUP.md)
@@ -62,6 +64,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 - **How agents explain things:** `docs/explaining-standard.md` (whole process, STE-style writing), applied by the `explain` skill; `node scripts/ste-check.mjs <file|->` checks a draft (tests: `node --test scripts/ste-check.test.mjs`).
 - **A skill, command or subagent:** first check that no existing one covers it (the `extend-first` skill); then add `skills/<name>/SKILL.md`, `commands/<name>.md` or `agents/<name>.md` to your profile (private) or to this repo (shared), then re-run `install.sh` to link it.
 - **Claude settings on every machine:** put them in your profile's `settings.json` (for example `model`, `theme`, extra hooks); `install.sh` merges it into `~/.claude/settings.json`. Settings you change locally are kept too.
+- **MCP servers on every machine:** list them in your profile's `mcp.json` as `{"mcpServers": {"<name>": <config>}}`, where each config is what `claude mcp add-json` takes (keys starting with `_` are comments). `install.sh` adds each one at user scope with `claude mcp add-json -s user`, only when `~/.claude.json` does not have it yet; it never changes or removes a server. `scripts/check.sh` warns about any that are missing. No secrets in the file: http servers sign in with OAuth on first use.
 - **More working folders with shared memory:** add them to `MEMORY_DIRS` in `harness.env`.
 - **A module:** `modules/<name>/` with an `install.sh` (supports `--status`, honours `HARNESS_DRY_RUN` and `HARNESS_SKIP_LAUNCHD` via `lib/common.sh`) and a `SETUP.md`; optional `claude-notes.md.tmpl` (appended to CLAUDE.md), `settings.json.tmpl` (merged into settings), `skill/SKILL.md.tmpl` (rendered into `~/.claude/skills/<name>/`). Templates use `__KEY__` placeholders for values from `harness.env`. Enable it with `MODULES` in `harness.env`.
 
