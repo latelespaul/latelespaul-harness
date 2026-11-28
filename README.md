@@ -34,7 +34,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  ├─ harness.env      your values (gitignored)       ├─ secrets.md     where secrets live, never values
  ├─ lib/             env loading, helpers           ├─ skills/ commands/ agents/   your own
  ├─ templates/       CLAUDE.md, settings, plist     ├─ settings.json  optional settings overlay
- │                                                 ├─ mcp.json       optional MCP servers to add
+ │                                                  ├─ mcp.json       optional MCP servers to add
  ├─ scripts/         sync, learn, check, pr-merge,  └─ telegram/ browser/   module data
  │                   ste-check, retro, rule-lint
  ├─ docs/            explaining-standard.md, operating-model.md, retro.md, eyes-hands-design.md, master-session.md, master-cutover.md, hand-batches.md, site-passwords.md, prompts/ (build prompts)
@@ -45,7 +45,7 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
  install.sh renders and links into:
  ~/.claude/CLAUDE.md ──@imports──> AGENTS.md + ABOUT.md + memory/MEMORY.md
  ~/.claude/settings.json           hooks: pull at start, learn at end (+ module fragments + your overlay)
- ~/.claude.json mcpServers          servers from the profile's mcp.json (added once, never overwritten)
+ ~/.claude.json mcpServers         servers from the profile's mcp.json (added once, never overwritten)
  ~/.claude/skills|commands/*  ───> framework and profile files (profile wins on a name clash)
  ~/.claude/projects/*/memory  ───> profile memory/
  ~/Library/LaunchAgents/com.<prefix>.harness-sync.plist   sync every 2 h and at login (macOS; on Linux, a crontab line: SETUP.md)
