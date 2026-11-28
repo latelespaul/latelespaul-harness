@@ -33,6 +33,12 @@ for s in $HARNESS_DIR/skills/*(N/) $PROFILE_DIR/skills/*(N/); do
   check "skill ${s:t} linked" test -e $claude_dir/skills/${s:t}/SKILL.md
 done
 for f in $HARNESS_DIR/commands/*.md(N); do check "command /${f:t:r} linked" test -e $claude_dir/commands/${f:t}; done
+if [[ -f $PROFILE_DIR/mcp.json ]]; then
+  for name in ${(f)"$(jq -r '.mcpServers // {} | keys_unsorted[] | select(startswith("_") | not)' $PROFILE_DIR/mcp.json 2>/dev/null)"}; do
+    if jq -e --arg n $name '.mcpServers[$n]' $HOME/.claude.json >/dev/null 2>&1; then pass "MCP server $name registered"
+    else warn "MCP server $name from the profile's mcp.json is not registered (run install.sh)"; fi
+  done
+fi
 for d in ${(z)MEMORY_DIRS}; do
   m=$claude_dir/projects/${d//[^A-Za-z0-9]/-}/memory
   check "auto-memory for ${d/#$HOME/~} -> profile" test "${m:A}" = "${PROFILE_DIR:A}/memory"
