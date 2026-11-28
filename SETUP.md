@@ -99,7 +99,7 @@ Recommend all of them; ask once, then install the chosen ones:
 ```sh
 npm i -g lavish-axi@0.1.92 gnhf@0.1.51 chrome-devtools-axi@0.1.44
 ```
-`gh-axi` and `no-mistakes` (a gate that reviews, tests and opens the PR before code is pushed) are part of firstmate's toolchain: `H/modules/firstmate/tools.sh` installs them pinned and checksummed, and works without the firstmate module too. `no-mistakes init` turns it on per repo (it pushes and opens PRs there), so only run that in a repo with the user's OK.
+`gh-axi` and `no-mistakes` (a gate that reviews, tests and opens the PR before code is pushed) are part of firstmate's toolchain: `H/modules/firstmate/tools.sh` installs them pinned and checksummed, and works without the firstmate module too. `no-mistakes init` turns it on per repo (it pushes and opens PRs there), so only run that in a repo with the user's OK. Its agent skill is vendored in `H/skills/no-mistakes` (see its `UPSTREAM.md`).
 
 **Verify:** `for t in lavish-axi gnhf chrome-devtools-axi; do command -v $t; done`
 

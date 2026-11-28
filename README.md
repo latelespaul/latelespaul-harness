@@ -84,4 +84,4 @@ Then fill in `ABOUT.md` in your profile, and follow `modules/<name>/SETUP.md` fo
 - Undo an install: everything replaced is in `~/.claude/backups/harness-<time>/`; move it back. Stop syncing: `launchctl bootout gui/$(id -u)/com.<prefix>.harness-sync`.
 
 ## Credits
-Skills from [kunchenguid](https://github.com/kunchenguid) (chrome-devtools-axi, gnhf, lavish-axi) and [Anthropic](https://github.com/anthropics/skills) (skill-creator, Apache-2.0); see each skill's `UPSTREAM.md`. Firstmate is [kunchenguid/firstmate](https://github.com/kunchenguid/firstmate).
+Skills from [kunchenguid](https://github.com/kunchenguid) (chrome-devtools-axi, gnhf, lavish-axi, [no-mistakes](https://github.com/kunchenguid/no-mistakes), MIT; its CLI installs with `curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh`, not npm) and [Anthropic](https://github.com/anthropics/skills) (skill-creator, Apache-2.0); see each skill's `UPSTREAM.md`. Firstmate is [kunchenguid/firstmate](https://github.com/kunchenguid/firstmate).
